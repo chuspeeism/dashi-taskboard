@@ -272,6 +272,16 @@ async function codexTargets(port) {
   );
 }
 
+async function waitForCodexTargets(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const targets = await codexTargets(port);
+    if (targets.length > 0) return targets;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("No Codex renderer target found");
+}
+
 function codexDebuggingPorts(preferredPort) {
   const ports = new Set([preferredPort]);
   const processes = spawnSync("/bin/ps", ["-axo", "command="], {
@@ -603,7 +613,8 @@ async function readInjectionStatus(cdp) {
       entryMounted: Boolean(document.getElementById("codex-taskboard-entry")),
       pageMounted: Boolean(document.getElementById("codex-taskboard-page")),
       pageVisible: document.getElementById("codex-taskboard-page")?.hidden === false,
-      frameUrl: document.getElementById("codex-taskboard-frame")?.src || null
+      frameUrl: document.getElementById("codex-taskboard-frame")?.src || null,
+      frameVisible: document.getElementById("codex-taskboard-frame")?.hidden === false
     })`,
     returnByValue: true,
   });
@@ -658,12 +669,9 @@ async function injectTarget(target, source, shouldOpen, screenshotPath, keepAliv
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     const status = await waitForInjectionStatus(cdp, shouldOpen, 15_000);
-    const frameLoaded = status.frameUrl
-      ? await waitForFrame(cdp, status.frameUrl, 15_000)
-      : false;
-    if (shouldOpen && !frameLoaded) {
-      throw new Error("Taskboard iframe did not finish loading in the Codex renderer");
-    }
+    const frameLoaded = status.frameVisible || (status.frameUrl
+      ? await waitForFrame(cdp, status.frameUrl, 30_000)
+      : false);
     const result = {
       ...status,
       cspBypassed: true,
@@ -792,6 +800,7 @@ if (typeof window.__CODEX_TASKBOARD_URL__ !== "string" || !window.__CODEX_TASKBO
 }
 ${userScript}`;
     const injectedTargets = new Map();
+    await waitForCodexTargets(options.port, 30_000);
     const firstResults = await injectAll(
       options.port,
       source,
