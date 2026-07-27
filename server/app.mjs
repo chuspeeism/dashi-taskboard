@@ -262,6 +262,24 @@ function parseDevelopmentContext(value) {
   throw new ApiError(400, "INVALID_FIELD", "'developmentContext.type' must be branch or worktree");
 }
 
+function parseCodeProject(value) {
+  if (value === null) return null;
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set(["id", "name"]));
+  const id = stringField(value.id, "codeProject.id", { required: true, maxLength: 64 });
+  if (!PROJECT_ID_PATTERN.test(id)) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELD",
+      "'codeProject.id' must be a lowercase slug containing letters, numbers, or hyphens",
+    );
+  }
+  return {
+    id,
+    name: stringField(value.name, "codeProject.name", { required: true, maxLength: 120 }),
+  };
+}
+
 function parseRecurrence(value) {
   if (value === null) return null;
   assertPlainObject(value);
@@ -519,7 +537,7 @@ function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId",
-    "assigneeTarget", "workflowId", "developmentContext", "dueDate", "recurrence",
+    "assigneeTarget", "workflowId", "codeProject", "developmentContext", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
   const task = {
@@ -533,6 +551,7 @@ function parseTaskCreate(body) {
     threadId: parseThreadId(body.threadId),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     workflowId: parseWorkflowId(body.workflowId ?? null),
+    codeProject: parseCodeProject(body.codeProject ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
     dueDate: parseDueDate(body.dueDate ?? null),
     recurrence: parseRecurrence(body.recurrence ?? null),
@@ -547,7 +566,7 @@ function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "version", "title", "description", "status", "priority", "labels", "threadId",
-    "assigneeTarget", "workflowId", "developmentContext", "dueDate", "recurrence",
+    "assigneeTarget", "workflowId", "codeProject", "developmentContext", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
@@ -559,6 +578,7 @@ function parseTaskPatch(body) {
   if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
   if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
   if (body.workflowId !== undefined) changes.workflowId = parseWorkflowId(body.workflowId);
+  if (body.codeProject !== undefined) changes.codeProject = parseCodeProject(body.codeProject);
   if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
   if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
   if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);

@@ -54,6 +54,7 @@ import {
 import {
   TASK_STATUSES,
   type ActorIdentity,
+  type CodeProjectBinding,
   type DevelopmentScan,
   type HostContext,
   type IssueRelationType,
@@ -93,6 +94,8 @@ interface ProjectChoice {
   issueCount: number;
   inCodex: boolean;
   persisted: boolean;
+  codexProjectId?: string;
+  workspacePath?: string;
 }
 
 interface UndoOperation {
@@ -139,6 +142,19 @@ const EVENT_NAMES = [
 
 function isTheme(value: unknown): value is Theme {
   return value === "light" || value === "dark";
+}
+
+function taskboardProjectId(name: string, codexProjectId: string): string {
+  const slugify = (value: string) => value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return slugify(name) || slugify(codexProjectId.split(/[\\/]/).filter(Boolean).at(-1) ?? "");
+}
+
+function codexProjectWorkspacePath(projectId: string): string | undefined {
+  return projectId.startsWith("/") ? projectId : undefined;
 }
 
 function getInitialTheme(): Theme {
@@ -220,6 +236,7 @@ function taskToDraft(task: Task): TaskDraft {
     priority: task.priority,
     labels: task.labels,
     workflowId: task.workflowId,
+    ...(task.codeProject !== undefined ? { codeProject: task.codeProject } : {}),
     developmentContext: task.developmentContext,
     dueDate: task.dueDate,
     recurrence: task.recurrence,
@@ -413,11 +430,24 @@ export function App() {
   }, []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const selectedCodexProject = hostContext?.projects?.find((project) => (
+    taskboardProjectId(project.name, project.id) === selectedProjectId
+  ));
   const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
-  const selectedDeviceWorkspacePath = deviceWorkspacePaths[selectedProjectId];
+  const selectedDeviceWorkspacePath = deviceWorkspacePaths[selectedProjectId]
+    ?? selectedProject?.workspacePath
+    ?? (selectedCodexProject ? codexProjectWorkspacePath(selectedCodexProject.id) : undefined);
   const detailTask = detailTaskIdentifier
     ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
+  const detailCodexProject = detailTask?.codeProject
+    ? hostContext?.projects?.find((project) => (
+      taskboardProjectId(project.name, project.id) === detailTask.codeProject?.id
+    ))
+    : undefined;
+  const detailCodeWorkspacePath = detailCodexProject
+    ? codexProjectWorkspacePath(detailCodexProject.id)
+    : undefined;
   const detailTaskId = detailTask?.id ?? null;
   const contextMenuTask = contextMenu
     ? tasks.find((task) => task.id === contextMenu.taskId) ?? null
@@ -434,14 +464,17 @@ export function App() {
     const seen = new Set<string>();
     const choices: ProjectChoice[] = [];
     for (const project of hostContext?.projects ?? []) {
-      if (!project.id || !project.name || seen.has(project.id)) continue;
-      seen.add(project.id);
+      const projectId = taskboardProjectId(project.name, project.id);
+      if (!projectId || !project.name || seen.has(projectId)) continue;
+      seen.add(projectId);
       choices.push({
-        id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
-        issueCount: persistedById.get(project.id)?.issueCount ?? 0,
+        id: projectId,
+        name: persistedById.get(projectId)?.name ?? project.name,
+        issueCount: persistedById.get(projectId)?.issueCount ?? 0,
         inCodex: true,
-        persisted: persistedById.has(project.id),
+        persisted: persistedById.has(projectId),
+        codexProjectId: project.id,
+        workspacePath: codexProjectWorkspacePath(project.id),
       });
     }
     for (const project of projects) {
@@ -458,6 +491,15 @@ export function App() {
       Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
     ));
   }, [favoriteProjectIds, hostContext?.projects, projects]);
+  const codeProjectOptions = useMemo<CodeProjectBinding[]>(() => {
+    const seen = new Set<string>();
+    return (hostContext?.projects ?? []).flatMap((project) => {
+      const id = taskboardProjectId(project.name, project.id);
+      if (!id || seen.has(id)) return [];
+      seen.add(id);
+      return [{ id, name: project.name }];
+    });
+  }, [hostContext?.projects]);
   const projectsWithIssues = useMemo(
     () => projectChoices.filter((project) => project.issueCount > 0),
     [projectChoices],
@@ -710,24 +752,34 @@ export function App() {
       return;
     }
     const controller = new AbortController();
-    const codexProjectId = selectedProjectId === "local" ? hostContext?.projectId : selectedProjectId;
+    const taskUsesLocalCodeProject = selectedProjectId === "local" && Boolean(detailTask?.codeProject);
+    const codexProjectId = taskUsesLocalCodeProject
+      ? detailCodexProject?.id ?? detailTask?.codeProject?.id
+      : selectedProjectId === "local"
+        ? hostContext?.projectId
+        : selectedCodexProject?.id ?? selectedProjectId;
     const codexThreadId = hostContext?.threadId ?? detailTask?.threadId ?? undefined;
-    setDevelopmentScan({ workspacePath: selectedDeviceWorkspacePath ?? null, contexts: [] });
+    const scanWorkspacePath = taskUsesLocalCodeProject
+      ? detailCodeWorkspacePath
+      : selectedDeviceWorkspacePath;
+    setDevelopmentScan({ workspacePath: scanWorkspacePath ?? null, contexts: [] });
     setDevelopmentScanLoading(true);
     void listDevelopmentContexts(
       selectedProjectId,
       codexProjectId,
       codexThreadId,
       controller.signal,
-      selectedDeviceWorkspacePath,
+      scanWorkspacePath,
     )
       .then((scan) => {
         setDevelopmentScan(scan);
-        if (scan.workspacePath) rememberDeviceWorkspacePath(selectedProjectId, scan.workspacePath);
+        if (scan.workspacePath && !taskUsesLocalCodeProject) {
+          rememberDeviceWorkspacePath(selectedProjectId, scan.workspacePath);
+        }
       })
       .catch((error) => {
         if ((error as Error).name !== "AbortError") {
-          setDevelopmentScan({ workspacePath: selectedDeviceWorkspacePath ?? null, contexts: [] });
+          setDevelopmentScan({ workspacePath: scanWorkspacePath ?? null, contexts: [] });
         }
       })
       .finally(() => {
@@ -736,10 +788,14 @@ export function App() {
     return () => controller.abort();
   }, [
     detailTask?.threadId,
+    detailTask?.codeProject?.id,
+    detailCodeWorkspacePath,
+    detailCodexProject?.id,
     hostContext?.projectId,
     hostContext?.threadId,
     rememberDeviceWorkspacePath,
     selectedProjectId,
+    selectedCodexProject?.id,
     selectedDeviceWorkspacePath,
   ]);
 
@@ -1199,7 +1255,16 @@ export function App() {
     const worktreePath = task.developmentContext?.type === "worktree"
       ? task.developmentContext.path
       : null;
+    const taskCodexProject = task.codeProject
+      ? hostContext?.projects?.find((project) => (
+        taskboardProjectId(project.name, project.id) === task.codeProject?.id
+      ))
+      : undefined;
+    const taskCodeWorkspacePath = taskCodexProject
+      ? codexProjectWorkspacePath(taskCodexProject.id)
+      : undefined;
     const workspacePath = worktreePath
+      ?? taskCodeWorkspacePath
       ?? selectedDeviceWorkspacePath
       ?? developmentScan.workspacePath
       ?? hostContext?.workspacePath;
@@ -1214,7 +1279,6 @@ export function App() {
       return;
     }
     if (openingThreadTaskId) return;
-    const codexProject = hostContext?.projects?.find((project) => project.id === selectedProject?.id);
     setOpeningThreadTaskId(task.id);
     setActionError(null);
     window.parent.postMessage({
@@ -1226,7 +1290,9 @@ export function App() {
         skillName: "manage-taskboard",
         skillDisplayName: "Manage Taskboard",
         skillPath: manageTaskboardSkillPath,
-        codexProjectId: codexProject?.id ?? (selectedProject?.id === "local" ? hostContext?.projectId : selectedProject?.id),
+        codexProjectId: taskCodexProject?.id
+          ?? selectedCodexProject?.id
+          ?? (selectedProject?.id === "local" ? hostContext?.projectId : selectedProject?.id),
         projectName: selectedProject?.name,
         workspacePath,
         workspaceLabel: worktreePath ? workspaceName(worktreePath) : undefined,
@@ -1289,7 +1355,7 @@ export function App() {
           project = await createProjectRequest({
             id: choice.id,
             name: choice.name,
-            workspacePath: null,
+            workspacePath: deviceWorkspacePaths[choice.id] ?? choice.workspacePath ?? null,
           });
           setProjects((current) => [...current, project!]);
         } catch (error) {
@@ -1629,9 +1695,9 @@ export function App() {
                             <label className="project-card-directory">
                               <LinearIcon name="folder" />
                               <input
-                                key={deviceWorkspacePaths[project.id] ?? ""}
+                                key={deviceWorkspacePaths[project.id] ?? project.workspacePath ?? ""}
                                 type="text"
-                                defaultValue={deviceWorkspacePaths[project.id] ?? ""}
+                                defaultValue={deviceWorkspacePaths[project.id] ?? project.workspacePath ?? ""}
                                 placeholder="设置此设备的项目目录"
                                 aria-label={`${project.name} 在此设备上的项目目录`}
                                 onBlur={(event) => rememberDeviceWorkspacePath(project.id, event.currentTarget.value)}
@@ -1665,6 +1731,7 @@ export function App() {
             currentUser={currentUser}
             availableLabels={availableLabels}
             workflows={workflowOptions}
+            codeProjects={taskboardMetadata?.mode === "cloud" ? [] : codeProjectOptions}
             developmentScan={developmentScan}
             developmentScanLoading={developmentScanLoading}
             commentsRevision={commentsRevision}

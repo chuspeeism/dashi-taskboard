@@ -45,6 +45,7 @@ function taskFromRow(row) {
       avatarUrl: row.assignee_avatar_url,
     },
     workflowId: row.workflow_id,
+    codeProject: null,
     developmentContext,
     dueDate: row.due_date,
     recurrence: row.recurrence_interval && row.recurrence_unit
@@ -261,6 +262,14 @@ export class TaskboardDatabase {
       this.database.exec("ALTER TABLE tasks ADD COLUMN recurrence_unit TEXT");
     }
     this.#migrateTaskStatuses();
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS task_code_projects (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        code_project_id TEXT NOT NULL,
+        code_project_name TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
     const migratedTaskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
     if (!migratedTaskColumns.some((column) => column.name === "creator_type")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN creator_type TEXT NOT NULL DEFAULT 'user'");
@@ -681,6 +690,12 @@ export class TaskboardDatabase {
         timestamp,
         timestamp,
       );
+      if (input.codeProject) {
+        this.database.prepare(`
+          INSERT INTO task_code_projects (task_id, code_project_id, code_project_name, updated_at)
+          VALUES (?, ?, ?, ?)
+        `).run(id, input.codeProject.id, input.codeProject.name, timestamp);
+      }
       this.database.exec("COMMIT");
       return this.getTask(id);
     } catch (error) {
@@ -710,6 +725,7 @@ export class TaskboardDatabase {
     const assignments = [];
     const values = [];
     for (const [key, value] of Object.entries(changes)) {
+      if (key === "codeProject") continue;
       if (key === "developmentContext") {
         assignments.push("git_branch = ?", "worktree_path = ?", "worktree_branch = ?");
         values.push(
@@ -752,6 +768,20 @@ export class TaskboardDatabase {
       `).run(...values);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
+      }
+      if (Object.hasOwn(changes, "codeProject")) {
+        if (changes.codeProject) {
+          this.database.prepare(`
+            INSERT INTO task_code_projects (task_id, code_project_id, code_project_name, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+              code_project_id = excluded.code_project_id,
+              code_project_name = excluded.code_project_name,
+              updated_at = excluded.updated_at
+          `).run(current.id, changes.codeProject.id, changes.codeProject.name, timestamp);
+        } else {
+          this.database.prepare("DELETE FROM task_code_projects WHERE task_id = ?").run(current.id);
+        }
       }
       this.database.exec("COMMIT");
     } catch (error) {
@@ -1059,6 +1089,14 @@ export class TaskboardDatabase {
 
   #taskWithRelations(row) {
     const task = taskFromRow(row);
+    const codeProject = this.database.prepare(`
+      SELECT code_project_id, code_project_name
+      FROM task_code_projects
+      WHERE task_id = ?
+    `).get(task.id);
+    task.codeProject = codeProject
+      ? { id: codeProject.code_project_id, name: codeProject.code_project_name }
+      : null;
     const parent = this.database.prepare(`
       SELECT tasks.*
       FROM task_relations

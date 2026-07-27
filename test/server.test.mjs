@@ -1073,6 +1073,7 @@ test("project and task CRUD flow", async () => {
       priority: "high",
       labels: ["frontend", "mvp"],
       threadId: "thread-123",
+      codeProject: { id: "website", name: "Website" },
       developmentContext: {
         type: "worktree",
         path: "/work/website/.worktrees/taskboard",
@@ -1094,6 +1095,7 @@ test("project and task CRUD flow", async () => {
   assert.equal(created.creatorId, "local-user");
   assert.equal(created.creatorName, "本地用户");
   assert.equal(created.creatorAvatarUrl, null);
+  assert.deepEqual(created.codeProject, { id: "website", name: "Website" });
   assert.deepEqual(created.developmentContext, {
     type: "worktree",
     path: "/work/website/.worktrees/taskboard",
@@ -1124,6 +1126,7 @@ test("project and task CRUD flow", async () => {
       title: "Build polished task board",
       priority: "urgent",
       threadId: "thread-456",
+      codeProject: { id: "website-api", name: "Website API" },
       developmentContext: { type: "branch", branch: "feature/polish" },
     },
   });
@@ -1132,6 +1135,7 @@ test("project and task CRUD flow", async () => {
   assert.equal(updated.title, "Build polished task board");
   assert.equal(updated.priority, "urgent");
   assert.equal(updated.threadId, "thread-456");
+  assert.deepEqual(updated.codeProject, { id: "website-api", name: "Website API" });
   assert.deepEqual(updated.developmentContext, { type: "branch", branch: "feature/polish" });
   assert.equal(updated.version, 2);
 

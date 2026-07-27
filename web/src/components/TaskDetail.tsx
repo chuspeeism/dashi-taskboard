@@ -17,6 +17,7 @@ import { TASK_STATUSES } from "../types";
 import type {
   ActorIdentity,
   Attachment,
+  CodeProjectBinding,
   Comment,
   DevelopmentContext,
   DevelopmentScan,
@@ -61,6 +62,7 @@ interface TaskDetailProps {
   currentUser: ActorIdentity;
   availableLabels: string[];
   workflows: WorkflowOption[];
+  codeProjects: CodeProjectBinding[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
   commentsRevision: number;
@@ -179,6 +181,7 @@ export function TaskDetail({
   currentUser,
   availableLabels,
   workflows,
+  codeProjects,
   developmentScan,
   developmentScanLoading,
   commentsRevision,
@@ -224,6 +227,8 @@ export function TaskDetail({
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const workflowAvailable = !currentTask.workflowId
     || workflows.some((workflow) => workflow.id === currentTask.workflowId);
+  const codeProjectAvailable = !currentTask.codeProject
+    || codeProjects.some((project) => project.id === currentTask.codeProject?.id);
 
   useEffect(() => {
     setCurrentTask(task);
@@ -1018,6 +1023,29 @@ export function TaskDetail({
                 ))}
               </select>
             </label>
+            {currentTask.projectId === "local" && <label className="detail-property-row development-property">
+              <span className="detail-property-icon" aria-hidden="true">
+                <LinearIcon name="folder" />
+              </span>
+              <span className="detail-property-label">代码项目</span>
+              <select
+                aria-label="代码项目"
+                value={currentTask.codeProject?.id ?? ""}
+                disabled={savingProperty === "codeProject"}
+                onChange={(event) => {
+                  const codeProject = codeProjects.find((project) => project.id === event.target.value) ?? null;
+                  void saveTask({ codeProject, developmentContext: null }, "codeProject");
+                }}
+              >
+                <option value="">未绑定</option>
+                {!codeProjectAvailable && currentTask.codeProject && (
+                  <option value={currentTask.codeProject.id}>{currentTask.codeProject.name}（当前 Codex 未找到）</option>
+                )}
+                {codeProjects.map((project) => (
+                  <option value={project.id} key={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </label>}
             <label className="detail-property-row development-property">
               <span className="detail-property-icon" aria-hidden="true">
                 <LinearIcon name="branch" />
@@ -1025,13 +1053,21 @@ export function TaskDetail({
               <span className="detail-property-label">开发上下文</span>
               <select
                 value={contextValue(currentTask.developmentContext)}
-                disabled={developmentScanLoading || savingProperty === "developmentContext"}
+                disabled={
+                  developmentScanLoading
+                  || savingProperty === "developmentContext"
+                  || (currentTask.projectId === "local" && !currentTask.codeProject)
+                }
                 title={currentTask.developmentContext?.type === "worktree" ? currentTask.developmentContext.path : undefined}
                 onChange={(event) => void saveTask({
                   developmentContext: event.target.value ? JSON.parse(event.target.value) as DevelopmentContext : null,
                 }, "developmentContext")}
               >
-                <option value="">{developmentScanLoading ? "正在扫描 Git…" : "未绑定"}</option>
+                <option value="">
+                  {currentTask.projectId === "local" && !currentTask.codeProject
+                    ? "请先选择代码项目"
+                    : developmentScanLoading ? "正在扫描 Git…" : "未绑定"}
+                </option>
                 <optgroup label="代码分支">
                   {developmentOptions.filter((context) => context.type === "branch").map((context) => (
                     <option value={contextValue(context)} key={contextValue(context)}>{contextLabel(context)}</option>

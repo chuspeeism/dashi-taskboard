@@ -26,6 +26,11 @@ export type DevelopmentContext =
   | { type: "branch"; branch: string }
   | { type: "worktree"; path: string; branch: string | null };
 
+export interface CodeProjectBinding {
+  id: string;
+  name: string;
+}
+
 export type Recurrence = {
   interval: number;
   unit: "day" | "week" | "month" | "year";
@@ -122,6 +127,7 @@ export interface Task {
   creatorAvatarUrl: string | null;
   assignee: ActorIdentity;
   workflowId: string | null;
+  codeProject?: CodeProjectBinding | null;
   developmentContext: DevelopmentContext | null;
   dueDate: string | null;
   recurrence: Recurrence | null;
@@ -176,6 +182,7 @@ export interface TaskDraft {
   labels: string[];
   assigneeTarget?: AssigneeTarget;
   workflowId: string | null;
+  codeProject?: CodeProjectBinding | null;
   developmentContext: DevelopmentContext | null;
   dueDate: string | null;
   recurrence: Recurrence | null;

@@ -81,6 +81,20 @@ The script adds a Taskboard entry to the Codex sidebar and renders the iframe ac
 
 To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the user script runs.
 
+## Use Local as a multi-repository board
+
+The built-in `Local` project can track issues from several Codex projects without creating a
+separate Taskboard project for every repository. Open a Local issue and select its **Code project**
+before choosing a branch or worktree under **Development context**. The branch and worktree list is
+scanned from that issue's selected repository, and **Open in conversation** prepares the Codex
+composer in the same workspace. Selecting another code project clears the old development context
+so a branch from one repository cannot be carried into another.
+
+Code-project bindings are stored in the local SQLite companion and are intentionally excluded from
+cloud migration data. Existing Local issues remain unbound until a code project is selected. A
+branch binding records the intended branch while opening the repository's current checkout; choose
+a worktree binding when the conversation must open an exact isolated checkout.
+
 ## Configuration
 
 | Variable | Default | Purpose |

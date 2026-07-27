@@ -13,6 +13,8 @@ const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.
 test("the project home merges live Codex projects with persisted Taskboard projects", () => {
   assert.match(appSource, /hostContext\?\.projects \?\? \[\]/);
   assert.match(appSource, /persistedById/);
+  assert.match(appSource, /function taskboardProjectId\(name: string, codexProjectId: string\)/);
+  assert.match(appSource, /const projectId = taskboardProjectId\(project\.name, project\.id\)/);
   assert.match(appSource, /project\.inCodex \? "Codex 项目" : "已保存的项目"/);
   assert.match(appSource, /createProjectRequest/);
   assert.match(apiSource, /export async function createProject/);
@@ -29,6 +31,15 @@ test("each device stores an independent workspace path for every project", () =>
   assert.match(apiSource, /query\.set\("workspacePath", workspacePath\)/);
   assert.match(apiSource, /\/api\/device-workspaces/);
   assert.match(styles, /\.project-card-directory \{/);
+});
+
+test("Local issues bind one Codex project before choosing a branch or worktree", () => {
+  assert.match(appSource, /const codeProjectOptions = useMemo<CodeProjectBinding\[]>/);
+  assert.match(appSource, /taskUsesLocalCodeProject/);
+  assert.match(appSource, /taskCodeWorkspacePath/);
+  assert.match(detailSource, /detail-property-label">代码项目/);
+  assert.match(detailSource, /请先选择代码项目/);
+  assert.match(detailSource, /saveTask\(\{ codeProject, developmentContext: null \}, "codeProject"\)/);
 });
 
 test("project selection is remembered until the user explicitly returns home", () => {
@@ -73,7 +84,7 @@ test("the issue composer includes Linear-style labels and scheduling", () => {
 
 test("the current project is shown only in navigation, not in issue creation or detail properties", () => {
   assert.doesNotMatch(editorSource, /property-project|dialog-project-icon|project\?\.name/);
-  assert.doesNotMatch(detailSource, /detail-property-label">项目|project-property-icon|project\.name/);
+  assert.doesNotMatch(detailSource, /detail-property-label">项目|project-property-icon/);
   assert.doesNotMatch(styles, /\.property-project|\.dialog-project-icon|\.project-property-icon/);
   assert.match(appSource, /createTaskRequest\(selectedProjectId, draft\)/);
   assert.match(appSource, /className="header-project-switcher"/);
