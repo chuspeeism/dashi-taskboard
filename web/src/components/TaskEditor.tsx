@@ -113,6 +113,7 @@ export function TaskEditor({
   onSave,
 }: TaskEditorProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const openedAtRef = useRef(0);
   const titleRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState(task?.title ?? "");
@@ -151,6 +152,7 @@ export function TaskEditor({
     ));
 
   useEffect(() => {
+    openedAtRef.current = performance.now();
     dialogRef.current?.showModal();
     titleRef.current?.focus();
     return () => {
@@ -231,8 +233,12 @@ export function TaskEditor({
         event.preventDefault();
         if (!saving) onCancel();
       }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) onCancel();
+      onMouseDown={(event) => {
+        if (
+          performance.now() - openedAtRef.current >= 250
+          && event.target === event.currentTarget
+          && !saving
+        ) onCancel();
       }}
     >
       <form className="task-form" onSubmit={handleSubmit}>
