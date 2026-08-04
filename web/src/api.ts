@@ -8,6 +8,7 @@ import type {
   AiChatThreadSnapshot,
   Attachment,
   Comment,
+  CodexSession,
   DevelopmentScan,
   IssueRelationType,
   Project,
@@ -87,6 +88,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   const data = await request<{ projects: Project[] }>("/api/projects", { signal });
   return data.projects;
+}
+
+export async function listCodexSessions(signal?: AbortSignal): Promise<CodexSession[]> {
+  const data = await request<{ sessions: CodexSession[] }>("/api/local/codex/sessions", { signal });
+  return data.sessions;
 }
 
 export async function getTaskboardMetadata(signal?: AbortSignal): Promise<TaskboardMetadata> {

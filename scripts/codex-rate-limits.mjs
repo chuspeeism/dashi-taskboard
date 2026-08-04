@@ -6,7 +6,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 export async function readCodexQuotaStatus(model) {
   const checkedAt = Date.now();
   try {
-    const session = startAppServer();
+    const session = startCodexAppServer();
     try {
       await session.request("initialize", {
         clientInfo: { name: "codex-taskboard", version: "0.1.0" },
@@ -29,8 +29,8 @@ export async function readCodexQuotaStatus(model) {
   }
 }
 
-function startAppServer() {
-  const child = spawn("codex", ["app-server", "--stdio"], {
+export function startCodexAppServer(codexExecutable = "codex") {
+  const child = spawn(codexExecutable, ["app-server", "--stdio"], {
     stdio: ["pipe", "pipe", "ignore"],
   });
   const pending = new Map();

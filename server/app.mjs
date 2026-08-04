@@ -18,6 +18,7 @@ import {
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
+import { CodexSessionCatalog } from "./codex-sessions.mjs";
 import {
   CloudProxyError,
   createCloudProxy,
@@ -1332,6 +1333,7 @@ export function createTaskboardServer(options = {}) {
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
   });
+  const codexSessions = new CodexSessionCatalog(resolved.codexExecutable);
   const aiEventResponses = new Set();
 
   const server = createServer(async (request, response) => {
@@ -1401,6 +1403,12 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { mode: "local", authenticated: false });
         }
         return methodNotAllowed(response, ["GET", "PUT", "DELETE"]);
+      }
+
+      if (pathname === "/api/local/codex/sessions") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/codex/sessions");
+        return sendJson(response, 200, { sessions: await codexSessions.list() });
       }
 
       const projectMappingRoute = pathname.match(/^\/api\/local\/project-mappings\/([^/]+)$/);
@@ -2079,6 +2087,7 @@ export function createTaskboardServer(options = {}) {
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();
       await aiChat.close();
+      codexSessions.close();
       await serverClosed;
       listening = false;
       database.close();

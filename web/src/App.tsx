@@ -44,6 +44,7 @@ import {
 } from "./actors";
 import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
 import { AiChat } from "./components/AiChat";
+import { CodexSessionBoard } from "./components/CodexSessionBoard";
 import { BoardSettingsMenu } from "./components/BoardSettingsMenu";
 import { HiddenColumns } from "./components/HiddenColumns";
 import {
@@ -542,7 +543,6 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [projectsLoading, setProjectsLoading] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -696,14 +696,6 @@ export function App() {
       Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
     ));
   }, [favoriteProjectIds, hostContext?.projects, projects]);
-  const projectsWithIssues = useMemo(
-    () => projectChoices.filter((project) => project.issueCount > 0),
-    [projectChoices],
-  );
-  const projectsWithoutIssues = useMemo(
-    () => projectChoices.filter((project) => project.issueCount === 0),
-    [projectChoices],
-  );
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const writeProjectAutomation = useCallback((
@@ -1066,7 +1058,6 @@ export function App() {
   }, [detailTaskId, embedded, selectedProjectId]);
 
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
-    setProjectsLoading(true);
     setLoadError(null);
     try {
       const [nextProjects, metadata, workspaces] = await Promise.all([
@@ -1095,16 +1086,12 @@ export function App() {
       setProjects(nextProjects);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
-        const remembered = window.localStorage.getItem(LAST_PROJECT_KEY);
         if (fromQuery && nextProjects.some((project) => project.id === fromQuery)) return fromQuery;
         if (current && nextProjects.some((project) => project.id === current)) return current;
-        if (remembered && nextProjects.some((project) => project.id === remembered)) return remembered;
         return "";
       });
     } catch (error) {
       if ((error as Error).name !== "AbortError") setLoadError(errorMessage(error));
-    } finally {
-      setProjectsLoading(false);
     }
   }, []);
 
@@ -2014,7 +2001,27 @@ export function App() {
           </div>
           </header>
         ) : (
-          <div ref={dragRegionRef} className="home-window-drag-region" aria-hidden="true" />
+          <header className="workspace-header">
+            <div className="workspace-title">
+              <div className="workspace-kicker">
+                {embedded && hostContext?.sidebarCollapsed && (
+                  <button
+                    className="detail-back-button codex-sidebar-expand-button"
+                    type="button"
+                    aria-label="展开 Codex 侧边栏"
+                    title="展开侧边栏"
+                    onClick={expandCodexSidebar}
+                  >
+                    <LinearIcon name="codexSidebarExpand" />
+                  </button>
+                )}
+                <span className="project-avatar" aria-hidden="true"><LinearIcon name="myIssues" /></span>
+                <span className="project-name">全部 Codex 会话</span>
+              </div>
+            </div>
+            <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
+            <div className="header-actions" />
+          </header>
         )}
 
         {selectedProjectId && !detailTask && <div className="board-toolbar">
@@ -2094,83 +2101,17 @@ export function App() {
         )}
 
         {!selectedProjectId ? (
-          <section className="project-home">
-            <div className="project-home-heading">
-              <span>任务面板</span>
-              <h1>选择项目</h1>
-              <p>从 Codex 项目开始，或继续使用之前保存的项目。</p>
-            </div>
-            {projectsLoading ? (
-              <div className="project-grid project-grid-loading" aria-label="正在加载项目" aria-busy="true">
-                <span /><span /><span />
-              </div>
-            ) : projectChoices.length > 0 ? (
-              <div className="project-home-groups">
-                {[
-                  { id: "with-issues", title: "已有议题", projects: projectsWithIssues },
-                  { id: "without-issues", title: "尚未添加议题", projects: projectsWithoutIssues },
-                ].map((group) => (
-                  <section className="project-home-group" key={group.id} aria-labelledby={`project-group-${group.id}`}>
-                    <div className="project-group-heading">
-                      <h2 id={`project-group-${group.id}`}>{group.title}</h2>
-                      <span>{group.projects.length}</span>
-                    </div>
-                    {group.projects.length > 0 ? (
-                      <div className="project-grid">
-                        {group.projects.map((project) => (
-                          <div className="project-card" key={project.id}>
-                            <button
-                              className="project-card-open"
-                              type="button"
-                              disabled={openingProjectId !== null}
-                              onClick={() => void selectProject(project)}
-                            >
-                              <span className="project-card-avatar" aria-hidden="true">
-                                {project.name.slice(0, 1).toUpperCase()}
-                              </span>
-                              <span className="project-card-copy">
-                                <strong>{project.name}</strong>
-                                <span>
-                                  {project.inCodex ? "Codex 项目" : "已保存的项目"}
-                                  {project.issueCount > 0 ? ` · ${project.issueCount} 个议题` : ""}
-                                </span>
-                              </span>
-                              {favoriteProjectIds.has(project.id) && <span className="project-card-favorite" aria-label="已收藏"><LinearIcon name="favorite" /></span>}
-                              <span className="project-card-action" aria-hidden="true">
-                                {openingProjectId === project.id ? "正在打开…" : <LinearIcon name="chevronRight" />}
-                              </span>
-                            </button>
-                            <label className="project-card-directory">
-                              <LinearIcon name="folder" />
-                              <input
-                                key={deviceWorkspacePaths[project.id] ?? ""}
-                                type="text"
-                                defaultValue={deviceWorkspacePaths[project.id] ?? ""}
-                                placeholder="设置此设备的项目目录"
-                                aria-label={`${project.name} 在此设备上的项目目录`}
-                                onBlur={(event) => rememberDeviceWorkspacePath(project.id, event.currentTarget.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") event.currentTarget.blur();
-                                }}
-                              />
-                            </label>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="project-group-empty">暂无项目</p>
-                    )}
-                  </section>
-                ))}
-              </div>
-            ) : (
-              <div className="project-home-empty">
-                <span className="empty-orbit" aria-hidden="true"><i /><i /></span>
-                <h2>还没有项目</h2>
-                <p>在 Codex 中创建项目后，再打开任务面板。</p>
-              </div>
-            )}
-          </section>
+          <CodexSessionBoard
+            liveSessions={hostContext?.sessions ?? []}
+            projects={projects}
+            codexProjects={hostContext?.projects ?? []}
+            deviceWorkspacePaths={deviceWorkspacePaths}
+            onOpenThread={openThread}
+            onOpenProject={(projectId) => {
+              const project = projectChoices.find((candidate) => candidate.id === projectId);
+              if (project) void selectProject(project);
+            }}
+          />
         ) : detailTask && selectedProject ? (
           <TaskDetail
             key={detailTask.id}

@@ -250,9 +250,41 @@ export interface HostContext {
   threadId?: string;
   theme?: "light" | "dark";
   projectId?: string;
-  projects?: Array<{ id: string; name: string }>;
+  projects?: CodexProject[];
+  sessions?: CodexLiveSession[];
   titlebarLeftInset?: number;
   sidebarCollapsed?: boolean;
+}
+
+export interface CodexProject {
+  id: string;
+  name: string;
+  workspacePath?: string;
+  threadIds?: string[];
+}
+
+export interface CodexSession {
+  id: string;
+  title: string;
+  cwd: string;
+  status: TaskStatus;
+  nativeStatus: string;
+  activeFlags: string[];
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CodexLiveSession {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  nativeStatus: string;
+  unread: boolean;
+  pinned: boolean;
+  projectId: string;
+  projectName: string;
+  cwd: string;
 }
 
 export interface TaskDraft {

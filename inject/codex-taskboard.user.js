@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.8";
+  const VERSION = "0.7.1";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -25,6 +25,7 @@
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh";
+  const PROJECT_CATALOG_CACHE_KEY = "codex.taskboard-project-catalog";
   const PLUGIN_LABELS = ["插件", "plugins"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
@@ -73,6 +74,7 @@
   let lastNativeThreadId = "";
   let active = false;
   let destroyed = false;
+  let projectCatalogSnapshot = readStoredProjectCatalog();
 
   function normalizedLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -385,7 +387,54 @@
       || null;
   }
 
+  function readStoredProjectCatalog() {
+    try {
+      const projects = JSON.parse(window.localStorage.getItem(PROJECT_CATALOG_CACHE_KEY) || "[]");
+      return Array.isArray(projects) ? projects : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function readProjectIndexRow(row) {
+    const fiberKey = Object.keys(row).find((key) => key.startsWith("__reactFiber"));
+    let fiber = fiberKey ? row[fiberKey] : null;
+    for (let depth = 0; fiber && depth < 10; depth += 1, fiber = fiber.return) {
+      const project = fiber.memoizedProps?.row;
+      if (!project?.projectId || !project?.name) continue;
+      const group = project.group && typeof project.group === "object" ? project.group : {};
+      return {
+        id: String(project.projectId),
+        name: String(project.name),
+        workspacePath: typeof group.path === "string"
+          ? group.path
+          : Array.isArray(group.rootPaths) && typeof group.rootPaths[0] === "string"
+            ? group.rootPaths[0]
+            : "",
+        threadIds: [...new Set([
+          ...(Array.isArray(group.threadKeys) ? group.threadKeys : []),
+          ...(Array.isArray(project.recentThreadKeys) ? project.recentThreadKeys : []),
+        ].map(normalizeThreadId).filter(Boolean))],
+      };
+    }
+    return null;
+  }
+
+  function readProjectCatalog() {
+    const container = document.querySelector("[data-projects-rows]");
+    if (!container) return projectCatalogSnapshot;
+    projectCatalogSnapshot = Array.from(container.querySelectorAll("[data-project-row]"))
+      .map(readProjectIndexRow)
+      .filter(Boolean);
+    try {
+      window.localStorage.setItem(PROJECT_CATALOG_CACHE_KEY, JSON.stringify(projectCatalogSnapshot));
+    } catch (_) {}
+    return projectCatalogSnapshot;
+  }
+
   function readCodexProjects() {
+    const catalog = readProjectCatalog();
+    if (catalog.length > 0) return catalog;
     const seen = new Set();
     return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
       .flatMap((row) => {
@@ -399,6 +448,97 @@
         seen.add(id);
         return [{ id, name }];
       });
+  }
+
+  function readThreadRowState(row) {
+    const fiberKey = Object.keys(row).find((key) => key.startsWith("__reactFiber"));
+    let fiber = fiberKey ? row[fiberKey] : null;
+    let statusState = null;
+    let pendingApproval = false;
+    let projectId = "";
+    let projectName = "";
+    let conversationId = "";
+    let workspacePath = "";
+    for (let depth = 0; fiber && depth < 10; depth += 1, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (!props || typeof props !== "object") continue;
+      if (!statusState && props.statusState && typeof props.statusState === "object") {
+        statusState = props.statusState;
+      }
+      pendingApproval ||= props.hasPendingChildApproval === true;
+      if (!projectId && typeof props.hoverCardProjectId === "string") {
+        projectId = props.hoverCardProjectId.trim();
+      }
+      if (!projectName && typeof props.hoverCardProjectLabel === "string") {
+        projectName = props.hoverCardProjectLabel.trim();
+      }
+      if (!conversationId && typeof props.conversationId === "string") {
+        conversationId = normalizeThreadId(props.conversationId);
+      }
+      if (!workspacePath && typeof props.displayCwd === "string") {
+        workspacePath = props.displayCwd.trim();
+      }
+    }
+    return { statusState, pendingApproval, projectId, projectName, conversationId, workspacePath };
+  }
+
+  function taskStatusForThreadRow(row, state) {
+    const type = normalizedLabel(state.statusState?.type);
+    if (state.pendingApproval || type.includes("approval")) return "in_review";
+    if (type.includes("response") || type.includes("input") || type.includes("waiting")) return "todo";
+    if (type.includes("error") || type.includes("failed")) return "blocked";
+    if (type.includes("cancel") || type.includes("interrupt")) return "canceled";
+    if (type === "loading" || type === "running" || row.querySelector(".animate-spin")) {
+      return "in_progress";
+    }
+    if (state.statusState?.unread === true || Number(state.statusState?.unreadCount) > 0) {
+      return "in_review";
+    }
+    return "done";
+  }
+
+  function readCodexSessions() {
+    const sessions = new Map();
+    const statusPriority = {
+      done: 0,
+      canceled: 1,
+      blocked: 2,
+      in_review: 3,
+      todo: 4,
+      in_progress: 5,
+    };
+    for (const row of document.querySelectorAll("[data-app-action-sidebar-thread-id]")) {
+      const state = readThreadRowState(row);
+      const id = state.conversationId
+        || normalizeThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
+      const title = row.getAttribute("data-app-action-sidebar-thread-title")?.trim()
+        || row.getAttribute("aria-label")?.trim()
+        || row.textContent?.replace(/\s+/g, " ").trim()
+        || "未命名会话";
+      if (!id || id.startsWith("client-new-thread:")) continue;
+      const projectList = row.closest("[data-app-action-sidebar-project-list-id]");
+      const status = taskStatusForThreadRow(row, state);
+      const session = {
+        id,
+        title,
+        status,
+        nativeStatus: typeof state.statusState?.type === "string" ? state.statusState.type : "unknown",
+        unread: state.statusState?.unread === true || Number(state.statusState?.unreadCount) > 0,
+        pinned: row.getAttribute("data-app-action-sidebar-thread-pinned") === "true",
+        projectId: state.projectId
+          || projectList?.getAttribute("data-app-action-sidebar-project-list-id")
+          || "",
+        projectName: state.projectName,
+        cwd: state.workspacePath,
+      };
+      const existing = sessions.get(id);
+      if (!existing || statusPriority[status] > statusPriority[existing.status]) {
+        sessions.set(id, { ...existing, ...session });
+      } else if (!existing.projectId && session.projectId) {
+        sessions.set(id, { ...existing, projectId: session.projectId, projectName: session.projectName });
+      }
+    }
+    return [...sessions.values()];
   }
 
   function findProjectsSection() {
@@ -539,6 +679,7 @@
     const payload = {
       theme: currentTheme(),
       projects,
+      sessions: readCodexSessions(),
       user: readCodexUser() ?? undefined,
       titlebarLeftInset: titlebarLeftInset(),
       sidebarCollapsed: nativeSidebarCollapsed(),
@@ -1185,6 +1326,7 @@
     if (destroyed || reattachTimer !== null) return;
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
+      readProjectCatalog();
       ensureEntry();
       mountActivePage();
       postHostContext();
@@ -1192,6 +1334,7 @@
   }
 
   function refresh() {
+    readProjectCatalog();
     ensureEntry();
     mountActivePage();
     postHostContext();
