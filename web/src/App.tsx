@@ -34,6 +34,7 @@ import {
   moveTask as moveTaskRequest,
   removeTaskRelation,
   restoreTask as restoreTaskRequest,
+  selectLocalDirectory,
   setCurrentUserActor,
   uploadAttachment,
   updateTask as updateTaskRequest,
@@ -52,6 +53,7 @@ import {
 } from "./components/InlineMediaComposer";
 import { LinearIcon } from "./components/LinearIcon";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { ProjectCreator } from "./components/ProjectCreator";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
 import { TaskEditor } from "./components/TaskEditor";
@@ -365,6 +367,18 @@ function workspaceName(path?: string): string | null {
   return parts.at(-1) ?? path;
 }
 
+function projectIdFromName(name: string): string {
+  const slug = name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  if (slug) return slug;
+  return `project-${Date.now()}`;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
@@ -554,6 +568,7 @@ export function App() {
   const [columnVisibilityByProject, setColumnVisibilityByProject] = useState(readColumnVisibilityByProject);
   const [boardView, setBoardView] = useState<BoardView>("issues");
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [projectCreatorOpen, setProjectCreatorOpen] = useState(false);
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
     () => readIssueIdentifier(window.location.search),
   );
@@ -1746,6 +1761,18 @@ export function App() {
     window.history.replaceState(null, "", url);
   }
 
+  async function createProjectFromDialog(name: string, workspacePath: string) {
+    setActionError(null);
+    const project = await createProjectRequest({
+      id: projectIdFromName(name),
+      name,
+      workspacePath,
+    });
+    setProjects((current) => [...current, project]);
+    setProjectCreatorOpen(false);
+    changeProject(project.id);
+  }
+
   function returnToProjectHome() {
     closeContextMenu();
     setProjectMenuOpen(false);
@@ -2096,8 +2123,20 @@ export function App() {
         {!selectedProjectId ? (
           <section className="project-home">
             <div className="project-home-heading">
-              <span>任务面板</span>
-              <h1>选择项目</h1>
+              <div className="project-home-heading-row">
+                <div className="project-home-heading-copy">
+                  <span>任务面板</span>
+                  <h1>选择项目</h1>
+                </div>
+                <button
+                  className="button primary project-create-button"
+                  type="button"
+                  onClick={() => setProjectCreatorOpen(true)}
+                >
+                  <LinearIcon name="plus" />
+                  新建项目
+                </button>
+              </div>
               <p>从 Codex 项目开始，或继续使用之前保存的项目。</p>
             </div>
             {projectsLoading ? (
@@ -2298,6 +2337,14 @@ export function App() {
           developmentScanLoading={developmentScanLoading}
           onCancel={() => setEditor(null)}
           onSave={saveEditor}
+        />
+      )}
+
+      {projectCreatorOpen && (
+        <ProjectCreator
+          onCancel={() => setProjectCreatorOpen(false)}
+          onCreate={createProjectFromDialog}
+          onSelectDirectory={selectLocalDirectory}
         />
       )}
 

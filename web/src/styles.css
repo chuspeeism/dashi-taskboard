@@ -485,6 +485,35 @@ kbd {
   letter-spacing: 0.06em;
 }
 
+.project-home-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.project-home-heading-copy {
+  min-width: 0;
+}
+
+.project-home-heading-copy > span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 550;
+  letter-spacing: 0.06em;
+}
+
+.project-create-button {
+  flex: 0 0 auto;
+  margin-top: 10px;
+}
+
+.project-create-button svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
 .project-home-heading h1 {
   margin: 7px 0 5px;
   color: var(--text-primary);
@@ -5782,6 +5811,152 @@ kbd {
   background: var(--surface);
   color: var(--text-primary);
   box-shadow: 0 9px 48px rgba(0, 0, 0, 0.08), 0 6px 24px rgba(0, 0, 0, 0.1), 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.project-create-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+  border: 0.5px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--dialog-shadow);
+}
+
+.project-create-dialog::backdrop {
+  background: rgba(13, 14, 16, 0.38);
+  backdrop-filter: blur(2px);
+}
+
+.project-create-form {
+  min-width: 0;
+}
+
+.project-create-body {
+  display: grid;
+  gap: 17px;
+  padding: 20px 22px 8px;
+}
+
+.project-create-field {
+  display: grid;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.project-create-input {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 36px;
+  gap: 8px;
+  padding: 0 10px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  transition: border-color 100ms ease, background-color 100ms ease;
+}
+
+.project-create-input:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.project-create-input svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.project-create-input input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.project-create-input input::placeholder,
+.project-create-field small {
+  color: var(--text-tertiary);
+}
+
+.project-create-folder-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 24px;
+  margin: 0 -2px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.project-create-folder-button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.project-create-folder-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.project-create-folder-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.project-create-folder-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.project-create-field small {
+  font-size: 10px;
+  font-weight: 450;
+}
+
+.dialog-footer.project-create-footer {
+  justify-content: flex-end;
+  padding: 14px 22px 18px;
+}
+
+@media (max-width: 520px) {
+  .project-home-heading-row {
+    display: grid;
+    gap: 10px;
+  }
+
+  .project-create-button {
+    justify-self: start;
+    margin-top: 0;
+  }
+
 }
 
 .task-dialog::backdrop {

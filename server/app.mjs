@@ -484,6 +484,34 @@ function parseProjectCreate(body) {
   return { id, name, workspacePath };
 }
 
+function isDirectoryPickerCancellation(error) {
+  const details = `${error?.message ?? ""} ${error?.stderr ?? ""}`.toLowerCase();
+  return error?.code === 1 && (details.includes("cancel") || details.includes("-128"));
+}
+
+async function chooseLocalDirectory() {
+  if (process.platform !== "darwin") {
+    throw new ApiError(
+      501,
+      "DIRECTORY_PICKER_UNSUPPORTED",
+      "当前系统暂不支持选择文件夹，请手动输入项目目录。",
+    );
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/osascript",
+      ["-e", 'POSIX path of (choose folder with prompt "选择项目文件夹")'],
+      { maxBuffer: 16 * 1024, timeout: 120_000 },
+    );
+    const selectedPath = stdout.trim();
+    return selectedPath ? path.normalize(selectedPath) : null;
+  } catch (error) {
+    if (isDirectoryPickerCancellation(error)) return null;
+    throw new ApiError(500, "DIRECTORY_PICKER_FAILED", "无法打开文件夹选择器，请手动输入项目目录。");
+  }
+}
+
 function parseThreadId(value) {
   if (value === undefined) return undefined;
   return stringField(value, "threadId", { required: true, maxLength: 256 });
@@ -1401,6 +1429,12 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { mode: "local", authenticated: false });
         }
         return methodNotAllowed(response, ["GET", "PUT", "DELETE"]);
+      }
+
+      if (pathname === "/api/local/select-directory") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        await assertEmptyRequestBody(request, "POST /api/local/select-directory");
+        return sendJson(response, 200, { workspacePath: await chooseLocalDirectory() });
       }
 
       const projectMappingRoute = pathname.match(/^\/api\/local\/project-mappings\/([^/]+)$/);

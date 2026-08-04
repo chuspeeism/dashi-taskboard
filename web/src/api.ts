@@ -216,6 +216,13 @@ export async function listDeviceWorkspaces(signal?: AbortSignal): Promise<Record
   }
 }
 
+export async function selectLocalDirectory(): Promise<string | null> {
+  const data = await request<{ workspacePath: string | null }>("/api/local/select-directory", {
+    method: "POST",
+  });
+  return data.workspacePath;
+}
+
 export async function listWorkflowCapabilities(
   workspacePath?: string,
   signal?: AbortSignal,
