@@ -28,9 +28,10 @@
   --border: #e1e1e1;
   --border-strong: #d5d5d5;
   --border-hairline: 0.5px;
-  --accent: #5e6ad2;
-  --accent-hover: #6872d5;
-  --accent-soft: rgba(94, 106, 210, 0.11);
+  --accent: #2c2c2f;
+  --accent-hover: #1f1f22;
+  --accent-soft: rgba(44, 44, 47, 0.09);
+  --accent-foreground: #ffffff;
   --danger: #f34e52;
   --danger-soft: #fff0f0;
   --warning: #f0bf00;
@@ -40,7 +41,7 @@
   --status-progress: #f0bf00;
   --status-review: #43bc58;
   --status-blocked: #f34e52;
-  --status-done: #5e6ad2;
+  --status-done: #43bc58;
   --status-canceled: #9e9ea1;
   --scrollbar-thumb: rgba(27, 27, 27, 0.15);
   --scrollbar-thumb-hover: rgba(27, 27, 27, 0.46);
@@ -65,9 +66,10 @@
   --text-quaternary: #65656b;
   --border: rgba(255, 255, 255, 0.075);
   --border-strong: rgba(255, 255, 255, 0.13);
-  --accent: #6e78df;
-  --accent-hover: #7c86e5;
-  --accent-soft: rgba(110, 120, 223, 0.16);
+  --accent: #e8e8ea;
+  --accent-hover: #ffffff;
+  --accent-soft: rgba(232, 232, 234, 0.14);
+  --accent-foreground: #1b1b1d;
   --danger: #ef686d;
   --danger-soft: rgba(229, 72, 77, 0.12);
   --warning: #e5b729;
@@ -77,7 +79,7 @@
   --status-progress: #e4b50f;
   --status-review: #53b98a;
   --status-blocked: #ef686d;
-  --status-done: #6e78df;
+  --status-done: #53b98a;
   --status-canceled: #85858b;
   --scrollbar-thumb: rgba(238, 238, 239, 0.15);
   --scrollbar-thumb-hover: rgba(238, 238, 239, 0.5);
@@ -157,6 +159,12 @@ textarea,
 select {
   color: inherit;
   font: inherit;
+}
+
+select option,
+select optgroup {
+  background: var(--surface);
+  color: var(--text-primary);
 }
 
 button,
@@ -5745,7 +5753,7 @@ kbd {
 
 .button.primary {
   background: var(--accent);
-  color: white;
+  color: var(--accent-foreground);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18), 0 1px 2px rgba(0, 0, 0, 0.16);
 }
 
