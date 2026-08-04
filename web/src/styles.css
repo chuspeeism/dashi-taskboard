@@ -6138,6 +6138,34 @@ kbd {
   color: var(--text-primary);
 }
 
+.property-picker-trigger {
+  max-width: 100%;
+}
+
+.property-picker-trigger-icon,
+.property-picker-trigger-value {
+  min-width: 0;
+}
+
+.property-picker-trigger-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.property-picker-trigger-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.property-picker-chevron {
+  flex: 0 0 auto;
+  width: 12px !important;
+  height: 12px !important;
+  color: var(--text-tertiary);
+}
+
 .property-assignee-avatar {
   width: 14px;
   height: 14px;
@@ -6188,8 +6216,8 @@ kbd {
 .property-priority.priority-medium { color: var(--warning); }
 
 .property-thread input { width: 178px; }
-.property-workflow select { max-width: 190px; }
-.property-development select { max-width: 190px; }
+.property-workflow .property-picker-trigger { max-width: 190px; }
+.property-development .property-picker-trigger { max-width: 190px; }
 .property-more { width: 28px; padding: 0; justify-content: center; letter-spacing: 1px; }
 
 .composer-attachment-button {
@@ -6533,6 +6561,103 @@ kbd {
 .more-popover button b {
   color: var(--text-tertiary);
   font-weight: 500;
+}
+
+.property-picker-popover {
+  width: max-content;
+  min-width: 132px;
+  max-width: min(280px, calc(100vw - 24px));
+}
+
+.property-picker-popover.is-searchable {
+  width: max-content;
+  min-width: 248px;
+  max-width: min(420px, calc(100vw - 24px));
+}
+
+.property-picker-popover.is-searchable .property-picker-options {
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+}
+
+.property-picker-popover.is-searchable .property-picker-options button {
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+}
+
+.property-picker-popover:not(.is-searchable) {
+  min-width: 0;
+}
+
+.property-picker-group {
+  padding: 6px 12px 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.property-picker-options button {
+  gap: 10px;
+}
+
+.property-picker-popover:not(.is-searchable) .property-picker-options {
+  width: max-content;
+}
+
+.property-picker-popover:not(.is-searchable) .property-picker-options button {
+  width: max-content;
+  min-width: 0;
+}
+
+.property-picker-popover:not(.is-searchable) .property-picker-option-label {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.property-picker-options .property-picker-option-icon {
+  display: grid;
+  flex: 0 0 16px;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.property-picker-option-icon:empty {
+  visibility: hidden;
+}
+
+.property-picker-option-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.property-picker-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.property-picker-option-check {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--accent);
+}
+
+.property-picker-option-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+.property-picker-empty {
+  padding: 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .more-popover {

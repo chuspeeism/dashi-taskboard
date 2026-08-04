@@ -23,6 +23,7 @@ import { ActorAvatar } from "./ActorAvatar";
 import { STATUS_DETAILS } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
 import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
+import { PropertyPicker } from "./PropertyPicker";
 import {
   fileKey,
   MAX_ATTACHMENT_SIZE,
@@ -128,7 +129,7 @@ export function TaskEditor({
   const [developmentContext, setDevelopmentContext] = useState<DevelopmentContext | null>(task?.developmentContext ?? null);
   const [dueDate, setDueDate] = useState(task?.dueDate ?? "");
   const [recurrence, setRecurrence] = useState<Recurrence | null>(task?.recurrence ?? null);
-  const [menu, setMenu] = useState<"labels" | "more" | "due" | "recurrence" | null>(null);
+  const [menu, setMenu] = useState<"labels" | "status" | "priority" | "assignee" | "workflow" | "development" | "more" | "due" | "recurrence" | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -285,37 +286,54 @@ export function TaskEditor({
 
         <div className="task-form-dock">
           <div className="property-row">
-            <label className="property-control property-status">
-              <LinearStatusIcon status={status} className={`status-icon-${STATUS_DETAILS[status].tone}`} />
-              <span className="sr-only">状态</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value as TaskStatus)}>
-                {TASK_STATUSES.map((value) => <option value={value} key={value}>{STATUS_DETAILS[value].label}</option>)}
-              </select>
-            </label>
-            <label className={`property-control property-priority priority-${priority}`}>
-              <LinearPriorityIcon priority={priority} />
-              <span className="sr-only">优先级</span>
-              <select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}>
-                {TASK_PRIORITIES.map((value) => <option value={value} key={value}>{PRIORITY_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="property-control property-assignee">
-              <ActorAvatar actor={assignee} className="property-assignee-avatar" />
-              <select
-                aria-label="负责人"
-                value={actorKey(assignee)}
-                onChange={(event) => {
-                  const selected = assigneeOptions.find((actor) => actorKey(actor) === event.target.value);
-                  if (selected) setAssignee(selected);
-                }}
-              >
-                {assigneeOptions.map((actor) => (
-                  <option value={actorKey(actor)} key={actorKey(actor)}>
-                    {actor.id === currentUser.id ? `${actor.name}（我）` : actor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <PropertyPicker
+              value={status}
+              options={TASK_STATUSES.map((value) => ({
+                value,
+                label: STATUS_DETAILS[value].label,
+                icon: <LinearStatusIcon status={value} className={`status-icon-${STATUS_DETAILS[value].tone}`} />,
+              }))}
+              icon={<LinearStatusIcon status={status} className={`status-icon-${STATUS_DETAILS[status].tone}`} />}
+              open={menu === "status"}
+              triggerClassName="property-control property-status"
+              placeholder="状态"
+              ariaLabel="状态"
+              onOpenChange={(open) => setMenu(open ? "status" : null)}
+              onChange={(value) => setStatus(value as TaskStatus)}
+            />
+            <PropertyPicker
+              value={priority}
+              options={TASK_PRIORITIES.map((value) => ({
+                value,
+                label: PRIORITY_LABELS[value],
+                icon: <LinearPriorityIcon priority={value} />,
+              }))}
+              icon={<LinearPriorityIcon priority={priority} />}
+              open={menu === "priority"}
+              triggerClassName={`property-control property-priority priority-${priority}`}
+              placeholder="优先级"
+              ariaLabel="优先级"
+              onOpenChange={(open) => setMenu(open ? "priority" : null)}
+              onChange={(value) => setPriority(value as TaskPriority)}
+            />
+            <PropertyPicker
+              value={actorKey(assignee)}
+              options={assigneeOptions.map((actor) => ({
+                value: actorKey(actor),
+                label: actor.id === currentUser.id ? `${actor.name}（我）` : actor.name,
+                icon: <ActorAvatar actor={actor} className="property-assignee-avatar" />,
+              }))}
+              icon={<ActorAvatar actor={assignee} className="property-assignee-avatar" />}
+              open={menu === "assignee"}
+              triggerClassName="property-control property-assignee"
+              placeholder="负责人"
+              ariaLabel="负责人"
+              onOpenChange={(open) => setMenu(open ? "assignee" : null)}
+              onChange={(value) => {
+                const selected = assigneeOptions.find((actor) => actorKey(actor) === value);
+                if (selected) setAssignee(selected);
+              }}
+            />
             <LabelPicker
               availableLabels={availableLabels}
               selectedLabels={selectedLabels}
@@ -326,35 +344,50 @@ export function TaskEditor({
               onChange={setSelectedLabels}
             />
 
-            <label className="property-control property-workflow">
-              <LinearIcon name="dashboard" />
-              <span className="sr-only">工作流</span>
-              <select value={workflowId} onChange={(event) => setWorkflowId(event.target.value)}>
-                <option value="">工作流</option>
-                {!workflowAvailable && <option value={workflowId}>当前设备未找到此流程</option>}
-                {workflows.map((workflow) => (
-                  <option value={workflow.id} key={workflow.id}>{workflow.name}</option>
-                ))}
-              </select>
-            </label>
+            <PropertyPicker
+              value={workflowId}
+              options={[
+                { value: "", label: "工作流", icon: <LinearIcon name="dashboard" /> },
+                ...(!workflowAvailable ? [{ value: workflowId, label: "当前设备未找到此流程", icon: <LinearIcon name="dashboard" /> }] : []),
+                ...workflows.map((workflow) => ({ value: workflow.id, label: workflow.name, icon: <LinearIcon name="dashboard" /> })),
+              ]}
+              icon={<LinearIcon name="dashboard" />}
+              open={menu === "workflow"}
+              triggerClassName="property-control property-workflow"
+              placeholder="工作流"
+              ariaLabel="工作流"
+              onOpenChange={(open) => setMenu(open ? "workflow" : null)}
+              onChange={setWorkflowId}
+            />
 
-            <label className="property-control property-development" title={developmentScan.workspacePath ?? undefined}>
-              <LinearIcon name="branch" />
-              <span className="sr-only">代码分支或 Worktree</span>
-              <select
-                value={contextValue(developmentContext)}
-                disabled={developmentScanLoading}
-                onChange={(event) => setDevelopmentContext(event.target.value ? JSON.parse(event.target.value) as DevelopmentContext : null)}
-              >
-                <option value="">{developmentScanLoading ? "正在扫描 Git…" : "分支 / Worktree"}</option>
-                <optgroup label="代码分支">
-                  {developmentOptions.filter((context) => context.type === "branch").map((context) => <option value={contextValue(context)} key={contextValue(context)}>{contextLabel(context)}</option>)}
-                </optgroup>
-                <optgroup label="Worktree">
-                  {developmentOptions.filter((context) => context.type === "worktree").map((context) => <option value={contextValue(context)} key={contextValue(context)}>{contextLabel(context)}</option>)}
-                </optgroup>
-              </select>
-            </label>
+            <PropertyPicker
+              value={contextValue(developmentContext)}
+              options={[
+                { value: "", label: developmentScanLoading ? "正在扫描 Git…" : "分支 / Worktree", icon: <LinearIcon name="branch" /> },
+                ...developmentOptions.filter((context) => context.type === "branch").map((context) => ({
+                  value: contextValue(context),
+                  label: contextLabel(context),
+                  group: "代码分支",
+                  icon: <LinearIcon name="branch" />,
+                })),
+                ...developmentOptions.filter((context) => context.type === "worktree").map((context) => ({
+                  value: contextValue(context),
+                  label: contextLabel(context),
+                  group: "Worktree",
+                  icon: <LinearIcon name="folder" />,
+                })),
+              ]}
+              icon={<LinearIcon name="branch" />}
+              open={menu === "development"}
+              disabled={developmentScanLoading}
+              triggerClassName="property-control property-development"
+              placeholder="分支 / Worktree"
+              ariaLabel="代码分支或 Worktree"
+              searchable
+              searchPlaceholder="搜索分支或 Worktree…"
+              onOpenChange={(open) => setMenu(open ? "development" : null)}
+              onChange={(value) => setDevelopmentContext(value ? JSON.parse(value) as DevelopmentContext : null)}
+            />
 
             {dueDate && <button className="property-control" type="button" onClick={() => setMenu("due")}><span>截止 {displayDate(dueDate)}</span></button>}
             {recurrence && <button className="property-control" type="button" onClick={() => setMenu("recurrence")}><span>每 {recurrence.interval} {RECURRENCE_UNITS[recurrence.unit]}</span></button>}
