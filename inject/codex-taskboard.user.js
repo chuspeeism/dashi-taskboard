@@ -299,7 +299,10 @@
   }
 
   function findPageHost() {
-    const direct = document.querySelector(".app-shell-main-content-frame");
+    const direct = document.querySelector(".app-shell-main-content-frame")
+      || document.querySelector(
+        "[data-app-shell-main-content-layout] > [data-app-shell-thread-edge-divider]",
+      );
     if (direct?.closest?.("[data-app-shell-main-content-layout]")) return direct;
 
     const viewport = document.querySelector("[data-app-shell-main-content-layout]");

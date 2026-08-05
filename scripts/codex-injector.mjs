@@ -306,8 +306,19 @@ async function codexTargets(port) {
       target.type === "page" &&
       target.webSocketDebuggerUrl &&
       !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
+      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
       (target.url?.startsWith("app://") || target.title === "Codex"),
   );
+}
+
+async function waitForCodexTargets(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const targets = await codexTargets(port);
+    if (targets.length > 0) return targets;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Timed out waiting for the Codex renderer target");
 }
 
 function codexDebuggingPorts(preferredPort) {
@@ -1262,6 +1273,7 @@ async function main() {
       await waitUntilReachable(cdpVersionUrl, 30_000);
     }
 
+    await waitForCodexTargets(options.port, 30_000);
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
     const firstResults = await injectAll(
