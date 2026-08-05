@@ -189,13 +189,17 @@ export function CodexSessionBoard({
                   <div className="column-list">
                     {sessionsByStatus[status].map((session) => (
                       <article className="task-card session-card" key={session.id}>
-                        <button className="session-card-open" type="button" onClick={() => onOpenThread(session.id)}>
-                          <span className="session-card-id">{session.id.slice(0, 8)}</span>
-                          <strong>{session.title}</strong>
-                        </button>
+                        <button
+                          className="task-card-open"
+                          type="button"
+                          aria-label={`打开会话：${session.title}`}
+                          onClick={() => onOpenThread(session.id)}
+                        />
+                        <span className="session-card-id">{session.id.slice(0, 8)}</span>
+                        <strong className="session-card-title">{session.title}</strong>
                         <span className="session-card-meta">
                           {session.projectId ? (
-                            <button className="session-project-link" type="button" onClick={() => onOpenProject(session.projectId)}>{session.projectName}</button>
+                            <button className="session-project-link thread-link" type="button" onClick={() => onOpenProject(session.projectId)}>{session.projectName}</button>
                           ) : <span>{session.projectName}</span>}
                           <span>{formatUpdatedAt(session.updatedAt)}</span>
                         </span>

@@ -1837,33 +1837,6 @@ kbd {
 
 .session-card {
   min-height: 88px;
-  cursor: default;
-}
-
-.session-card-open {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-  padding: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.session-card-open::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-}
-
-.session-card-open:focus-visible::after {
-  border-radius: 6px;
-  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .session-card-id {
@@ -1873,7 +1846,7 @@ kbd {
   letter-spacing: 0.02em;
 }
 
-.session-card-open strong {
+.session-card-title {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-primary);
