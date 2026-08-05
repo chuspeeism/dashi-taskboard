@@ -3,6 +3,14 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import {
+  buildProjectContextBrief,
+  contextEntryFromRow,
+  contextRevisionFromRow,
+  encodeContextCursor,
+  sameContextCreatePayload,
+} from "../shared/project-context.mjs";
+
 export class ApiError extends Error {
   constructor(status, code, message, details) {
     super(message);
@@ -113,6 +121,21 @@ function projectFromRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function contextRevisionValues(entry, version, actor, timestamp, id = randomUUID()) {
+  return [
+    id,
+    entry.id,
+    version,
+    entry.title,
+    entry.body,
+    entry.kind,
+    JSON.stringify(entry.tags),
+    actor.id,
+    actor.name,
+    timestamp,
+  ];
 }
 
 function workflowWorkspaceFromRow(row) {
@@ -685,6 +708,296 @@ export class TaskboardDatabase {
         projects.updated_at
     `).get(id);
     return row ? projectFromRow(row) : null;
+  }
+
+  getContextEntry(id) {
+    const row = this.database.prepare(`
+      SELECT * FROM project_context_entries WHERE id = ?
+    `).get(id);
+    return row ? contextEntryFromRow(row) : null;
+  }
+
+  listProjectContext(projectId, filters) {
+    if (!this.getProject(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+
+    const where = ["project_context_entries.project_id = ?"];
+    const values = [projectId];
+    if (filters.archived === "false") {
+      where.push("project_context_entries.archived_at IS NULL");
+    } else if (filters.archived === "true") {
+      where.push("project_context_entries.archived_at IS NOT NULL");
+    }
+    if (filters.kind !== undefined) {
+      where.push("project_context_entries.kind = ?");
+      values.push(filters.kind);
+    }
+    if (filters.tag !== undefined) {
+      where.push(`EXISTS (
+        SELECT 1 FROM json_each(project_context_entries.tags)
+        WHERE json_each.value = ?
+      )`);
+      values.push(filters.tag);
+    }
+    if (filters.pinned !== undefined) {
+      where.push("project_context_entries.pinned = ?");
+      values.push(filters.pinned ? 1 : 0);
+    }
+    if (filters.query !== undefined) {
+      const escaped = filters.query
+        .replaceAll("\\", "\\\\")
+        .replaceAll("%", "\\%")
+        .replaceAll("_", "\\_");
+      const pattern = `%${escaped}%`;
+      where.push(`(
+        project_context_entries.title LIKE ? ESCAPE '\\'
+        OR project_context_entries.body LIKE ? ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM json_each(project_context_entries.tags)
+          WHERE json_each.value LIKE ? ESCAPE '\\'
+        )
+      )`);
+      values.push(pattern, pattern, pattern);
+    }
+    if (filters.cursor) {
+      where.push(`(
+        project_context_entries.created_at < ?
+        OR (
+          project_context_entries.created_at = ?
+          AND project_context_entries.id < ?
+        )
+      )`);
+      values.push(filters.cursor[0], filters.cursor[0], filters.cursor[1]);
+    }
+
+    const rows = this.database.prepare(`
+      SELECT *
+      FROM project_context_entries
+      WHERE ${where.join(" AND ")}
+      ORDER BY project_context_entries.created_at DESC, project_context_entries.id DESC
+      LIMIT ?
+    `).all(...values, filters.limit + 1);
+    const hasMore = rows.length > filters.limit;
+    const entries = rows.slice(0, filters.limit).map(contextEntryFromRow);
+    return {
+      entries,
+      nextCursor: hasMore
+        ? encodeContextCursor([
+          rows[filters.limit - 1].created_at,
+          rows[filters.limit - 1].id,
+        ])
+        : null,
+    };
+  }
+
+  getProjectContextBrief(projectId) {
+    if (!this.getProject(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    const entries = this.database.prepare(`
+      SELECT *
+      FROM project_context_entries
+      WHERE project_id = ? AND archived_at IS NULL
+      ORDER BY updated_at DESC, id DESC
+    `).all(projectId).map(contextEntryFromRow);
+    return buildProjectContextBrief(entries);
+  }
+
+  listContextRevisions(id) {
+    const entry = this.getContextEntry(id);
+    if (!entry) {
+      throw new ApiError(404, "CONTEXT_NOT_FOUND", `Context entry '${id}' does not exist`);
+    }
+    return this.database.prepare(`
+      SELECT *
+      FROM project_context_revisions
+      WHERE entry_id = ?
+      ORDER BY version ASC, id ASC
+    `).all(entry.id).map(contextRevisionFromRow);
+  }
+
+  createContextEntry(projectId, input, actor) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+        throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+      }
+      if (input.idempotencyKey !== null) {
+        const existingRow = this.database.prepare(`
+          SELECT * FROM project_context_entries
+          WHERE project_id = ? AND idempotency_key = ?
+        `).get(projectId, input.idempotencyKey);
+        if (existingRow) {
+          const existing = contextEntryFromRow(existingRow);
+          if (!sameContextCreatePayload(existing, input)) {
+            throw new ApiError(
+              409,
+              "IDEMPOTENCY_CONFLICT",
+              "Idempotency key was already used with different context content",
+            );
+          }
+          this.database.exec("COMMIT");
+          return { entry: existing, created: false };
+        }
+      }
+
+      const id = randomUUID();
+      const timestamp = now();
+      this.database.prepare(`
+        INSERT INTO project_context_entries (
+          id, project_id, kind, title, body, tags,
+          source_type, source_id, source_thread_id,
+          author_type, author_id, author_name, pinned, archived_at,
+          version, idempotency_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?)
+      `).run(
+        id,
+        projectId,
+        input.kind,
+        input.title,
+        input.body,
+        JSON.stringify(input.tags),
+        input.sourceType,
+        input.sourceId,
+        input.sourceThreadId,
+        actor.type,
+        actor.id,
+        actor.name,
+        input.pinned ? 1 : 0,
+        input.idempotencyKey,
+        timestamp,
+        timestamp,
+      );
+      const entry = this.getContextEntry(id);
+      this.database.prepare(`
+        INSERT INTO project_context_revisions (
+          id, entry_id, version, title, body, kind, tags,
+          author_id, author_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(...contextRevisionValues(entry, 1, actor, timestamp));
+      this.database.exec("COMMIT");
+      return { entry: this.getContextEntry(id), created: true };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateContextEntry(id, expectedVersion, changes, actor) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.#requireContextEntry(id);
+      this.#requireContextVersion(current, expectedVersion);
+      const next = {
+        ...current,
+        ...changes,
+        version: current.version + 1,
+      };
+      const timestamp = now();
+      this.database.prepare(`
+        INSERT INTO project_context_revisions (
+          id, entry_id, version, title, body, kind, tags,
+          author_id, author_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(...contextRevisionValues(next, next.version, actor, timestamp));
+      const assignments = [];
+      const values = [];
+      const columns = {
+        kind: "kind",
+        title: "title",
+        body: "body",
+        tags: "tags",
+        pinned: "pinned",
+      };
+      for (const [key, column] of Object.entries(columns)) {
+        if (!Object.hasOwn(changes, key)) continue;
+        assignments.push(`${column} = ?`);
+        values.push(key === "tags" ? JSON.stringify(changes[key]) : key === "pinned" ? (changes[key] ? 1 : 0) : changes[key]);
+      }
+      assignments.push("version = version + 1", "updated_at = ?");
+      values.push(timestamp, id, expectedVersion);
+      const result = this.database.prepare(`
+        UPDATE project_context_entries
+        SET ${assignments.join(", ")}
+        WHERE id = ? AND version = ?
+      `).run(...values);
+      if (result.changes !== 1) this.#throwContextMissingOrConflict(id, expectedVersion);
+      this.database.exec("COMMIT");
+      return this.getContextEntry(id);
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  archiveContextEntry(id, expectedVersion, actor) {
+    return this.#setContextArchived(id, expectedVersion, actor, true);
+  }
+
+  restoreContextEntry(id, expectedVersion, actor) {
+    return this.#setContextArchived(id, expectedVersion, actor, false);
+  }
+
+  #setContextArchived(id, expectedVersion, actor, archived) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.#requireContextEntry(id);
+      this.#requireContextVersion(current, expectedVersion);
+      if (archived && current.archivedAt !== null) {
+        throw new ApiError(409, "CONTEXT_ALREADY_ARCHIVED", "Context entry is already archived");
+      }
+      if (!archived && current.archivedAt === null) {
+        throw new ApiError(409, "CONTEXT_NOT_ARCHIVED", "Only archived context entries can be restored");
+      }
+      const timestamp = now();
+      const next = { ...current, version: current.version + 1 };
+      this.database.prepare(`
+        INSERT INTO project_context_revisions (
+          id, entry_id, version, title, body, kind, tags,
+          author_id, author_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(...contextRevisionValues(next, next.version, actor, timestamp));
+      const result = this.database.prepare(`
+        UPDATE project_context_entries
+        SET archived_at = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(archived ? timestamp : null, timestamp, id, expectedVersion);
+      if (result.changes !== 1) this.#throwContextMissingOrConflict(id, expectedVersion);
+      this.database.exec("COMMIT");
+      return this.getContextEntry(id);
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  #requireContextEntry(id) {
+    const entry = this.getContextEntry(id);
+    if (!entry) {
+      throw new ApiError(404, "CONTEXT_NOT_FOUND", `Context entry '${id}' does not exist`);
+    }
+    return entry;
+  }
+
+  #requireContextVersion(entry, expectedVersion) {
+    if (entry.version !== expectedVersion) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Context entry was changed by another client", {
+        expectedVersion,
+        actualVersion: entry.version,
+      });
+    }
+  }
+
+  #throwContextMissingOrConflict(id, expectedVersion) {
+    const entry = this.getContextEntry(id);
+    if (!entry) {
+      throw new ApiError(404, "CONTEXT_NOT_FOUND", `Context entry '${id}' does not exist`);
+    }
+    throw new ApiError(409, "VERSION_CONFLICT", "Context entry was changed by another client", {
+      expectedVersion,
+      actualVersion: entry.version,
+    });
   }
 
   getWorkflowWorkspace(projectId) {
