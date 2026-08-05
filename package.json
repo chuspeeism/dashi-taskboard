@@ -11,6 +11,7 @@
   },
   "scripts": {
     "codex": "node scripts/codex-injector.mjs --launch --watch --open",
+    "codex:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/codex-windows.ps1",
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
     "codex:refresh": "node scripts/codex-injector.mjs --refresh",

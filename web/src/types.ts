@@ -244,11 +244,29 @@ export interface Attachment {
   createdAt: string;
 }
 
+export interface HostThemePalette {
+  background?: string;
+  backgroundUnder?: string;
+  surface?: string;
+  surfaceRaised?: string;
+  surfaceMuted?: string;
+  surfaceHover?: string;
+  surfaceActive?: string;
+  columnHeader?: string;
+  textPrimary?: string;
+  textSecondary?: string;
+  textTertiary?: string;
+  textQuaternary?: string;
+  border?: string;
+  borderStrong?: string;
+}
+
 export interface HostContext {
   user?: ActorIdentity;
   workspacePath?: string;
   threadId?: string;
   theme?: "light" | "dark";
+  palette?: HostThemePalette;
   projectId?: string;
   projects?: Array<{ id: string; name: string }>;
   titlebarLeftInset?: number;

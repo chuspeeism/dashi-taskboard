@@ -147,7 +147,7 @@
         min-width: 0;
         min-height: 0;
         overflow: hidden;
-        background: Canvas;
+        background: var(--color-background-surface, var(--wb-surface-primary, Canvas));
         color: CanvasText;
         pointer-events: auto;
       }
@@ -159,7 +159,7 @@
         width: 100%;
         height: 100%;
         border: 0;
-        background: Canvas;
+        background: var(--color-background-surface, var(--wb-surface-primary, Canvas));
       }
       #${FRAME_ID}[hidden] {
         display: none !important;
@@ -370,6 +370,73 @@
     }
   }
 
+  function readHostPalette() {
+    const rootStyle = window.getComputedStyle(document.documentElement);
+    const readToken = (...names) => {
+      for (const name of names) {
+        const value = rootStyle.getPropertyValue(name).trim();
+        if (value && !value.includes("var(")) return value;
+      }
+      return "";
+    };
+    const bodyStyle = document.body ? window.getComputedStyle(document.body) : rootStyle;
+    const background = readToken(
+      "--color-background-surface",
+      "--wb-surface-primary",
+      "--color-surface",
+    ) || bodyStyle.backgroundColor;
+    const backgroundUnder = readToken(
+      "--color-background-surface-under",
+      "--wb-surface-secondary",
+      "--color-surface-secondary",
+      "--vscode-sideBar-background",
+    ) || background;
+    const surface = readToken(
+      "--color-background-secondary-soft",
+      "--color-surface-tertiary",
+    ) || background;
+    return {
+      background,
+      backgroundUnder,
+      surface,
+      surfaceRaised: readToken(
+        "--color-background-primary-soft",
+        "--color-surface-elevated-secondary",
+        "--color-background-control",
+      ) || surface,
+      surfaceMuted: readToken(
+        "--color-background-secondary-soft-alpha",
+        "--color-background-secondary-soft",
+      ) || surface,
+      surfaceHover: readToken(
+        "--color-background-primary-ghost-hover",
+        "--vscode-settings-rowHoverBackground",
+      ) || surface,
+      surfaceActive: readToken(
+        "--color-background-primary-soft-active",
+        "--color-background-control",
+      ) || surface,
+      columnHeader: readToken(
+        "--color-background-primary-soft-alpha",
+        "--color-background-secondary-soft-alpha",
+      ) || surface,
+      textPrimary: readToken("--color-text-foreground", "--color-text"),
+      textSecondary: readToken(
+        "--color-text-foreground-secondary",
+        "--color-text-secondary-solid",
+        "--color-text-secondary",
+      ),
+      textTertiary: readToken(
+        "--color-text-foreground-tertiary",
+        "--color-text-tertiary",
+        "--color-text-disabled",
+      ),
+      textQuaternary: readToken("--color-text-disabled", "--color-text-tertiary"),
+      border: readToken("--color-border", "--vscode-sideBar-border"),
+      borderStrong: readToken("--color-border-strong", "--color-border-heavy"),
+    };
+  }
+
   function threadIdFromLocation() {
     const source = `${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}`;
     const match = source.match(/(?:session|conversation|thread)(?:\/|=|:|-)([A-Za-z0-9_.-]+)/i)
@@ -538,6 +605,7 @@
     const workspacePath = workspaceFromLocation();
     const payload = {
       theme: currentTheme(),
+      palette: readHostPalette(),
       projects,
       user: readCodexUser() ?? undefined,
       titlebarLeftInset: titlebarLeftInset(),
@@ -571,7 +639,7 @@
         }
       : liveContext;
     postToFrame({ type: "taskboard:host-context", payload });
-    postToFrame({ type: "taskboard:theme", theme: payload.theme });
+    postToFrame({ type: "taskboard:theme", theme: payload.theme, palette: payload.palette });
   }
 
   function findThreadRow(threadId) {

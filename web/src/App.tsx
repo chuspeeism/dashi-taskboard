@@ -71,6 +71,7 @@ import {
   type ActorIdentity,
   type DevelopmentScan,
   type HostContext,
+  type HostThemePalette,
   type IssueRelationType,
   type Project,
   type Task,
@@ -223,6 +224,32 @@ const EVENT_NAMES = [
 
 function isTheme(value: unknown): value is Theme {
   return value === "light" || value === "dark";
+}
+
+const HOST_PALETTE_VARIABLES: Array<[keyof HostThemePalette, string]> = [
+  ["background", "--bg"],
+  ["background", "--header-bg"],
+  ["backgroundUnder", "--sidebar-bg"],
+  ["surface", "--surface"],
+  ["surfaceRaised", "--surface-raised"],
+  ["surfaceMuted", "--surface-muted"],
+  ["surfaceHover", "--surface-hover"],
+  ["surfaceActive", "--surface-active"],
+  ["columnHeader", "--column-header"],
+  ["textPrimary", "--text-primary"],
+  ["textSecondary", "--text-secondary"],
+  ["textTertiary", "--text-tertiary"],
+  ["textQuaternary", "--text-quaternary"],
+  ["border", "--border"],
+  ["borderStrong", "--border-strong"],
+];
+
+function isHostThemePalette(value: unknown): value is HostThemePalette {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value).every((color) => (
+    color === undefined
+    || (typeof color === "string" && color.length <= 200 && !/[;{}]/.test(color))
+  ));
 }
 
 function getInitialTheme(): Theme {
@@ -533,6 +560,7 @@ export function App() {
   const embedded = query.get("host") === "codex";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [hostPalette, setHostPalette] = useState<HostThemePalette | null>(null);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
@@ -959,6 +987,19 @@ export function App() {
   }, [embedded, theme]);
 
   useEffect(() => {
+    const root = document.documentElement;
+    if (!embedded || !hostPalette) return;
+    const applied: string[] = [];
+    for (const [paletteKey, variable] of HOST_PALETTE_VARIABLES) {
+      const value = hostPalette[paletteKey];
+      if (!value) continue;
+      root.style.setProperty(variable, value);
+      applied.push(variable);
+    }
+    return () => applied.forEach((variable) => root.style.removeProperty(variable));
+  }, [embedded, hostPalette]);
+
+  useEffect(() => {
     writeTaskFilters(filters);
   }, [filters]);
 
@@ -993,7 +1034,12 @@ export function App() {
 
     function receiveHostMessage(event: MessageEvent) {
       if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
-      const message = event.data as { type?: string; payload?: unknown; theme?: unknown };
+      const message = event.data as {
+        type?: string;
+        payload?: unknown;
+        theme?: unknown;
+        palette?: unknown;
+      };
 
       if (message.type === "taskboard:automation-response" && message.payload) {
         const payload = message.payload as Partial<AutomationHostResponse>;
@@ -1011,6 +1057,7 @@ export function App() {
 
       if (message.type === "taskboard:theme" && isTheme(message.theme)) {
         setTheme(message.theme);
+        if (isHostThemePalette(message.palette)) setHostPalette(message.palette);
         return;
       }
 
@@ -1031,6 +1078,7 @@ export function App() {
       setHostContext(payload);
       setCurrentUserActor(payload.user);
       if (isTheme(payload.theme)) setTheme(payload.theme);
+      if (isHostThemePalette(payload.palette)) setHostPalette(payload.palette);
     }
 
     window.addEventListener("message", receiveHostMessage);
