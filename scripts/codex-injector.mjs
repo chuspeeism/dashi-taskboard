@@ -23,7 +23,10 @@ const injectorPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(injectorPath), "..");
 const defaultCodexDebuggingPort = 9229;
 const injectionPath = path.join(projectRoot, "inject", "codex-taskboard.user.js");
-const automationPoliciesPath = path.join(projectRoot, ".data", "codex-automation-policies.json");
+const taskboardDataDirectory = process.env.CODEX_TASKBOARD_DATA_DIR
+  ? path.resolve(process.env.CODEX_TASKBOARD_DATA_DIR)
+  : path.join(projectRoot, ".data");
+const automationPoliciesPath = path.join(taskboardDataDirectory, "codex-automation-policies.json");
 const taskboardOrigin = `http://127.0.0.1:${resolvePort()}`;
 const taskboardHealthUrl = `${taskboardOrigin}/health`;
 const taskboardPageUrl = `${taskboardOrigin}/?host=codex`;
@@ -115,15 +118,19 @@ async function waitUntilReachable(url, timeoutMs) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-function startTaskboard({ detached }) {
+function startTaskboard({ detached, codexDebugPort }) {
   return spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
+    env: {
+      ...process.env,
+      CODEX_TASKBOARD_CODEX_DEBUG_PORT: String(codexDebugPort),
+    },
     stdio: detached ? "ignore" : "inherit",
   });
 }
 
-function createTaskboardSupervisor({ detached }) {
+function createTaskboardSupervisor({ detached, codexDebugPort }) {
   let child = null;
   let ensureInFlight = null;
   let retryAfter = 0;
@@ -146,7 +153,7 @@ function createTaskboardSupervisor({ detached }) {
         } catch (_) {}
       }
 
-      const started = startTaskboard({ detached });
+      const started = startTaskboard({ detached, codexDebugPort });
       child = started;
       if (detached) started.unref();
       started.once("error", (error) => {
@@ -306,8 +313,18 @@ async function codexTargets(port) {
       target.type === "page" &&
       target.webSocketDebuggerUrl &&
       !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
+      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
       (target.url?.startsWith("app://") || target.title === "Codex"),
   );
+}
+
+async function waitUntilCodexTargets(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await codexTargets(port)).length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("Timed out waiting for a Codex renderer target");
 }
 
 function codexDebuggingPorts(preferredPort) {
@@ -381,6 +398,16 @@ function startResidentInjector(
   return { pid: child.pid, started: true };
 }
 
+async function startResidentInjectorAfterManagedRestart(port, startupToken) {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const [existingPid] = residentInjectorPids(port);
+    if (existingPid) return { pid: existingPid, started: false };
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return startResidentInjector(port, false, true, startupToken);
+}
+
 async function stopResidentInjector(pid) {
   process.kill(pid, "SIGTERM");
   const deadline = Date.now() + 5_000;
@@ -434,9 +461,7 @@ async function restartResidentInjectorForRefresh(port) {
     findResidents: residentInjectorPids,
     stopResident: stopResidentInjector,
     createStartupToken: randomUUID,
-    startResident: (targetPort, startupToken) => (
-      startResidentInjector(targetPort, false, true, startupToken)
-    ),
+    startResident: startResidentInjectorAfterManagedRestart,
     waitUntilReady: (targetPort, pid, startupToken) => (
       waitForResidentInjectorReady(targetPort, pid, startupToken, sourceHash)
     ),
@@ -1240,7 +1265,10 @@ async function main() {
   }
 
   let codexProcess = null;
-  const supervisor = createTaskboardSupervisor({ detached: !options.watch });
+  const supervisor = createTaskboardSupervisor({
+    detached: !options.watch,
+    codexDebugPort: options.port,
+  });
 
   try {
     const cdpReachable = await isReachable(cdpVersionUrl);
@@ -1260,6 +1288,7 @@ async function main() {
     if (!cdpReachable) {
       codexProcess = launchCodex(options.appPath, options.port);
       await waitUntilReachable(cdpVersionUrl, 30_000);
+      await waitUntilCodexTargets(options.port, 30_000);
     }
 
     const { source, sourceHash } = await currentInjectionSource();

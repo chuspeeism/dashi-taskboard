@@ -1874,3 +1874,86 @@ test("task changes from one LAN client are broadcast to another client", async (
   assert.equal(listResult.body.tasks.some((task) => task.id === createResult.body.task.id), true);
   await reader.cancel();
 });
+
+test("project automation configs round-trip through the local API", async () => {
+  const baseUrl = await startServer();
+  const input = {
+    codexProjectId: "codex-project",
+    projectName: "Local",
+    workspacePath: "/tmp/workspace",
+    skillPath: "/tmp/skills/manage-taskboard/SKILL.md",
+    enabledByUser: true,
+    quotaAware: false,
+    intervalSeconds: 5,
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+  };
+
+  const created = await request(baseUrl, "/api/local/automations/local", { method: "PUT", body: input });
+  assert.equal(created.response.status, 200);
+  assert.equal(created.body.automation.taskboardProjectId, "local");
+  assert.equal(created.body.automation.enabledByUser, true);
+  assert.equal(created.body.automation.model, "gpt-5.5");
+
+  const listed = await request(baseUrl, "/api/local/automations");
+  assert.equal(listed.response.status, 200);
+  assert.equal(listed.body.automations.length, 1);
+  assert.equal(listed.body.automations[0].taskboardProjectId, "local");
+
+  const got = await request(baseUrl, "/api/local/automations/local");
+  assert.equal(got.response.status, 200);
+  assert.equal(got.body.automation.intervalSeconds, 5);
+
+  const updated = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: { ...input, enabledByUser: false, model: "gpt-5.6-terra" },
+  });
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.body.automation.enabledByUser, false);
+  assert.equal(updated.body.automation.model, "gpt-5.6-terra");
+
+  const deleted = await request(baseUrl, "/api/local/automations/local", { method: "DELETE" });
+  assert.equal(deleted.response.status, 200);
+
+  const missing = await request(baseUrl, "/api/local/automations/local");
+  assert.equal(missing.response.status, 404);
+});
+
+test("project automation rejects invalid models, intervals and unknown fields", async () => {
+  const baseUrl = await startServer();
+  const base = {
+    codexProjectId: "codex-project",
+    projectName: "Local",
+    workspacePath: "/tmp/workspace",
+    skillPath: "/tmp/skills/manage-taskboard/SKILL.md",
+    enabledByUser: true,
+    quotaAware: false,
+    intervalSeconds: 5,
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+  };
+
+  const badModel = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: { ...base, model: "gpt-future" },
+  });
+  assert.equal(badModel.response.status, 400);
+
+  const badEffort = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: { ...base, model: "gpt-5.4", reasoningEffort: "ultra" },
+  });
+  assert.equal(badEffort.response.status, 400);
+
+  const badInterval = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: { ...base, intervalSeconds: 7 },
+  });
+  assert.equal(badInterval.response.status, 400);
+
+  const unknownField = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: { ...base, extra: true },
+  });
+  assert.equal(unknownField.response.status, 400);
+});

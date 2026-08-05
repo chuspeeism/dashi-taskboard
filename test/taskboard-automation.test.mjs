@@ -27,6 +27,8 @@ const baseRequest = {
   intervalMinutes: 5,
   model: "gpt-5.5",
   reasoningEffort: "high",
+  enabledByUser: true,
+  quotaAware: false,
 };
 
 test("the automation model catalog matches Codex and normalizes unsupported efforts", () => {

@@ -26,6 +26,7 @@ import {
   createTask as createTaskRequest,
   getTaskboardRevision,
   getWorkflowWorkspace,
+  getProjectAutomation,
   getTaskboardMetadata,
   listDevelopmentContexts,
   listDeviceWorkspaces,
@@ -37,6 +38,7 @@ import {
   setCurrentUserActor,
   uploadAttachment,
   updateTask as updateTaskRequest,
+  upsertProjectAutomation,
 } from "./api";
 import {
   actorForAssigneeTarget,
@@ -130,7 +132,7 @@ interface UndoNotice {
 type ColumnVisibilityByProject = Record<string, Partial<Record<TaskStatus, boolean>>>;
 type ProjectAutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
-type AutomationIntervalMinutes = 5 | 10 | 15 | 30 | 60;
+type AutomationIntervalSeconds = 5 | 300 | 600 | 900 | 1800 | 3600;
 
 interface AutomationQuotaStatus {
   state: AutomationQuotaState;
@@ -146,43 +148,12 @@ interface ProjectAutomationRecord {
   enabledByUser: boolean;
   quotaAware: boolean;
   quota?: AutomationQuotaStatus;
-  intervalMinutes: AutomationIntervalMinutes;
+  intervalSeconds: AutomationIntervalSeconds;
   model: AutomationModel;
   reasoningEffort: AutomationReasoningEffort;
 }
 
 type ProjectAutomations = Record<string, ProjectAutomationRecord>;
-
-interface AutomationHostItem {
-  id: string;
-  status: ProjectAutomationStatus;
-  model: AutomationModel;
-  reasoningEffort: AutomationReasoningEffort;
-  rrule: string;
-}
-
-interface AutomationHostResponse {
-  requestId: string;
-  ok: boolean;
-  item?: AutomationHostItem;
-  items?: AutomationHostItem[];
-  quota?: AutomationQuotaStatus;
-  policy?: {
-    automationId?: string;
-    enabledByUser: boolean;
-    quotaAware: boolean;
-    intervalMinutes: AutomationIntervalMinutes;
-    model: AutomationModel;
-    reasoningEffort: AutomationReasoningEffort;
-  };
-  error?: string;
-}
-
-interface PendingAutomationRequest {
-  resolve: (response: AutomationHostResponse) => void;
-  reject: (error: Error) => void;
-  timeoutId: number;
-}
 
 const DEFAULT_USER_ACTOR: ActorIdentity = {
   type: "user",
@@ -200,7 +171,7 @@ const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
 const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
-  intervalMinutes: 5,
+  intervalSeconds: 300,
   model: "gpt-5.5",
   reasoningEffort: "high",
 } as const;
@@ -270,11 +241,13 @@ function readProjectAutomations(): ProjectAutomations {
       const reasoningEffort = candidate.reasoningEffort ?? "high";
       const enabledByUser = candidate.enabledByUser ?? candidate.status === "ACTIVE";
       const quotaAware = candidate.quotaAware ?? false;
+      const intervalSeconds = candidate.intervalSeconds
+        ?? ((candidate as Partial<ProjectAutomationRecord> & { intervalMinutes?: number }).intervalMinutes ?? 5) * 60;
       if (
         (candidate.automationId !== undefined && typeof candidate.automationId !== "string")
         || typeof candidate.codexProjectId !== "string"
         || (candidate.status !== "ACTIVE" && candidate.status !== "PAUSED")
-        || !isAutomationIntervalMinutes(candidate.intervalMinutes ?? 5)
+        || !isAutomationIntervalSeconds(intervalSeconds)
         || !isAutomationModel(model)
         || !isAutomationReasoningEffort(reasoningEffort)
         || !isSupportedModelEffort(model, reasoningEffort)
@@ -290,7 +263,7 @@ function readProjectAutomations(): ProjectAutomations {
         enabledByUser,
         quotaAware,
         ...(quota ? { quota } : {}),
-        intervalMinutes: candidate.intervalMinutes ?? 5,
+        intervalSeconds,
         model,
         reasoningEffort,
       };
@@ -315,28 +288,8 @@ function isAutomationQuotaStatus(value: unknown): value is AutomationQuotaStatus
   );
 }
 
-function isAutomationHostPolicy(
-  value: AutomationHostResponse["policy"] | undefined,
-): value is NonNullable<AutomationHostResponse["policy"]> {
-  return Boolean(
-    value
-    && (value.automationId === undefined || typeof value.automationId === "string")
-    && typeof value.enabledByUser === "boolean"
-    && typeof value.quotaAware === "boolean"
-    && isAutomationIntervalMinutes(value.intervalMinutes)
-    && isAutomationModel(value.model)
-    && isAutomationReasoningEffort(value.reasoningEffort)
-    && isSupportedModelEffort(value.model, value.reasoningEffort),
-  );
-}
-
-function isAutomationIntervalMinutes(value: unknown): value is AutomationIntervalMinutes {
-  return value === 5 || value === 10 || value === 15 || value === 30 || value === 60;
-}
-
-function intervalMinutesFromRrule(value: string): AutomationIntervalMinutes | null {
-  const match = /^RRULE:FREQ=MINUTELY;INTERVAL=(5|10|15|30|60)$/.exec(value);
-  return match ? Number(match[1]) as AutomationIntervalMinutes : null;
+function isAutomationIntervalSeconds(value: unknown): value is AutomationIntervalSeconds {
+  return value === 5 || value === 300 || value === 600 || value === 900 || value === 1800 || value === 3600;
 }
 
 function readColumnVisibilityByProject(): ColumnVisibilityByProject {
@@ -369,20 +322,6 @@ function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return "Something went wrong while loading your issues.";
-}
-
-function isAutomationHostItem(value: unknown): value is AutomationHostItem {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<AutomationHostItem>;
-  return (
-    typeof item.id === "string"
-    && (item.status === "ACTIVE" || item.status === "PAUSED")
-    && isAutomationModel(item.model)
-    && isAutomationReasoningEffort(item.reasoningEffort)
-    && isSupportedModelEffort(item.model, item.reasoningEffort)
-    && typeof item.rrule === "string"
-    && intervalMinutesFromRrule(item.rrule) !== null
-  );
 }
 
 function isLocalTaskboardOrigin(origin: string): boolean {
@@ -587,7 +526,6 @@ export function App() {
   selectedProjectIdRef.current = selectedProjectId;
 
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
-  const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
   const projectAutomationsRef = useRef(projectAutomations);
 
@@ -712,16 +650,19 @@ export function App() {
   ) => {
     setProjectAutomations((current) => {
       if (
-        record
-        && current[projectId]?.automationId === record.automationId
-        && current[projectId]?.codexProjectId === record.codexProjectId
-        && current[projectId]?.status === record.status
-        && current[projectId]?.enabledByUser === record.enabledByUser
-        && current[projectId]?.quotaAware === record.quotaAware
-        && JSON.stringify(current[projectId]?.quota) === JSON.stringify(record.quota)
-        && current[projectId]?.intervalMinutes === record.intervalMinutes
-        && current[projectId]?.model === record.model
-        && current[projectId]?.reasoningEffort === record.reasoningEffort
+        (!record && !(projectId in current))
+        || (
+          record
+          && current[projectId]?.automationId === record.automationId
+          && current[projectId]?.codexProjectId === record.codexProjectId
+          && current[projectId]?.status === record.status
+          && current[projectId]?.enabledByUser === record.enabledByUser
+          && current[projectId]?.quotaAware === record.quotaAware
+          && JSON.stringify(current[projectId]?.quota) === JSON.stringify(record.quota)
+          && current[projectId]?.intervalSeconds === record.intervalSeconds
+          && current[projectId]?.model === record.model
+          && current[projectId]?.reasoningEffort === record.reasoningEffort
+        )
       ) {
         return current;
       }
@@ -734,123 +675,26 @@ export function App() {
     });
   }, []);
 
-  const sendAutomationRequest = useCallback((
-    operation: "ensure-active" | "pause" | "list" | "apply-policy",
-    options: Pick<
-      ProjectAutomationRecord,
-      "enabledByUser" | "quotaAware" | "intervalMinutes" | "model" | "reasoningEffort"
-    >,
-    automationId?: string,
-  ) => {
-    if (
-      !selectedProject
-      || !automationProjectContext.codexProjectId
-      || !automationProjectContext.workspacePath
-    ) {
-      return Promise.reject(new Error(
-        automationProjectContext.unavailableReason ?? "无法读取项目自动化信息",
-      ));
-    }
-    const requestId = window.crypto.randomUUID();
-    const response = new Promise<AutomationHostResponse>((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => {
-        pendingAutomationRequestsRef.current.delete(requestId);
-        reject(new Error("Codex 自动化没有响应，请稍后重试"));
-      }, 10_000);
-      pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
-    });
-    window.parent.postMessage({
-      type: "taskboard:automation-request",
-      payload: {
-        requestId,
-        operation,
-        taskboardProjectId: selectedProjectId,
-        codexProjectId: automationProjectContext.codexProjectId,
-        projectName: selectedProject.name,
-        workspacePath: automationProjectContext.workspacePath,
-        skillPath: manageTaskboardSkillPath,
-        ...(automationId ? { automationId } : {}),
-        enabledByUser: options.enabledByUser,
-        quotaAware: options.quotaAware,
-        intervalMinutes: options.intervalMinutes,
-        model: options.model,
-        reasoningEffort: options.reasoningEffort,
-      },
-    }, "*");
-    return response;
-  }, [
-    automationProjectContext,
-    manageTaskboardSkillPath,
-    selectedProject,
-    selectedProjectId,
-  ]);
-
   const reconcileProjectAutomation = useCallback(async () => {
-    if (automationProjectContext.unavailableReason) {
-      setAutomationError(null);
-      return;
-    }
-    if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return;
-    const stored = projectAutomationsRef.current[selectedProjectId];
+    if (!selectedProjectId || automationRequestInFlightRef.current) return;
     automationRequestInFlightRef.current = true;
     setAutomationPending(true);
     setAutomationError(null);
     try {
-      const options = stored ?? {
-        status: "PAUSED" as const,
-        ...DEFAULT_AUTOMATION_OPTIONS,
-      };
-      const response = await sendAutomationRequest(
-        stored ? "apply-policy" : "list",
-        options,
-        stored?.automationId,
-      );
-      const items = Array.isArray(response.items)
-        ? response.items.filter(isAutomationHostItem)
-        : [];
-      if (!stored) {
-        const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
-        if (!policy) return;
-        const item = items.find((candidate) => candidate.id === policy.automationId)
-          ?? (items.length === 1 ? items[0] : undefined);
-        writeProjectAutomation(selectedProjectId, {
-          automationId: item?.id ?? policy.automationId,
-          codexProjectId: automationProjectContext.codexProjectId,
-          status: item?.status ?? "PAUSED",
-          enabledByUser: policy.enabledByUser,
-          quotaAware: policy.quotaAware,
-          intervalMinutes: policy.intervalMinutes,
-          model: policy.model,
-          reasoningEffort: policy.reasoningEffort,
-        });
+      const config = await getProjectAutomation(selectedProjectId);
+      if (!config) {
+        writeProjectAutomation(selectedProjectId, null);
         return;
       }
-      const item = (isAutomationHostItem(response.item) ? response.item : undefined)
-        ?? items.find((item) => item.id === stored?.automationId)
-        ?? (items.length === 1 ? items[0] : undefined);
-      if (!item) {
-        if (stored) {
-          writeProjectAutomation(selectedProjectId, {
-            ...stored,
-            automationId: undefined,
-            status: "PAUSED",
-            ...(response.quota ? { quota: response.quota } : {}),
-          });
-        }
-        return;
-      }
-      const intervalMinutes = intervalMinutesFromRrule(item.rrule);
-      if (!intervalMinutes) return;
       writeProjectAutomation(selectedProjectId, {
-        automationId: item.id,
-        codexProjectId: automationProjectContext.codexProjectId,
-        status: item.status,
-        enabledByUser: stored.enabledByUser,
-        quotaAware: stored.quotaAware,
-        ...(response.quota ? { quota: response.quota } : {}),
-        intervalMinutes,
-        model: item.model,
-        reasoningEffort: item.reasoningEffort,
+        automationId: config.taskboardProjectId,
+        codexProjectId: automationProjectContext.codexProjectId ?? config.codexProjectId,
+        status: config.enabledByUser ? "ACTIVE" : "PAUSED",
+        enabledByUser: config.enabledByUser,
+        quotaAware: config.quotaAware,
+        intervalSeconds: config.intervalSeconds as AutomationIntervalSeconds,
+        model: config.model as AutomationModel,
+        reasoningEffort: config.reasoningEffort as AutomationReasoningEffort,
       });
     } catch (error) {
       setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
@@ -861,22 +705,23 @@ export function App() {
   }, [
     automationProjectContext,
     selectedProjectId,
-    sendAutomationRequest,
     writeProjectAutomation,
   ]);
 
   const saveProjectAutomation = useCallback(async (options: {
     enabledByUser: boolean;
     quotaAware: boolean;
-    intervalMinutes: AutomationIntervalMinutes;
+    intervalSeconds: AutomationIntervalSeconds;
     model: AutomationModel;
     reasoningEffort: AutomationReasoningEffort;
   }) => {
     const stored = projectAutomations[selectedProjectId];
     if (
       !selectedProjectId
+      || !selectedProject
       || automationProjectContext.unavailableReason
       || !automationProjectContext.codexProjectId
+      || !automationProjectContext.workspacePath
       || automationRequestInFlightRef.current
     ) return;
     const previousRecord = stored;
@@ -884,16 +729,24 @@ export function App() {
     setAutomationPending(true);
     setAutomationError(null);
     try {
-      const response = await sendAutomationRequest("apply-policy", options, stored?.automationId);
-      const item = isAutomationHostItem(response.item) ? response.item : undefined;
-      writeProjectAutomation(selectedProjectId, {
-        automationId: item?.id,
+      await upsertProjectAutomation(selectedProjectId, {
         codexProjectId: automationProjectContext.codexProjectId,
-        status: item?.status ?? "PAUSED",
+        projectName: selectedProject.name,
+        workspacePath: automationProjectContext.workspacePath,
+        skillPath: manageTaskboardSkillPath,
         enabledByUser: options.enabledByUser,
         quotaAware: options.quotaAware,
-        ...(response.quota ? { quota: response.quota } : {}),
-        intervalMinutes: options.intervalMinutes,
+        intervalSeconds: options.intervalSeconds,
+        model: options.model,
+        reasoningEffort: options.reasoningEffort,
+      });
+      writeProjectAutomation(selectedProjectId, {
+        automationId: selectedProjectId,
+        codexProjectId: automationProjectContext.codexProjectId,
+        status: options.enabledByUser ? "ACTIVE" : "PAUSED",
+        enabledByUser: options.enabledByUser,
+        quotaAware: options.quotaAware,
+        intervalSeconds: options.intervalSeconds,
         model: options.model,
         reasoningEffort: options.reasoningEffort,
       });
@@ -906,9 +759,10 @@ export function App() {
     }
   }, [
     automationProjectContext,
+    manageTaskboardSkillPath,
     projectAutomations,
+    selectedProject,
     selectedProjectId,
-    sendAutomationRequest,
     writeProjectAutomation,
   ]);
 
@@ -995,20 +849,6 @@ export function App() {
       if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
       const message = event.data as { type?: string; payload?: unknown; theme?: unknown };
 
-      if (message.type === "taskboard:automation-response" && message.payload) {
-        const payload = message.payload as Partial<AutomationHostResponse>;
-        if (typeof payload.requestId !== "string") return;
-        const pending = pendingAutomationRequestsRef.current.get(payload.requestId);
-        if (!pending) return;
-        window.clearTimeout(pending.timeoutId);
-        pendingAutomationRequestsRef.current.delete(payload.requestId);
-        if (payload.ok) pending.resolve(payload as AutomationHostResponse);
-        else pending.reject(new Error(
-          typeof payload.error === "string" ? payload.error : "Codex 无法更新自动化",
-        ));
-        return;
-      }
-
       if (message.type === "taskboard:theme" && isTheme(message.theme)) {
         setTheme(message.theme);
         return;
@@ -1037,10 +877,6 @@ export function App() {
     window.parent.postMessage({ type: "taskboard:ready" }, "*");
     return () => {
       window.removeEventListener("message", receiveHostMessage);
-      for (const pending of pendingAutomationRequestsRef.current.values()) {
-        window.clearTimeout(pending.timeoutId);
-      }
-      pendingAutomationRequestsRef.current.clear();
     };
   }, [embedded]);
 

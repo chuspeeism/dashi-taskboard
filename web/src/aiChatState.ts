@@ -17,6 +17,45 @@ export interface AiChatRouteState {
 
 export const AI_CHAT_SKILL_MARKER = "\uFFFC";
 
+export const AI_CHAT_PREFERENCE_KEY = "taskboard.aiChat.preference.v1";
+
+export interface AiChatPreference {
+  model: string;
+  reasoningEffort: string;
+}
+
+export function readAiChatPreference(storage?: Pick<Storage, "getItem">): AiChatPreference | null {
+  if (!storage?.getItem) return null;
+  try {
+    const raw = storage.getItem(AI_CHAT_PREFERENCE_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as unknown;
+    if (
+      !value
+      || typeof value !== "object"
+      || Array.isArray(value)
+      || typeof (value as AiChatPreference).model !== "string"
+      || !(value as AiChatPreference).model.trim()
+      || typeof (value as AiChatPreference).reasoningEffort !== "string"
+    ) {
+      return null;
+    }
+    return {
+      model: (value as AiChatPreference).model,
+      reasoningEffort: (value as AiChatPreference).reasoningEffort,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeAiChatPreference(
+  pref: AiChatPreference,
+  storage?: Pick<Storage, "setItem">,
+): void {
+  storage?.setItem?.(AI_CHAT_PREFERENCE_KEY, JSON.stringify(pref));
+}
+
 export function parseAiChatComposerFragment(
   raw: string,
   validSkillIds: Iterable<string>,
@@ -97,6 +136,15 @@ export function reasoningEffortForModel(
       || left.index - right.index
     ))[0];
   return nearestEffort?.effort ?? model.defaultReasoningEffort;
+}
+
+export function settingsForNewAiThread(
+  catalogProjectId: string | null,
+  draftProjectId: string | null,
+  settings: { model: string; reasoningEffort: string; sandbox: AiChatSandbox } | undefined,
+): Partial<{ model: string; reasoningEffort: string; sandbox: AiChatSandbox }> {
+  if (!catalogProjectId || catalogProjectId !== draftProjectId || !settings) return {};
+  return settings;
 }
 
 export function buildTurnInput(
@@ -205,6 +253,34 @@ export function patchAiChatSnapshot(
 ): AiChatThreadSnapshot | null {
   if (!current || current.thread.id !== threadId) return current;
   return { ...current, thread };
+}
+
+export interface SkillMentionMatch {
+  start: number;
+  end: number;
+  query: string;
+}
+
+export function readSkillMention(text: string, offset: number): SkillMentionMatch | null {
+  const prefix = text.slice(0, offset);
+  const match = /(?:^|\s)@([^\s@]*)$/.exec(prefix);
+  if (!match) return null;
+  return {
+    start: prefix.lastIndexOf("@"),
+    end: offset,
+    query: match[1],
+  };
+}
+
+export function insertSkillMention(
+  text: string,
+  start: number,
+  end: number,
+  skill: { id: string; label: string },
+): { value: string; caret: number; skillId: string } {
+  const label = skill.label;
+  const value = `${text.slice(0, start)}@${label}${text.slice(end)}`;
+  return { value, caret: start + 1 + label.length, skillId: skill.id };
 }
 
 export function createAiSnapshotRefreshQueue(

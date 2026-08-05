@@ -171,6 +171,23 @@ function aiChatEventFromRow(row) {
   };
 }
 
+function projectAutomationFromRow(row) {
+  return {
+    taskboardProjectId: row.taskboard_project_id,
+    codexProjectId: row.codex_project_id,
+    projectName: row.project_name,
+    workspacePath: row.workspace_path,
+    skillPath: row.skill_path,
+    enabledByUser: row.enabled_by_user === 1,
+    quotaAware: row.quota_aware === 1,
+    intervalSeconds: row.interval_seconds,
+    model: row.model,
+    reasoningEffort: row.reasoning_effort,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function projectPrefix(projectId) {
   const prefix = projectId.toUpperCase().replace(/[^A-Z0-9]+/g, "");
   return (prefix || "TASK").slice(0, 12);
@@ -325,7 +342,33 @@ export class TaskboardDatabase {
       CREATE INDEX IF NOT EXISTS ai_chat_events_thread_created
         ON ai_chat_events(thread_id, created_at, id);
 
+      CREATE TABLE IF NOT EXISTS project_automations (
+        taskboard_project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        codex_project_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        skill_path TEXT NOT NULL,
+        enabled_by_user INTEGER NOT NULL DEFAULT 0,
+        quota_aware INTEGER NOT NULL DEFAULT 0,
+        interval_minutes INTEGER NOT NULL CHECK (interval_minutes IN (5, 10, 15, 30, 60)),
+        interval_seconds INTEGER NOT NULL DEFAULT 300 CHECK (interval_seconds IN (5, 300, 600, 900, 1800, 3600)),
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
     `);
+
+    const automationColumns = this.database.prepare("PRAGMA table_info(project_automations)").all();
+    if (!automationColumns.some((column) => column.name === "interval_seconds")) {
+      this.database.exec(`
+        ALTER TABLE project_automations
+        ADD COLUMN interval_seconds INTEGER NOT NULL DEFAULT 300
+        CHECK (interval_seconds IN (5, 300, 600, 900, 1800, 3600));
+        UPDATE project_automations SET interval_seconds = interval_minutes * 60;
+      `);
+    }
 
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
@@ -754,6 +797,69 @@ export class TaskboardDatabase {
       throw new ApiError(404, "AI_CHAT_THREAD_NOT_FOUND", `AI chat thread '${id}' does not exist`);
     }
     this.database.prepare("DELETE FROM ai_chat_threads WHERE id = ?").run(id);
+    return current;
+  }
+
+  getProjectAutomation(taskboardProjectId) {
+    const row = this.database.prepare(
+      "SELECT * FROM project_automations WHERE taskboard_project_id = ?",
+    ).get(taskboardProjectId);
+    return row ? projectAutomationFromRow(row) : null;
+  }
+
+  listProjectAutomations() {
+    return this.database.prepare(
+      "SELECT * FROM project_automations ORDER BY taskboard_project_id, created_at",
+    ).all().map(projectAutomationFromRow);
+  }
+
+  upsertProjectAutomation(input) {
+    const timestamp = now();
+    const legacyIntervalMinutes = input.intervalSeconds === 5
+      ? 5
+      : input.intervalSeconds / 60;
+    this.database.prepare(`
+      INSERT INTO project_automations (
+        taskboard_project_id, codex_project_id, project_name, workspace_path, skill_path,
+        enabled_by_user, quota_aware, interval_minutes, interval_seconds, model, reasoning_effort,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(taskboard_project_id) DO UPDATE SET
+        codex_project_id = excluded.codex_project_id,
+        project_name = excluded.project_name,
+        workspace_path = excluded.workspace_path,
+        skill_path = excluded.skill_path,
+        enabled_by_user = excluded.enabled_by_user,
+        quota_aware = excluded.quota_aware,
+        interval_minutes = excluded.interval_minutes,
+        interval_seconds = excluded.interval_seconds,
+        model = excluded.model,
+        reasoning_effort = excluded.reasoning_effort,
+        updated_at = excluded.updated_at
+    `).run(
+      input.taskboardProjectId,
+      input.codexProjectId,
+      input.projectName,
+      input.workspacePath,
+      input.skillPath,
+      input.enabledByUser ? 1 : 0,
+      input.quotaAware ? 1 : 0,
+      legacyIntervalMinutes,
+      input.intervalSeconds,
+      input.model,
+      input.reasoningEffort,
+      timestamp,
+      timestamp,
+    );
+    return this.getProjectAutomation(input.taskboardProjectId);
+  }
+
+  deleteProjectAutomation(taskboardProjectId) {
+    const current = this.getProjectAutomation(taskboardProjectId);
+    if (!current) return null;
+    this.database.prepare(
+      "DELETE FROM project_automations WHERE taskboard_project_id = ?",
+    ).run(taskboardProjectId);
     return current;
   }
 

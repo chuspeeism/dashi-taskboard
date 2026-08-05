@@ -192,6 +192,8 @@ test("complete App automation payloads cross the injected forwarder into the cur
     intervalMinutes: 10,
     model: "gpt-5.6-sol",
     reasoningEffort: "ultra",
+    enabledByUser: true,
+    quotaAware: false,
   };
 
   for (const operation of ["list", "pause", "ensure-active"]) {

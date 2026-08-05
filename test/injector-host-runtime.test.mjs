@@ -185,3 +185,28 @@ test("refresh stops every stale resident before starting one token-verified repl
     ["ready", 9231, 9876, startupToken],
   ]);
 });
+
+test("refresh accepts a replacement that Codex restarted before the launcher", async () => {
+  const calls = [];
+  const replacement = await restartResidentInjector(9231, {
+    findResidents: () => [4321],
+    stopResident: async (pid) => calls.push(["stop", pid]),
+    createStartupToken: () => "unused-token",
+    startResident: (port, token) => {
+      calls.push(["start", port, token]);
+      return { pid: 9876, started: false };
+    },
+    waitUntilReady: async (port, pid, token) => calls.push(["ready", port, pid, token]),
+  });
+
+  assert.deepEqual(replacement, {
+    previousPids: [4321],
+    pid: 9876,
+    restarted: true,
+  });
+  assert.deepEqual(calls, [
+    ["stop", 4321],
+    ["start", 9231, "unused-token"],
+    ["ready", 9231, 9876, null],
+  ]);
+});

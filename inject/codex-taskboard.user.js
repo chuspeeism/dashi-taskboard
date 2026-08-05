@@ -65,6 +65,7 @@
   let hostRequestSequence = 0;
   let observer = null;
   let reattachTimer = null;
+  let mountRetryTimer = null;
   let lastFocusedElement = null;
   let hostContextSnapshot = null;
   let mutedNativeSelections = new Map();
@@ -307,20 +308,30 @@
     const viewportRect = viewport.getBoundingClientRect();
     const headerBottom = document.querySelector("main > header")?.getBoundingClientRect().bottom
       ?? viewportRect.top;
-    return Array.from(viewport.children).find((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return rect.width >= viewportRect.width * 0.8
-        && rect.height >= viewportRect.height * 0.7
-        && rect.top >= headerBottom - 1;
-    }) || null;
+    const findCandidate = (minWidthRatio, minHeightRatio) => (
+      Array.from(viewport.children).find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.width > 0
+          && rect.height > 0
+          && rect.width >= viewportRect.width * minWidthRatio
+          && rect.height >= viewportRect.height * minHeightRatio
+          && rect.top >= headerBottom - 1;
+      }) || null
+    );
+    return findCandidate(0.8, 0.7)
+      || findCandidate(0.5, 0.5)
+      || viewport.querySelector("main")
+      || viewport;
   }
 
   function findPageMount() {
     const frameHost = findPageHost();
     const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
     const surface = viewport?.parentElement;
-    if (!frameHost || !viewport || !surface || !surface.closest("main")) return null;
-    return { frameHost, surface };
+    if (frameHost && surface?.closest("main")) return { frameHost, surface };
+    const main = document.querySelector("main");
+    if (!main) return null;
+    return { frameHost: frameHost ?? main, surface: main };
   }
 
   function muteNativeSelection() {
@@ -1136,6 +1147,10 @@
     if (!active && page?.hidden !== false) return;
     openGeneration += 1;
     active = false;
+    if (mountRetryTimer !== null) {
+      window.clearTimeout(mountRetryTimer);
+      mountRetryTimer = null;
+    }
     if (page) page.hidden = true;
     restoreNativeContent();
     restoreNativeSelection();
@@ -1144,6 +1159,16 @@
     if (restoreFocus) lastFocusedElement?.focus?.();
     lastFocusedElement = null;
     hostContextSnapshot = null;
+  }
+
+  function retryMountActivePage(generation, attemptsLeft = 25) {
+    if (destroyed || !active || generation !== openGeneration) return;
+    mountActivePage();
+    if (page?.isConnected || attemptsLeft <= 0) return;
+    mountRetryTimer = window.setTimeout(
+      () => retryMountActivePage(generation, attemptsLeft - 1),
+      80,
+    );
   }
 
   function openTaskboard() {
@@ -1157,7 +1182,11 @@
     ensureEntry();
     mountActivePage();
     syncEntryState();
-    void prepareTaskboard(generation);
+    if (page?.isConnected) {
+      void prepareTaskboard(generation);
+    } else {
+      retryMountActivePage(generation);
+    }
   }
 
   function isNativePageNavigation(target) {
@@ -1222,6 +1251,8 @@
     destroyed = true;
     if (reattachTimer !== null) window.clearTimeout(reattachTimer);
     reattachTimer = null;
+    if (mountRetryTimer !== null) window.clearTimeout(mountRetryTimer);
+    mountRetryTimer = null;
     observer?.disconnect();
     observer = null;
     cancelFrameReadyWaiters(new Error("任务面板已关闭"));

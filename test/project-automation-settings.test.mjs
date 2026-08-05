@@ -22,28 +22,27 @@ test("project automation state is device-local and scoped by taskboard project",
   assert.match(appSource, /type ProjectAutomationStatus = "ACTIVE" \| "PAUSED"/);
   assert.match(appSource, /automationId\?: string/);
   assert.match(appSource, /codexProjectId: string/);
-  assert.match(appSource, /type AutomationIntervalMinutes = 5 \| 10 \| 15 \| 30 \| 60/);
+  assert.match(appSource, /type AutomationIntervalSeconds = 5 \| 300 \| 600 \| 900 \| 1800 \| 3600/);
   assert.match(appSource, /DEFAULT_AUTOMATION_OPTIONS[\s\S]*?model: "gpt-5\.5"[\s\S]*?reasoningEffort: "high"/);
   assert.match(appSource, /localStorage\.getItem\(PROJECT_AUTOMATIONS_KEY\)/);
   assert.match(appSource, /localStorage\.setItem\(PROJECT_AUTOMATIONS_KEY, JSON\.stringify\(next\)\)/);
   assert.match(appSource, /projectAutomations\[selectedProjectId\]/);
 });
 
-test("automation requests use the exact Codex host message contract", () => {
-  assert.match(appSource, /type: "taskboard:automation-request"/);
-  assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list"/);
-  assert.match(appSource, /taskboardProjectId: selectedProjectId/);
-  assert.match(appSource, /codexProjectId/);
+test("automation settings sync through the local server API instead of the Codex host", () => {
+  assert.doesNotMatch(appSource, /type: "taskboard:automation-request"/);
+  assert.doesNotMatch(appSource, /pendingAutomationRequestsRef/);
+  assert.doesNotMatch(appSource, /message\.type === "taskboard:automation-response"/);
+  assert.match(appSource, /getProjectAutomation\(selectedProjectId\)/);
+  assert.match(appSource, /upsertProjectAutomation\(selectedProjectId/);
+  assert.match(appSource, /codexProjectId: automationProjectContext\.codexProjectId/);
   assert.match(appSource, /projectName: selectedProject\.name/);
-  assert.match(appSource, /workspacePath/);
+  assert.match(appSource, /workspacePath: automationProjectContext\.workspacePath/);
   assert.match(appSource, /skillPath: manageTaskboardSkillPath/);
-  assert.match(appSource, /intervalMinutes: options\.intervalMinutes/);
+  assert.match(appSource, /intervalSeconds: options\.intervalSeconds/);
   assert.match(appSource, /model: options\.model/);
   assert.match(appSource, /reasoningEffort: options\.reasoningEffort/);
-  assert.match(appSource, /message\.type === "taskboard:automation-response"/);
-  assert.match(appSource, /pendingAutomationRequestsRef/);
-  assert.match(appSource, /requestId/);
-  assert.match(appSource, /window\.setTimeout/);
+  assert.match(appSource, /enabledByUser \? "ACTIVE" : "PAUSED"/);
 });
 
 test("project mapping is based on exact ids and workspace paths, never project names", () => {
@@ -62,7 +61,8 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.match(menuSource, /无自动化/);
   assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
   assert.match(menuSource, /自动认领开关/);
-  assert.match(menuSource, /5, 10, 15, 30, 60/);
+  assert.match(menuSource, /<option value=\{5\}>5 秒<\/option>/);
+  assert.match(menuSource, /\[5, 10, 15, 30, 60\]\.map/);
   assert.match(menuSource, /AUTOMATION_MODELS\.map/);
   assert.match(menuSource, /EFFORT_LABELS\[effort\]/);
   assert.match(menuSource, /createPortal/);
@@ -96,9 +96,9 @@ test("automation play and pause retain Linear's 16px filled presentation", () =>
 });
 
 test("the automation menu reuses the Linear switch and keeps form focus chrome suppressed", () => {
-  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.status === "ACTIVE" \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.enabledByUser \? " is-on" : ""\}`\}/);
   assert.match(menuSource, /role="switch"/);
-  assert.match(menuSource, /aria-checked=\{draft\.status === "ACTIVE"\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.enabledByUser\}/);
   assert.doesNotMatch(menuSource, /type="checkbox"/);
   assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
   assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);
@@ -107,16 +107,9 @@ test("the automation menu reuses the Linear switch and keeps form focus chrome s
 test("unavailable automation state has one notice, clears stale errors, and cannot change", () => {
   assert.match(menuSource, /error && error !== unavailableReason/);
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
-  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 4);
-  const reconcileSource = appSource.slice(
-    appSource.indexOf("const reconcileProjectAutomation"),
-    appSource.indexOf("const saveProjectAutomation"),
-  );
-  assert.match(
-    reconcileSource,
-    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return;/,
-  );
-  assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
+  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 5);
+  assert.match(appSource, /setAutomationError\(null\)/);
+  assert.doesNotMatch(appSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
 });
 
 test("automation changes submit immediately with model-specific effort normalization", () => {
@@ -147,12 +140,10 @@ test("pending completion reconciles the optimistic draft to confirmed host state
   assert.match(menuSource, /disabled=\{disabled\}/);
 });
 
-test("opening settings and changing projects reconcile with the host list", () => {
-  assert.match(appSource, /sendAutomationRequest\("list", options, stored\?\.automationId\)/);
-  assert.match(appSource, /items\.find\(\(item\) => item\.id === stored\?\.automationId\)/);
-  assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
-  assert.match(appSource, /status: item\.status/);
-  assert.match(appSource, /automationId: undefined/);
-  assert.match(appSource, /options\.status === "PAUSED" && !stored\?\.automationId/);
+test("opening settings and changing projects reconcile with the stored server config", () => {
+  assert.match(appSource, /const config = await getProjectAutomation\(selectedProjectId\)/);
+  assert.match(appSource, /automationId: config\.taskboardProjectId/);
+  assert.match(appSource, /status: config\.enabledByUser \? "ACTIVE" : "PAUSED"/);
+  assert.match(appSource, /writeProjectAutomation\(selectedProjectId, null\)/);
   assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
 });

@@ -37,7 +37,10 @@ import {
   normalizeChatSelection,
   parseAiChatComposerFragment,
   patchAiChatSnapshot,
+  readAiChatPreference,
   reasoningEffortForModel,
+  settingsForNewAiThread,
+  writeAiChatPreference,
 } from "../aiChatState";
 import type {
   AiChatCatalog,
@@ -966,8 +969,10 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   const [composerSkillTokens, setComposerSkillTokens] = useState<ComposerSkillToken[]>([]);
   const [pendingDangerInput, setPendingDangerInput] = useState<PendingDangerInput | null>(null);
   const [unread, setUnread] = useState(false);
-  const [draftModel, setDraftModel] = useState("");
-  const [draftEffort, setDraftEffort] = useState("");
+  const [draftModel, setDraftModel] = useState(() => readAiChatPreference()?.model ?? "");
+  const [draftEffort, setDraftEffort] = useState(
+    () => readAiChatPreference()?.reasoningEffort ?? "",
+  );
   const [draftSandbox, setDraftSandbox] = useState<AiChatSandbox>("workspace-write");
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
@@ -984,6 +989,8 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   const messagesRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const panelResizeSessionRef = useRef<PanelResizeSession | null>(null);
+  const draftSettingsManuallyChangedRef = useRef(0);
+  const lastRestoredThreadIdRef = useRef<string | null>(null);
   const selectedThreadRef = useRef(selectedThreadId);
   const draftReturnThreadIdRef = useRef<string | null>(null);
   const panelOpenRef = useRef(panelOpen);
@@ -1289,6 +1296,13 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   }, [available, catalogProjectId]);
 
   const restoreDraftSettings = useCallback((thread: AiChatThread) => {
+    if (
+      thread.id === lastRestoredThreadIdRef.current
+      && Date.now() - draftSettingsManuallyChangedRef.current < 3_000
+    ) {
+      return;
+    }
+    lastRestoredThreadIdRef.current = thread.id;
     setDraftModel(thread.model);
     setDraftEffort(thread.reasoningEffort);
     setDraftSandbox(thread.sandbox);
@@ -1300,7 +1314,11 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       restoreDraftSettings(thread);
       return;
     }
-    const normalized = normalizeChatSelection(activeCatalog?.models ?? [], draftModel, draftEffort);
+    const preference = readAiChatPreference();
+    const normalized = preference
+      && activeCatalog?.models.some((model) => model.slug === preference.model)
+      ? normalizeChatSelection(activeCatalog.models, preference.model, preference.reasoningEffort)
+      : normalizeChatSelection(activeCatalog?.models ?? [], draftModel, draftEffort);
     if (normalized) {
       setDraftModel(normalized.model);
       setDraftEffort(normalized.reasoningEffort);
@@ -1473,11 +1491,11 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       setError("请先进入一个已映射的项目，再新建对话");
       return null;
     }
-    const inheritedSettings = {
-      model: draftModel,
-      reasoningEffort: draftEffort,
-      sandbox: draftSandbox,
-    };
+    const inheritedSettings = settingsForNewAiThread(
+      catalogProjectId,
+      input.projectId,
+      { model: draftModel, reasoningEffort: draftEffort, sandbox: draftSandbox },
+    );
     setLoading(true);
     try {
       const targetCatalog = catalogLoadedProjectId === input.projectId && activeCatalog
@@ -1488,14 +1506,15 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
         inheritedSettings.model,
         inheritedSettings.reasoningEffort,
       );
-      const sandbox = targetCatalog.sandboxes.includes(inheritedSettings.sandbox)
+      const sandbox = inheritedSettings.sandbox
+        && targetCatalog.sandboxes.includes(inheritedSettings.sandbox)
         ? inheritedSettings.sandbox
         : targetCatalog.sandboxes.find(
           (candidate): candidate is AiChatSandbox => candidate === "workspace-write",
-        ) ?? targetCatalog.sandboxes.find(isAiChatSandbox) ?? inheritedSettings.sandbox;
+        ) ?? "workspace-write";
       const settings = {
-        model: normalized?.model ?? inheritedSettings.model,
-        reasoningEffort: normalized?.reasoningEffort ?? inheritedSettings.reasoningEffort,
+        model: normalized?.model ?? inheritedSettings.model ?? "",
+        reasoningEffort: normalized?.reasoningEffort ?? inheritedSettings.reasoningEffort ?? "",
         sandbox,
       };
       const thread = await createAiChatThread({
@@ -1568,6 +1587,8 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
     setMenu(null);
     setDraftModel(model.slug);
     setDraftEffort(reasoningEffort);
+    draftSettingsManuallyChangedRef.current = Date.now();
+    writeAiChatPreference({ model: model.slug, reasoningEffort });
     await saveThreadSettings({
       model: model.slug,
       reasoningEffort,
@@ -1577,12 +1598,15 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   async function chooseEffort(reasoningEffort: string) {
     setMenu(null);
     setDraftEffort(reasoningEffort);
+    draftSettingsManuallyChangedRef.current = Date.now();
+    writeAiChatPreference({ model: draftModel, reasoningEffort });
     await saveThreadSettings({ reasoningEffort });
   }
 
   async function chooseSandbox(sandbox: AiChatSandbox) {
     setMenu(null);
     setDraftSandbox(sandbox);
+    draftSettingsManuallyChangedRef.current = Date.now();
     await saveThreadSettings({ sandbox });
   }
 

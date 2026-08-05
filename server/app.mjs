@@ -16,7 +16,9 @@ import {
   isTaskStatus,
 } from "../shared/domain.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
+import { isSupportedModelEffort } from "../shared/taskboard-automation-options.mjs";
 import { AiChatService } from "./ai-chat.mjs";
+import { AutomationScheduler } from "./automation.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
   CloudProxyError,
@@ -275,6 +277,53 @@ function pathField(value, name) {
     throw new ApiError(400, "INVALID_FIELD", `'${name}' cannot contain null bytes`);
   }
   return normalized;
+}
+
+function parseProjectAutomation(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "codexProjectId",
+    "projectName",
+    "workspacePath",
+    "skillPath",
+    "enabledByUser",
+    "quotaAware",
+    "intervalSeconds",
+    "model",
+    "reasoningEffort",
+  ]));
+  if (typeof body.enabledByUser !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'enabledByUser' must be a boolean");
+  }
+  if (typeof body.quotaAware !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'quotaAware' must be a boolean");
+  }
+  if (![5, 300, 600, 900, 1800, 3600].includes(body.intervalSeconds)) {
+    throw new ApiError(400, "INVALID_FIELD", "'intervalSeconds' must be 5, 300, 600, 900, 1800 or 3600");
+  }
+  const model = stringField(body.model, "model", { required: true, maxLength: 64 });
+  const reasoningEffort = stringField(body.reasoningEffort, "reasoningEffort", { required: true, maxLength: 32 });
+  if (!isSupportedModelEffort(model, reasoningEffort)) {
+    throw new ApiError(400, "INVALID_FIELD", `Reasoning effort '${reasoningEffort}' is not supported by model '${model}'`);
+  }
+  const parseAbsolutePath = (value, name) => {
+    const normalized = stringField(value, name, { required: true, maxLength: 4096 });
+    if (!path.isAbsolute(normalized)) {
+      throw new ApiError(400, "INVALID_FIELD", `'${name}' must be an absolute path`);
+    }
+    return normalized;
+  };
+  return {
+    codexProjectId: stringField(body.codexProjectId, "codexProjectId", { required: true, maxLength: 256 }),
+    projectName: stringField(body.projectName, "projectName", { required: true, maxLength: 200 }),
+    workspacePath: parseAbsolutePath(body.workspacePath, "workspacePath"),
+    skillPath: parseAbsolutePath(body.skillPath, "skillPath"),
+    enabledByUser: body.enabledByUser,
+    quotaAware: body.quotaAware,
+    intervalSeconds: body.intervalSeconds,
+    model,
+    reasoningEffort,
+  };
 }
 
 function parseDueDate(value, name = "dueDate") {
@@ -1332,6 +1381,10 @@ export function createTaskboardServer(options = {}) {
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
   });
+  const automationScheduler = new AutomationScheduler({
+    database,
+    codexExecutable: resolved.codexExecutable,
+  });
   const aiEventResponses = new Set();
 
   const server = createServer(async (request, response) => {
@@ -1425,6 +1478,40 @@ export function createTaskboardServer(options = {}) {
         }
         await cloudConfig.setProjectWorkspace(projectId, workspacePath);
         return sendJson(response, 200, { projectId, workspacePath });
+      }
+
+      const automationsRoute = pathname.match(/^\/api\/local\/automations(?:\/([^/]+))?$/);
+      if (automationsRoute) {
+        assertNoQuery(url.searchParams, "GET /api/local/automations[/:projectId]");
+        const projectSegment = automationsRoute[1];
+        if (!projectSegment) {
+          if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+          return sendJson(response, 200, { automations: automationScheduler.list() });
+        }
+        const projectId = validateProjectId(decodeRouteSegment(projectSegment, "Project id"));
+        if (request.method === "GET") {
+          const automation = automationScheduler.get(projectId);
+          if (!automation) {
+            throw new ApiError(404, "AUTOMATION_NOT_FOUND", `No automation for project '${projectId}'`);
+          }
+          return sendJson(response, 200, { automation });
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          const input = {
+            ...parseProjectAutomation(body),
+            taskboardProjectId: projectId,
+          };
+          return sendJson(response, 200, { automation: automationScheduler.setProjectAutomation(input) });
+        }
+        if (request.method === "DELETE") {
+          const removed = automationScheduler.deleteProjectAutomation(projectId);
+          if (!removed) {
+            throw new ApiError(404, "AUTOMATION_NOT_FOUND", `No automation for project '${projectId}'`);
+          }
+          return sendJson(response, 200, { automation: removed });
+        }
+        return methodNotAllowed(response, ["GET", "PUT", "DELETE"]);
       }
 
       if (pathname === "/api/meta") {
@@ -2047,6 +2134,7 @@ export function createTaskboardServer(options = {}) {
   return {
     database,
     aiChat,
+    automationScheduler,
     server,
     options: resolved,
     async listen({ host = "127.0.0.1", port = resolvePort() } = {}) {
@@ -2067,6 +2155,7 @@ export function createTaskboardServer(options = {}) {
         server.listen(port, host);
       });
       listening = true;
+      automationScheduler.start();
       return server.address();
     },
     async close() {
@@ -2078,6 +2167,7 @@ export function createTaskboardServer(options = {}) {
       events.close();
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();
+      await automationScheduler.stop();
       await aiChat.close();
       await serverClosed;
       listening = false;

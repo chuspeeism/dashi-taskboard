@@ -167,6 +167,76 @@ export async function deleteAiChatThread(threadId: string): Promise<void> {
   );
 }
 
+export interface ProjectAutomationConfig {
+  taskboardProjectId: string;
+  codexProjectId: string;
+  projectName: string;
+  workspacePath: string;
+  skillPath: string;
+  enabledByUser: boolean;
+  quotaAware: boolean;
+  intervalSeconds: number;
+  model: string;
+  reasoningEffort: string;
+}
+
+export interface ProjectAutomationInput {
+  codexProjectId: string;
+  projectName: string;
+  workspacePath: string;
+  skillPath: string;
+  enabledByUser: boolean;
+  quotaAware: boolean;
+  intervalSeconds: number;
+  model: string;
+  reasoningEffort: string;
+}
+
+export async function listProjectAutomations(signal?: AbortSignal): Promise<ProjectAutomationConfig[]> {
+  const data = await request<{ automations: ProjectAutomationConfig[] }>(
+    "/api/local/automations",
+    { signal },
+  );
+  return data.automations;
+}
+
+export async function getProjectAutomation(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ProjectAutomationConfig | null> {
+  try {
+    const data = await request<{ automation: ProjectAutomationConfig }>(
+      `/api/local/automations/${encodeURIComponent(projectId)}`,
+      { signal },
+    );
+    return data.automation;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function upsertProjectAutomation(
+  projectId: string,
+  input: ProjectAutomationInput,
+): Promise<ProjectAutomationConfig> {
+  const data = await request<{ automation: ProjectAutomationConfig }>(
+    `/api/local/automations/${encodeURIComponent(projectId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
+  return data.automation;
+}
+
+export async function deleteProjectAutomation(projectId: string): Promise<void> {
+  await request<void>(
+    `/api/local/automations/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function startAiChatTurn(
   threadId: string,
   input: {

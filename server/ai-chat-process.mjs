@@ -434,8 +434,12 @@ export function spawnCodexTurn({
     }
   }
 
-  child.stdout.on("data", consumeChunk);
-  child.stdout.on("end", finishStdout);
+  if (onRawEvent) {
+    child.stdout.on("data", consumeChunk);
+    child.stdout.on("end", finishStdout);
+  } else {
+    child.stdout.resume();
+  }
   child.stderr.on("data", (chunk) => {
     if (stderrBuffer.length >= STDERR_LIMIT) return;
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -446,7 +450,7 @@ export function spawnCodexTurn({
   });
   child.on("error", rejectWithDiagnostic);
   child.on("close", (exitCode, signal) => {
-    finishStdout();
+    if (onRawEvent) finishStdout();
     if (settled) return;
     settled = true;
     if (fatalError) {
@@ -456,7 +460,11 @@ export function spawnCodexTurn({
       rejectCompletion(fatalError);
       return;
     }
-    resolveCompletion({ exitCode, signal });
+    resolveCompletion({
+      exitCode,
+      signal,
+      stderr: stderrBuffer.toString("utf8"),
+    });
   });
   child.stdin.on("error", () => {});
   child.stdin.end(prompt);
