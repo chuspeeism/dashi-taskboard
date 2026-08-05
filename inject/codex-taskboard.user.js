@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.8";
+  const VERSION = "0.6.9";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -594,6 +594,23 @@
     return `/local/${encodeURIComponent(threadId)}`;
   }
 
+  function targetThreadIsActive(threadId) {
+    const expectedThreadId = normalizeThreadId(threadId);
+    const activeThreadId = normalizeThreadId(
+      activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"),
+    );
+    return activeThreadId === expectedThreadId;
+  }
+
+  async function waitForTargetThread(threadId, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    do {
+      if (targetThreadIsActive(threadId)) return true;
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    } while (Date.now() < deadline);
+    return targetThreadIsActive(threadId);
+  }
+
   async function openThread(threadId) {
     if (typeof threadId !== "string" || !threadId.trim()) return;
     const normalizedThreadId = normalizeThreadId(threadId);
@@ -603,14 +620,15 @@
 
     if (row?.isConnected) {
       row.click?.();
-      return;
+      if (await waitForTargetThread(normalizedThreadId, 800)) return;
     }
 
     try {
-      await dispatchHostMessage({
+      dispatchHostMessage({
         type: "navigate-to-route",
         path: routeForThread(normalizedThreadId),
       });
+      await waitForTargetThread(normalizedThreadId, 1_200);
     } catch (_) {}
   }
 

@@ -12,7 +12,7 @@ const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "u
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.8"/);
+  assert.match(source, /const VERSION = "0\.6\.9"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -261,11 +261,34 @@ test("the injected app opens an existing local Codex task instead of a new compo
     source.indexOf("async function openThread"),
     source.indexOf("function projectRowById"),
   );
-  assert.match(openThreadSource, /if \(row\?\.isConnected\) \{\s*row\.click\?\.\(\);\s*return;/);
-  assert.match(openThreadSource, /await dispatchHostMessage\(\{\s*type: "navigate-to-route",\s*path: routeForThread\(normalizedThreadId\)/);
+  assert.match(openThreadSource, /if \(row\?\.isConnected\) \{\s*row\.click\?\.\(\);\s*if \(await waitForTargetThread\(normalizedThreadId, 800\)\) return;/);
+  assert.match(openThreadSource, /dispatchHostMessage\(\{\s*type: "navigate-to-route",\s*path: routeForThread\(normalizedThreadId\)/);
+  assert.match(openThreadSource, /await waitForTargetThread\(normalizedThreadId, 1_200\)/);
+  assert.match(source, /return activeThreadId === expectedThreadId/);
   assert.match(source, /return `\/local\/\$\{encodeURIComponent\(threadId\)\}`/);
   assert.doesNotMatch(source, /return `\/thread\/\$\{encodeURIComponent\(threadId\)\}`/);
   assert.doesNotMatch(openThreadSource, /focusComposerNonce/);
+});
+
+test("thread navigation completes only when the native active row matches the target", () => {
+  const functionSource = source.slice(
+    source.indexOf("function targetThreadIsActive"),
+    source.indexOf("async function waitForTargetThread"),
+  );
+  const evaluate = (activeThreadId, targetThreadId) => {
+    const targetThreadIsActive = vm.runInNewContext(`(${functionSource})`, {
+      activeThreadRow: () => ({
+        getAttribute: (name) => (
+          name === "data-app-action-sidebar-thread-id" ? activeThreadId : null
+        ),
+      }),
+      normalizeThreadId: (value) => String(value || "").trim().replace(/^(?:local|cloud):/i, ""),
+    });
+    return targetThreadIsActive(targetThreadId);
+  };
+
+  assert.equal(evaluate("local:target-thread", "target-thread"), true);
+  assert.equal(evaluate("local:other-thread", "target-thread"), false);
 });
 
 test("host navigation follows Codex's renderer message bus", () => {
