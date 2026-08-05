@@ -1089,6 +1089,22 @@ async function readCodexProjectWorkspaces(codexStatePath) {
   }
 }
 
+async function assertAutomationProjectMapping(input, codexStatePath) {
+  if (!input.enabledByUser) return;
+  const workspaces = await readCodexProjectWorkspaces(codexStatePath);
+  const mappedWorkspace = workspaces[input.codexProjectId];
+  if (
+    !mappedWorkspace
+    || path.resolve(mappedWorkspace) !== path.resolve(input.workspacePath)
+  ) {
+    throw new ApiError(
+      400,
+      "AUTOMATION_PROJECT_NOT_MAPPED",
+      "Add the Codex project and map its workspace directory before enabling automation",
+    );
+  }
+}
+
 function latestThreadCwd(value, threadId) {
   const matches = [];
   const stack = [value];
@@ -1502,6 +1518,7 @@ export function createTaskboardServer(options = {}) {
             ...parseProjectAutomation(body),
             taskboardProjectId: projectId,
           };
+          await assertAutomationProjectMapping(input, resolved.codexStatePath);
           return sendJson(response, 200, { automation: automationScheduler.setProjectAutomation(input) });
         }
         if (request.method === "DELETE") {

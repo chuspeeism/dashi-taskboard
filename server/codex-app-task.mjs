@@ -89,6 +89,29 @@ export async function runCodexDesktopTask({
   }
 }
 
+export async function resumeCodexDesktopTask({ debugPort, threadId, signal }) {
+  while (true) {
+    const snapshot = await requestCodexAppServer(debugPort, "thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    const turns = snapshot?.thread?.turns;
+    const turn = Array.isArray(turns) ? turns.at(-1) : null;
+    if (!turn) {
+      throw new Error(`Codex Desktop task '${threadId}' has no turn to resume`);
+    }
+    if (TERMINAL_TURN_STATUSES.has(turn.status)) {
+      return {
+        threadId,
+        turnId: turn.id,
+        status: turn.status,
+        error: turn.error ?? null,
+      };
+    }
+    await delay(TURN_POLL_INTERVAL_MS, signal);
+  }
+}
+
 function codexPageTarget(target) {
   return target?.type === "page"
     && typeof target.webSocketDebuggerUrl === "string"

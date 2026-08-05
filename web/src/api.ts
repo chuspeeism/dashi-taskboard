@@ -175,6 +175,12 @@ export interface ProjectAutomationConfig {
   skillPath: string;
   enabledByUser: boolean;
   quotaAware: boolean;
+  quota?: {
+    state: "available" | "blocked" | "unknown" | "unavailable";
+    checkedAt: number;
+    resetsAt?: number;
+    reason?: "api-key";
+  };
   intervalSeconds: number;
   model: string;
   reasoningEffort: string;

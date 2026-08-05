@@ -1876,7 +1876,15 @@ test("task changes from one LAN client are broadcast to another client", async (
 });
 
 test("project automation configs round-trip through the local API", async () => {
-  const baseUrl = await startServer();
+  const baseUrl = await startServer(async (directory) => {
+    const codexStatePath = path.join(directory, "codex-state.json");
+    await writeFile(codexStatePath, JSON.stringify({
+      "local-projects": {
+        "codex-project": { rootPaths: ["/tmp/workspace"] },
+      },
+    }));
+    return { codexStatePath };
+  });
   const input = {
     codexProjectId: "codex-project",
     projectName: "Local",
@@ -1917,6 +1925,46 @@ test("project automation configs round-trip through the local API", async () => 
 
   const missing = await request(baseUrl, "/api/local/automations/local");
   assert.equal(missing.response.status, 404);
+});
+
+test("project automation rejects missing and mismatched Codex project mappings", async () => {
+  const baseUrl = await startServer(async (directory) => {
+    const codexStatePath = path.join(directory, "codex-state.json");
+    await writeFile(codexStatePath, JSON.stringify({
+      "local-projects": {
+        "codex-project": { rootPaths: ["/tmp/workspace"] },
+      },
+    }));
+    return { codexStatePath };
+  });
+  const input = {
+    codexProjectId: "missing-project",
+    projectName: "Local",
+    workspacePath: "/tmp/workspace",
+    skillPath: "/tmp/skills/manage-taskboard/SKILL.md",
+    enabledByUser: true,
+    quotaAware: false,
+    intervalSeconds: 5,
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+  };
+
+  const missing = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: input,
+  });
+  assert.equal(missing.response.status, 400);
+  assert.equal(missing.body.error.code, "AUTOMATION_PROJECT_NOT_MAPPED");
+
+  const mismatched = await request(baseUrl, "/api/local/automations/local", {
+    method: "PUT",
+    body: { ...input, codexProjectId: "codex-project", workspacePath: "/tmp/other" },
+  });
+  assert.equal(mismatched.response.status, 400);
+  assert.equal(mismatched.body.error.code, "AUTOMATION_PROJECT_NOT_MAPPED");
+
+  const missingConfig = await request(baseUrl, "/api/local/automations/local");
+  assert.equal(missingConfig.response.status, 404);
 });
 
 test("project automation rejects invalid models, intervals and unknown fields", async () => {

@@ -144,6 +144,7 @@ test("opening settings and changing projects reconcile with the stored server co
   assert.match(appSource, /const config = await getProjectAutomation\(selectedProjectId\)/);
   assert.match(appSource, /automationId: config\.taskboardProjectId/);
   assert.match(appSource, /status: config\.enabledByUser \? "ACTIVE" : "PAUSED"/);
+  assert.match(appSource, /\.\.\.\(config\.quota \? \{ quota: config\.quota \} : \{\}\)/);
   assert.match(appSource, /writeProjectAutomation\(selectedProjectId, null\)/);
   assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
 });

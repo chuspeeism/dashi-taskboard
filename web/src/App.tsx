@@ -692,6 +692,7 @@ export function App() {
         status: config.enabledByUser ? "ACTIVE" : "PAUSED",
         enabledByUser: config.enabledByUser,
         quotaAware: config.quotaAware,
+        ...(config.quota ? { quota: config.quota } : {}),
         intervalSeconds: config.intervalSeconds as AutomationIntervalSeconds,
         model: config.model as AutomationModel,
         reasoningEffort: config.reasoningEffort as AutomationReasoningEffort,

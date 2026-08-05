@@ -61,7 +61,7 @@ async function capturedTurns(capturePath) {
   }
 }
 
-function createScheduler(fixture) {
+function createScheduler(fixture, overrides = {}) {
   return new AutomationScheduler({
     database: fixture.database,
     processEnv: { ...process.env, CODEX_TASKBOARD_CODEX_DEBUG_PORT: "9231" },
@@ -79,6 +79,7 @@ function createScheduler(fixture) {
       return { status: "completed", threadId: "codex-thread-1", turnId: "turn-1" };
     },
     assignThread: async () => {},
+    ...overrides,
   });
 }
 
@@ -206,5 +207,217 @@ test("start reloads persisted configs and stop clears every timer", async () => 
     assert.ok(scheduler.timers.has("project"));
     await scheduler.stop();
     assert.equal(scheduler.timers.size, 0);
+  });
+});
+
+test("quota-aware scheduling exposes pause state and resumes when quota recovers", async () => {
+  await withFixture(async (fixture) => {
+    let quota = { state: "blocked", checkedAt: 100, resetsAt: 200 };
+    let turns = 0;
+    fixture.database.upsertProjectAutomation(automationConfig({
+      workspacePath: fixture.workspacePath,
+      quotaAware: true,
+    }));
+    const task = fixture.database.createTask({
+      projectId: "project",
+      title: "Quota task",
+      description: "",
+      status: "todo",
+      priority: "high",
+      labels: [],
+      workflowId: null,
+      dueDate: null,
+      actor: ACTOR,
+      assignee: ACTOR,
+    });
+    const scheduler = createScheduler(fixture, {
+      readQuota: async () => quota,
+      runTask: async (request) => {
+        turns += 1;
+        await request.onThreadStarted("quota-thread");
+        return { status: "completed", threadId: "quota-thread", turnId: "quota-turn" };
+      },
+    });
+    try {
+      await scheduler.runOnce("project");
+      assert.equal(fixture.database.getTask(task.id).status, "todo");
+      assert.deepEqual(scheduler.get("project").quota, quota);
+      assert.deepEqual(scheduler.list()[0].quota, quota);
+
+      quota = { state: "available", checkedAt: 300 };
+      await scheduler.runOnce("project");
+      assert.equal(fixture.database.getTask(task.id).status, "in_review");
+      assert.equal(turns, 1);
+      assert.deepEqual(scheduler.get("project").quota, quota);
+    } finally {
+      await scheduler.stop();
+    }
+  });
+});
+
+test("a Desktop launch failure blocks the task with a visible retry comment", async () => {
+  await withFixture(async (fixture) => {
+    fixture.database.upsertProjectAutomation(automationConfig({ workspacePath: fixture.workspacePath }));
+    const task = fixture.database.createTask({
+      projectId: "project",
+      title: "Unavailable Desktop",
+      description: "",
+      status: "todo",
+      priority: "high",
+      labels: [],
+      workflowId: null,
+      dueDate: null,
+      actor: ACTOR,
+      assignee: ACTOR,
+    });
+    const scheduler = createScheduler(fixture, {
+      runTask: async () => {
+        throw new Error("No debuggable Codex window is available");
+      },
+    });
+    try {
+      await scheduler.runOnce("project");
+      assert.equal(fixture.database.getTask(task.id).status, "blocked");
+      const comments = fixture.database.listComments(task.id);
+      assert.equal(comments.length, 1);
+      assert.match(comments[0].body, /desktop_unavailable/);
+      assert.match(comments[0].body, /移回“待办事项”/);
+    } finally {
+      await scheduler.stop();
+    }
+  });
+});
+
+for (const terminalStatus of ["failed", "interrupted", "cancelled"]) {
+  test(`a ${terminalStatus} turn blocks the task and records its reason`, async () => {
+    await withFixture(async (fixture) => {
+      fixture.database.upsertProjectAutomation(automationConfig({ workspacePath: fixture.workspacePath }));
+      const task = fixture.database.createTask({
+        projectId: "project",
+        title: `${terminalStatus} turn`,
+        description: "",
+        status: "todo",
+        priority: "high",
+        labels: [],
+        workflowId: null,
+        dueDate: null,
+        actor: ACTOR,
+        assignee: ACTOR,
+      });
+      const scheduler = createScheduler(fixture, {
+        runTask: async (request) => {
+          await request.onThreadStarted(`${terminalStatus}-thread`);
+          return {
+            status: terminalStatus,
+            threadId: `${terminalStatus}-thread`,
+            turnId: `${terminalStatus}-turn`,
+            error: { message: `${terminalStatus} reason` },
+          };
+        },
+      });
+      try {
+        await scheduler.runOnce("project");
+        const current = fixture.database.getTask(task.id);
+        assert.equal(current.status, "blocked");
+        assert.equal(current.threadId, `${terminalStatus}-thread`);
+        assert.match(fixture.database.listComments(task.id)[0].body, new RegExp(terminalStatus));
+      } finally {
+        await scheduler.stop();
+      }
+    });
+  });
+}
+
+test("restart resumes the original in-progress thread and settles its completed turn", async () => {
+  await withFixture(async (fixture) => {
+    fixture.database.upsertProjectAutomation(automationConfig({ workspacePath: fixture.workspacePath }));
+    const task = fixture.database.createTask({
+      projectId: "project",
+      title: "Restarted task",
+      description: "",
+      status: "in_progress",
+      priority: "high",
+      labels: [],
+      workflowId: null,
+      dueDate: null,
+      threadId: "original-thread",
+      actor: ACTOR,
+      assignee: ACTOR,
+    });
+    let resumedThreadId = null;
+    let newTurns = 0;
+    const scheduler = createScheduler(fixture, {
+      runTask: async () => {
+        newTurns += 1;
+        return { status: "completed" };
+      },
+      resumeTask: async ({ threadId }) => {
+        resumedThreadId = threadId;
+        return { status: "completed", threadId, turnId: "original-turn" };
+      },
+    });
+    scheduler.start();
+    try {
+      await waitFor(() => fixture.database.getTask(task.id).status === "in_review");
+      assert.equal(resumedThreadId, "original-thread");
+      assert.equal(newTurns, 0);
+    } finally {
+      await scheduler.stop();
+    }
+  });
+});
+
+test("a graceful stop preserves the active task for same-thread recovery after restart", async () => {
+  await withFixture(async (fixture) => {
+    fixture.database.upsertProjectAutomation(automationConfig({ workspacePath: fixture.workspacePath }));
+    const task = fixture.database.createTask({
+      projectId: "project",
+      title: "Active during restart",
+      description: "",
+      status: "todo",
+      priority: "high",
+      labels: [],
+      workflowId: null,
+      dueDate: null,
+      actor: ACTOR,
+      assignee: ACTOR,
+    });
+    const firstScheduler = createScheduler(fixture, {
+      runTask: async (request) => {
+        await request.onThreadStarted("preserved-thread");
+        await new Promise((resolve, reject) => {
+          const onAbort = () => reject(request.signal.reason);
+          request.signal.addEventListener("abort", onAbort, { once: true });
+        });
+      },
+    });
+
+    const firstRun = firstScheduler.runOnce("project");
+    await waitFor(() => fixture.database.getTask(task.id).threadId === "preserved-thread");
+    await firstScheduler.stop();
+    await firstRun;
+    assert.equal(fixture.database.getTask(task.id).status, "in_progress");
+    assert.equal(fixture.database.listComments(task.id).length, 0);
+
+    let resumedThreadId = null;
+    let newTurns = 0;
+    const restartedScheduler = createScheduler(fixture, {
+      runTask: async () => {
+        newTurns += 1;
+        return { status: "completed" };
+      },
+      resumeTask: async ({ threadId }) => {
+        resumedThreadId = threadId;
+        return { status: "completed", threadId, turnId: "preserved-turn" };
+      },
+    });
+    restartedScheduler.start();
+    try {
+      await waitFor(() => fixture.database.getTask(task.id).status === "in_review");
+      assert.equal(resumedThreadId, "preserved-thread");
+      assert.equal(newTurns, 0);
+    } finally {
+      await restartedScheduler.stop();
+    }
   });
 });
