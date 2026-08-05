@@ -273,6 +273,12 @@ test("cloud routing keeps machine-specific capability endpoints in the local com
   for (const pathname of [
     "/api/projects",
     "/api/projects/portfolio/workflow-workspace",
+    "/api/projects/portfolio/context",
+    "/api/projects/portfolio/context/brief",
+    "/api/context/context-1",
+    "/api/context/context-1/revisions",
+    "/api/context/context-1/archive",
+    "/api/context/context-1/restore",
     "/api/tasks",
     "/api/tasks/PORTFOLIO-1",
     "/api/comments/comment-1",
@@ -530,6 +536,89 @@ test("configured server proxies business APIs without touching local rows and ad
     assert.equal(upstreamCalls.length, 1);
     assert.equal(upstreamCalls[0].url, "https://tasks.example.test/api/tasks");
     assert.equal(app.database.listTasks({}).length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("configured server context writes never fall back to or double-write local SQLite", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-context-cloud-server-"));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, "companion.json");
+  const { createCloudConfigStore } = await importCloudConfig();
+  await createCloudConfigStore({ configPath }).configure({
+    remoteUrl: "https://tasks.example.test",
+    actorName: "Alice",
+    sharedKey: "two-person-shared-key",
+  });
+  const upstreamCalls = [];
+  let failRemote = false;
+  const remoteEntry = {
+    id: "remote-context",
+    projectId: "portfolio",
+    kind: "decision",
+    title: "Remote only",
+    body: "Cloud owns this row",
+    tags: [],
+    sourceType: "manual",
+    sourceId: null,
+    sourceThreadId: null,
+    authorType: "user",
+    authorId: "basic:alice",
+    authorName: "Alice",
+    pinned: false,
+    archivedAt: null,
+    version: 1,
+    idempotencyKey: "remote-only",
+    createdAt: "2026-08-05T00:00:00.000Z",
+    updatedAt: "2026-08-05T00:00:00.000Z",
+  };
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    cloudConfigPath: configPath,
+    remoteFetch: async (url, init) => {
+      upstreamCalls.push({ url: url.toString(), init });
+      if (failRemote) throw new Error("cloud unavailable");
+      return jsonResponse({ entry: remoteEntry }, 201);
+    },
+  });
+  const address = await app.listen({ port: 0 });
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const contextBody = {
+    kind: "decision",
+    title: "Remote only",
+    body: "Cloud owns this row",
+    idempotencyKey: "remote-only",
+  };
+
+  try {
+    const created = await fetch(`${baseUrl}/api/projects/portfolio/context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(contextBody),
+    });
+    assert.equal(created.status, 201);
+    assert.deepEqual(await created.json(), { entry: remoteEntry });
+    assert.equal(upstreamCalls.length, 1);
+    assert.equal(upstreamCalls[0].url, "https://tasks.example.test/api/projects/portfolio/context");
+    assert.equal(
+      app.database.database.prepare("SELECT COUNT(*) AS count FROM project_context_entries").get().count,
+      0,
+    );
+
+    failRemote = true;
+    const failed = await fetch(`${baseUrl}/api/projects/portfolio/context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...contextBody, idempotencyKey: "remote-failure" }),
+    });
+    assert.equal(failed.status, 502);
+    assert.equal((await failed.json()).error.code, "REMOTE_UNAVAILABLE");
+    assert.equal(upstreamCalls.length, 2);
+    assert.equal(
+      app.database.database.prepare("SELECT COUNT(*) AS count FROM project_context_entries").get().count,
+      0,
+    );
   } finally {
     await app.close();
   }

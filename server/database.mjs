@@ -138,6 +138,30 @@ function contextRevisionValues(entry, version, actor, timestamp, id = randomUUID
   ];
 }
 
+function sameContextCreatePayloadForExistingEntry(database, entry, input) {
+  if (entry.version <= 1) return sameContextCreatePayload(entry, input);
+  const originalRow = database.prepare(`
+    SELECT *
+    FROM project_context_revisions
+    WHERE entry_id = ? AND version = 1
+  `).get(entry.id);
+  if (!originalRow) return sameContextCreatePayload(entry, input);
+  const original = contextRevisionFromRow(originalRow);
+  // Revision snapshots intentionally follow the public schema and do not carry
+  // the mutable pinned flag. Compare the original create fields, not later edits.
+  return sameContextCreatePayload(
+    {
+      ...entry,
+      kind: original.kind,
+      title: original.title,
+      body: original.body,
+      tags: original.tags,
+    },
+    input,
+    { ignorePinned: true },
+  );
+}
+
 function workflowWorkspaceFromRow(row) {
   return {
     projectId: row.project_id,
@@ -798,8 +822,19 @@ export class TaskboardDatabase {
     const entries = this.database.prepare(`
       SELECT *
       FROM project_context_entries
-      WHERE project_id = ? AND archived_at IS NULL
-      ORDER BY updated_at DESC, id DESC
+      WHERE project_id = ?
+        AND archived_at IS NULL
+        AND (pinned = 1 OR kind IN ('requirement', 'constraint', 'decision', 'risk', 'handoff', 'summary'))
+      ORDER BY
+        CASE
+          WHEN pinned = 1 THEN 0
+          WHEN kind IN ('requirement', 'constraint', 'decision') THEN 1
+          WHEN kind IN ('risk', 'handoff') THEN 2
+          ELSE 3
+        END,
+        updated_at DESC,
+        id ASC
+      LIMIT 1000
     `).all(projectId).map(contextEntryFromRow);
     return buildProjectContextBrief(entries);
   }
@@ -830,7 +865,7 @@ export class TaskboardDatabase {
         `).get(projectId, input.idempotencyKey);
         if (existingRow) {
           const existing = contextEntryFromRow(existingRow);
-          if (!sameContextCreatePayload(existing, input)) {
+          if (!sameContextCreatePayloadForExistingEntry(this.database, existing, input)) {
             throw new ApiError(
               409,
               "IDEMPOTENCY_CONFLICT",

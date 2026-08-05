@@ -102,7 +102,7 @@ export function decodeContextCursor(cursor) {
   }
 }
 
-export function sameContextCreatePayload(entry, input) {
+export function sameContextCreatePayload(entry, input, { ignorePinned = false } = {}) {
   return entry.kind === input.kind
     && entry.title === input.title
     && entry.body === input.body
@@ -110,7 +110,7 @@ export function sameContextCreatePayload(entry, input) {
     && entry.sourceType === (input.sourceType ?? "manual")
     && (entry.sourceId ?? null) === (input.sourceId ?? null)
     && (entry.sourceThreadId ?? null) === (input.sourceThreadId ?? null)
-    && entry.pinned === (input.pinned ?? false);
+    && (ignorePinned || entry.pinned === (input.pinned ?? false));
 }
 
 export function buildProjectContextBrief(entries) {
@@ -128,9 +128,14 @@ export function buildProjectContextBrief(entries) {
   const seenEntryIds = new Set();
   let brief = "";
   let truncated = false;
+  let unpinnedSummarySelected = false;
 
   for (const { entry } of selected) {
     if (seenEntryIds.has(entry.id)) continue;
+    if (!entry.pinned && entry.kind === "summary") {
+      if (unpinnedSummarySelected) continue;
+      unpinnedSummarySelected = true;
+    }
     seenEntryIds.add(entry.id);
 
     const block = formatBriefEntry(entry);

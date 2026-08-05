@@ -717,13 +717,19 @@ function parseContextCreate(body) {
     body: parseContextBody(body.body, "body", { required: true }),
     tags: body.tags === undefined ? [] : parseContextTags(body.tags),
     sourceType: body.sourceType === undefined ? "manual" : parseContextSourceType(body.sourceType),
-    sourceId: stringField(body.sourceId ?? null, "sourceId", { nullable: true, maxLength: 256 }),
+    sourceId: stringField(body.sourceId ?? null, "sourceId", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
     sourceThreadId: stringField(body.sourceThreadId ?? null, "sourceThreadId", {
+      required: true,
       nullable: true,
       maxLength: 256,
     }),
     pinned: body.pinned ?? false,
     idempotencyKey: stringField(body.idempotencyKey ?? null, "idempotencyKey", {
+      required: true,
       nullable: true,
       maxLength: 256,
     }),
@@ -1825,15 +1831,15 @@ export function createTaskboardServer(options = {}) {
           ));
         }
         if (request.method === "POST") {
+          assertNoQuery(url.searchParams, "POST /api/projects/:projectId/context");
           const result = database.createContextEntry(
             projectId,
             parseContextCreate(await readJson(request)),
             contextAuthContext(request).actor,
           );
-          events.emit(result.created ? "context.created" : "context.replayed", {
-            projectId,
-            entry: result.entry,
-          });
+          if (result.created) {
+            events.emit("context.created", { projectId, entry: result.entry });
+          }
           return sendJson(response, result.created ? 201 : 200, { entry: result.entry });
         }
         return methodNotAllowed(response, ["GET", "POST"]);

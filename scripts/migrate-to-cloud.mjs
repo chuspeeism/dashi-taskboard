@@ -24,7 +24,13 @@ const TABLE_ORDER = [
   "task_relations",
   "attachments",
   "workflow_workspaces",
+  "project_context_entries",
+  "project_context_revisions",
 ];
+const BACKWARD_COMPATIBLE_CONTEXT_TABLES = new Set([
+  "project_context_entries",
+  "project_context_revisions",
+]);
 const LOCAL_WORKFLOW_PATH_FIELDS = new Set(["gitWorktreePath"]);
 const SORT_FIELDS = {
   projects: ["id"],
@@ -33,6 +39,8 @@ const SORT_FIELDS = {
   task_relations: ["source_task_id", "target_task_id", "relation_type"],
   attachments: ["task_id", "comment_id", "created_at", "id"],
   workflow_workspaces: ["project_id"],
+  project_context_entries: ["project_id", "created_at", "id"],
+  project_context_revisions: ["entry_id", "version", "id"],
 };
 function compareValues(left, right) {
   if (left === right) return 0;
@@ -91,6 +99,8 @@ function buildProjectCounts(tables) {
       attachments: 0,
       task_relations: 0,
       workflow_workspaces: 0,
+      project_context_entries: 0,
+      project_context_revisions: 0,
     };
   }
 
@@ -128,6 +138,21 @@ function buildProjectCounts(tables) {
       throw new Error(`Workflow workspace references unknown project '${workspace.project_id}'`);
     }
     counts[workspace.project_id].workflow_workspaces += 1;
+  }
+  const contextProjects = new Map();
+  for (const entry of tables.project_context_entries) {
+    if (!counts[entry.project_id]) {
+      throw new Error(`Context entry '${entry.id}' references unknown project '${entry.project_id}'`);
+    }
+    contextProjects.set(entry.id, entry.project_id);
+    counts[entry.project_id].project_context_entries += 1;
+  }
+  for (const revision of tables.project_context_revisions) {
+    const projectId = contextProjects.get(revision.entry_id);
+    if (!projectId) {
+      throw new Error(`Context revision '${revision.id}' references unknown entry '${revision.entry_id}'`);
+    }
+    counts[projectId].project_context_revisions += 1;
   }
 
   return Object.fromEntries(
@@ -218,12 +243,15 @@ async function readSnapshot(databasePath) {
         `SQLite snapshot failed PRAGMA foreign_key_check (${foreignKeyViolations.length} violation(s))`,
       );
     }
-    const tables = Object.fromEntries(
-      TABLE_ORDER.map((table) => [
-        table,
-        sortRows(table, snapshot.prepare(`SELECT * FROM "${table}"`).all()),
-      ]),
-    );
+    const existingTables = new Set(snapshot.prepare(`
+      SELECT name FROM sqlite_schema WHERE type = 'table'
+    `).all().map((row) => row.name));
+    const tables = Object.fromEntries(TABLE_ORDER.map((table) => {
+      if (!existingTables.has(table) && BACKWARD_COMPATIBLE_CONTEXT_TABLES.has(table)) {
+        return [table, []];
+      }
+      return [table, sortRows(table, snapshot.prepare(`SELECT * FROM "${table}"`).all())];
+    }));
     snapshot.close();
     snapshot = null;
     return tables;
@@ -232,6 +260,20 @@ async function readSnapshot(databasePath) {
     source?.close();
     await rm(snapshotDirectory, { recursive: true, force: true });
   }
+}
+
+function normalizeBackwardCompatibleContextTables(bundle) {
+  if (!bundle || bundle.schemaVersion !== SCHEMA_VERSION) return bundle;
+  bundle.tables ??= {};
+  for (const table of BACKWARD_COMPATIBLE_CONTEXT_TABLES) {
+    if (bundle.tables[table] === undefined) bundle.tables[table] = [];
+  }
+  for (const counts of Object.values(bundle.counts?.byProject ?? {})) {
+    for (const table of BACKWARD_COMPATIBLE_CONTEXT_TABLES) {
+      if (counts[table] === undefined) counts[table] = 0;
+    }
+  }
+  return bundle;
 }
 
 function assertCountsMatch(expected, actual) {
@@ -259,6 +301,7 @@ function validateBundle(bundle) {
   if (!bundle || bundle.schemaVersion !== SCHEMA_VERSION) {
     throw new Error(`Unsupported cloud migration schema version '${bundle?.schemaVersion}'`);
   }
+  normalizeBackwardCompatibleContextTables(bundle);
   for (const table of TABLE_ORDER) {
     if (!Array.isArray(bundle.tables?.[table])) {
       throw new Error(`Cloud migration bundle is missing table '${table}'`);
@@ -362,6 +405,15 @@ const CLOUD_COLUMNS = {
   task_relations: ["relation_type", "source_task_id", "target_task_id", "created_at"],
   attachments: ["id", "task_id", "comment_id", "filename", "content_type", "size", "created_at"],
   workflow_workspaces: ["project_id", "workspace", "version", "updated_at"],
+  project_context_entries: [
+    "id", "project_id", "kind", "title", "body", "tags", "source_type", "source_id",
+    "source_thread_id", "author_type", "author_id", "author_name", "pinned", "archived_at",
+    "version", "idempotency_key", "created_at", "updated_at",
+  ],
+  project_context_revisions: [
+    "id", "entry_id", "version", "title", "body", "kind", "tags", "author_id",
+    "author_name", "created_at",
+  ],
 };
 
 function cloudTaskRow(task) {
@@ -404,6 +456,96 @@ function inlineD1InsertStatement(table, values) {
   return `${insertTableSql(table).replace("?", sqliteString(json))};`;
 }
 
+function contextBodyColumn(table) {
+  return table === "project_context_entries" || table === "project_context_revisions"
+    ? "body"
+    : null;
+}
+
+function contextBodyUpdateStatement(table, column, id, body) {
+  return `UPDATE "${table}" SET "${column}" = "${column}" || ${sqliteString(body)} WHERE "id" = ${sqliteString(id)};`;
+}
+
+function splitContextBodyStatements(table, row) {
+  const column = contextBodyColumn(table);
+  if (!column || typeof row.body !== "string") return null;
+  if (row.body.includes("\0")) {
+    throw new Error("D1 migration context body cannot contain null bytes");
+  }
+
+  const baseRow = { ...row, [column]: "" };
+  const insert = inlineD1InsertStatement(table, [baseRow]);
+  if (Buffer.byteLength(insert, "utf8") >= WRANGLER_D1_STATEMENT_MAX_BYTES) {
+    throw new Error(
+      `D1 import single row '${table}:${row.id ?? "unknown"}' exceeds 90,000 bytes`,
+    );
+  }
+
+  const statements = [insert];
+  let chunk = "";
+  let chunkBytes = 0;
+  const chunks = [];
+  const updateOverhead = Buffer.byteLength(
+    contextBodyUpdateStatement(table, column, row.id, ""),
+    "utf8",
+  );
+  for (const character of Array.from(row.body)) {
+    const characterBytes = Buffer.byteLength(character, "utf8")
+      + (character === "'" ? 1 : 0);
+    if (updateOverhead + chunkBytes + characterBytes < WRANGLER_D1_STATEMENT_MAX_BYTES) {
+      chunk += character;
+      chunkBytes += characterBytes;
+      continue;
+    }
+    if (chunk.length === 0) {
+      throw new Error(
+        `D1 import single row '${table}:${row.id ?? "unknown"}' exceeds 90,000 bytes`,
+      );
+    }
+    chunks.push(chunk);
+    chunk = character;
+    chunkBytes = characterBytes;
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+  for (const part of chunks) {
+    statements.push(contextBodyUpdateStatement(table, column, row.id, part));
+  }
+  return statements;
+}
+
+function inlineD1TableStatements(table, values) {
+  const statements = [];
+  let chunk = [];
+  for (const row of values) {
+    const candidate = [...chunk, row];
+    if (Buffer.byteLength(inlineD1InsertStatement(table, candidate), "utf8") < WRANGLER_D1_STATEMENT_MAX_BYTES) {
+      chunk = candidate;
+      continue;
+    }
+
+    if (chunk.length > 0) {
+      statements.push(inlineD1InsertStatement(table, chunk));
+      chunk = [];
+    }
+    const single = inlineD1InsertStatement(table, [row]);
+    if (Buffer.byteLength(single, "utf8") < WRANGLER_D1_STATEMENT_MAX_BYTES) {
+      chunk = [row];
+      continue;
+    }
+    const split = splitContextBodyStatements(table, row);
+    if (split) {
+      statements.push(...split);
+      continue;
+    }
+    const identity = row.id ?? row.project_id ?? "unknown";
+    throw new Error(
+      `D1 import single row '${table}:${identity}' exceeds 90,000 bytes`,
+    );
+  }
+  if (chunk.length > 0) statements.push(inlineD1InsertStatement(table, chunk));
+  return statements;
+}
+
 export function createCloudD1ImportSql(tables) {
   const statements = [];
   for (const { table, json } of createCloudD1ImportPlan(tables)) {
@@ -412,36 +554,7 @@ export function createCloudD1ImportSql(tables) {
       statements.push(inlineD1InsertStatement(table, values));
       continue;
     }
-
-    let chunk = [];
-    for (const row of values) {
-      const candidate = [...chunk, row];
-      const statement = inlineD1InsertStatement(table, candidate);
-      if (Buffer.byteLength(statement, "utf8") < WRANGLER_D1_STATEMENT_MAX_BYTES) {
-        chunk = candidate;
-        continue;
-      }
-      if (chunk.length === 0) {
-        const identity = row.id ?? row.project_id ?? "unknown";
-        throw new Error(
-          `D1 import single row '${table}:${identity}' exceeds 90,000 bytes`,
-        );
-      }
-      statements.push(inlineD1InsertStatement(table, chunk));
-      chunk = [row];
-      if (
-        Buffer.byteLength(
-          inlineD1InsertStatement(table, chunk),
-          "utf8",
-        ) >= WRANGLER_D1_STATEMENT_MAX_BYTES
-      ) {
-        const identity = row.id ?? row.project_id ?? "unknown";
-        throw new Error(
-          `D1 import single row '${table}:${identity}' exceeds 90,000 bytes`,
-        );
-      }
-    }
-    statements.push(inlineD1InsertStatement(table, chunk));
+    statements.push(...inlineD1TableStatements(table, values));
   }
   return statements.join("\n");
 }
@@ -456,7 +569,12 @@ export const CLOUD_PROJECT_COUNTS_SQL = `
     (SELECT COUNT(*) FROM task_relations r JOIN tasks t ON t.id = r.source_task_id
       WHERE t.project_id = p.id) AS task_relations,
     (SELECT COUNT(*) FROM workflow_workspaces w
-      WHERE w.project_id = p.id) AS workflow_workspaces
+      WHERE w.project_id = p.id) AS workflow_workspaces,
+    (SELECT COUNT(*) FROM project_context_entries e
+      WHERE e.project_id = p.id) AS project_context_entries,
+    (SELECT COUNT(*) FROM project_context_revisions r
+      JOIN project_context_entries e ON e.id = r.entry_id
+      WHERE e.project_id = p.id) AS project_context_revisions
   FROM projects p ORDER BY p.id
 `;
 
@@ -656,6 +774,10 @@ export async function readCloudMigrationBundle(inputDirectory) {
   const tables = {};
   for (const table of TABLE_ORDER) {
     const entry = manifest.tables?.[table];
+    if (!entry?.file && BACKWARD_COMPATIBLE_CONTEXT_TABLES.has(table)) {
+      tables[table] = [];
+      continue;
+    }
     if (!entry?.file) throw new Error(`Cloud migration manifest is missing table '${table}'`);
     const rows = await readJsonFile(
       bundleFile(inputDirectory, entry.file),
@@ -679,6 +801,7 @@ export async function readCloudMigrationBundle(inputDirectory) {
     tables,
     attachments,
   };
+  normalizeBackwardCompatibleContextTables(bundle);
   validateBundle(bundle);
   return bundle;
 }
