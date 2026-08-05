@@ -2,6 +2,8 @@
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `taskctl` CLI used by the bundled Codex Skill.
 
+Codex Taskboard is open source under the [MIT License](LICENSE).
+
 ## Requirements
 
 - Node.js 22.5 or newer
@@ -9,6 +11,8 @@ A local-first issue board that runs in a browser and can be embedded in Codex th
 ## Run locally
 
 ```bash
+git clone https://github.com/chuspeeism/dashi-taskboard.git
+cd dashi-taskboard
 npm install
 npm run build
 npm start
@@ -130,3 +134,7 @@ npm run check
 ```
 
 This runs TypeScript checking, a production frontend build, and the server/CLI/injection test suite.
+
+## License
+
+[MIT](LICENSE)
