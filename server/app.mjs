@@ -42,7 +42,9 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "text/plain",
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
+// "null" is the serialized origin of blob:-document iframes, which the Codex
+// renderer uses to embed the taskboard since its CSP blocks direct http iframes.
+const TRUSTED_EMBED_ORIGINS = new Set(["app://-", "null"]);
 const CODEX_AGENT_ACTOR = {
   type: "agent",
   id: "codex-agent",
@@ -1337,6 +1339,18 @@ export function createTaskboardServer(options = {}) {
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
+    response.setHeader("access-control-allow-origin", "*");
+    if (request.method === "OPTIONS") {
+      const requestedHeaders = request.headers["access-control-request-headers"];
+      response.writeHead(204, {
+        "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "access-control-allow-headers": requestedHeaders
+          || "content-type, x-request-id, x-codex-request-id, x-taskboard-user-id, x-taskboard-user-name, x-taskboard-user-avatar",
+        "access-control-max-age": "600",
+      });
+      response.end();
+      return;
+    }
     try {
       assertTrustedNetworkRequest(request);
       const url = new URL(request.url, "http://127.0.0.1");
