@@ -3632,6 +3632,9 @@ kbd {
   font-size: 15px;
   line-height: 24px;
   overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 .comment-body .issue-description-document {

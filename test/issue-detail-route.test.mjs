@@ -34,6 +34,7 @@ test("closing issue detail removes only the issue route", () => {
   assert.equal(url.searchParams.get("project"), "local");
   assert.equal(url.searchParams.get("host"), "codex");
   assert.deepEqual(url.searchParams.getAll("label"), ["缺陷"]);
+  assert.match(appSource, /aria-label="关闭详情并返回看板"[\s\S]*?onClick=\{closeTaskDetail\}[\s\S]*?<LinearIcon name="close"/);
 });
 
 test("the app restores issue detail from the URL and follows browser history", () => {

@@ -1723,11 +1723,11 @@ export function App() {
                 <button
                   className="detail-back-button"
                   type="button"
-                  aria-label="返回议题看板"
-                  title="返回议题看板 (Esc)"
+                  aria-label="关闭详情并返回看板"
+                  title="关闭详情并返回看板 (Esc)"
                   onClick={closeTaskDetail}
                 >
-                  <LinearIcon name="chevronLeft" />
+                  <LinearIcon name="close" />
                 </button>
               )}
               {embedded && hostContext?.sidebarCollapsed && (

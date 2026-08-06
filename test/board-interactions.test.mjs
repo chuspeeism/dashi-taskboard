@@ -39,9 +39,10 @@ test("dragging previews the insertion rank before committing it", () => {
   assert.match(styles, /\.task-card\.is-settling \{[\s\S]*?task-card-settle 200ms/);
 });
 
-test("text selection is reserved for editable fields", () => {
+test("text selection is available in editable fields and rendered comments", () => {
   assert.match(styles, /body \{[^}]*user-select: none/);
   assert.match(styles, /input,[\s\S]*?textarea,[\s\S]*?\[contenteditable="true"\][\s\S]*?user-select: text/);
+  assert.match(styles, /\.comment-body \{[^}]*user-select: text/);
 });
 
 test("issue cards omit redundant metadata and keep three compact, well-spaced rows", () => {
