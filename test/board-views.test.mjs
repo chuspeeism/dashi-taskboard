@@ -16,10 +16,11 @@ const serverSource = await readFile(new URL("../server/app.mjs", import.meta.url
 const styles = await readFile(new URL("../web/src/components/workflow.css", import.meta.url), "utf8");
 const globalStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 
-test("the taskboard defaults to issues and exposes issue and node mode tabs", () => {
-  assert.match(appSource, /type BoardView = "issues" \| "workflow"/);
+test("the taskboard defaults to issues and exposes issue, context and node mode tabs", () => {
+  assert.match(appSource, /type BoardView = "issues" \| "context" \| "workflow"/);
   assert.match(appSource, /useState<BoardView>\("issues"\)/);
   assert.match(appSource, />\s*议题看板\s*<\/button>/);
+  assert.match(appSource, />\s*Context\s*<\/button>/);
   assert.match(appSource, />\s*节点模式\s*<\/button>/);
   assert.match(appSource, /aria-pressed=\{boardView === "issues"\}/);
   assert.match(appSource, /aria-pressed=\{boardView === "workflow"\}/);

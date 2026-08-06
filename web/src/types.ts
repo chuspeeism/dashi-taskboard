@@ -173,6 +173,94 @@ export interface Project {
   updatedAt: string;
 }
 
+export type ProjectContextKind =
+  | "requirement"
+  | "decision"
+  | "constraint"
+  | "fact"
+  | "risk"
+  | "handoff"
+  | "summary";
+
+export type ProjectContextSourceType =
+  | "manual"
+  | "issue"
+  | "comment"
+  | "thread_summary"
+  | "agent";
+
+export interface ProjectContextEntry {
+  id: string;
+  projectId: string;
+  kind: ProjectContextKind;
+  title: string;
+  body: string;
+  tags: string[];
+  sourceType: ProjectContextSourceType;
+  sourceId: string | null;
+  sourceThreadId: string | null;
+  authorType: ActorType;
+  authorId: string;
+  authorName: string;
+  pinned: boolean;
+  archivedAt: string | null;
+  version: number;
+  idempotencyKey: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectContextRevision {
+  id: string;
+  entryId: string;
+  version: number;
+  title: string;
+  body: string;
+  kind: ProjectContextKind;
+  tags: string[];
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+}
+
+export interface ProjectContextListResponse {
+  entries: ProjectContextEntry[];
+  nextCursor: string | null;
+}
+
+export interface ProjectContextFilters {
+  query?: string;
+  kind?: ProjectContextKind;
+  tag?: string;
+  pinned?: boolean;
+  archived?: "false" | "true" | "all";
+  limit?: number;
+  cursor?: string;
+}
+
+export interface ProjectContextCreateInput {
+  kind: ProjectContextKind;
+  title: string;
+  body: string;
+  tags?: string[];
+  sourceType?: ProjectContextSourceType;
+  sourceId?: string | null;
+  sourceThreadId?: string | null;
+  pinned?: boolean;
+  idempotencyKey?: string | null;
+}
+
+export interface ProjectContextPatch {
+  kind?: ProjectContextKind;
+  title?: string;
+  body?: string;
+  tags?: string[];
+  pinned?: boolean;
+}
+
+// Kept as a descriptive alias for the inline editor's existing import.
+export type ProjectContextUpdateInput = ProjectContextPatch;
+
 export interface TaskRelationSummary {
   id: string;
   identifier: string;

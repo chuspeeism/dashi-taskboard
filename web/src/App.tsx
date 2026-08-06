@@ -45,6 +45,7 @@ import {
 import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
 import { AiChat } from "./components/AiChat";
 import { BoardSettingsMenu } from "./components/BoardSettingsMenu";
+import { ContextView } from "./components/ContextView";
 import { HiddenColumns } from "./components/HiddenColumns";
 import {
   resolveInlineMediaMarkdown,
@@ -90,7 +91,7 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
-type BoardView = "issues" | "workflow";
+type BoardView = "issues" | "context" | "workflow";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 
 const WorkflowBoard = lazy(() => import("./components/WorkflowBoard").then((module) => ({
@@ -219,6 +220,10 @@ const EVENT_NAMES = [
   "attachment.deleted",
   "project.created",
   "workflow.updated",
+  "context.created",
+  "context.updated",
+  "context.archive",
+  "context.restore",
 ] as const;
 
 function isTheme(value: unknown): value is Theme {
@@ -427,6 +432,7 @@ interface LocalRealtimeSyncProps {
   setConnection: Dispatch<SetStateAction<ConnectionState>>;
   setCommentsRevision: Dispatch<SetStateAction<number>>;
   setAttachmentsRevision: Dispatch<SetStateAction<number>>;
+  setContextRevision: Dispatch<SetStateAction<number>>;
 }
 
 function LocalRealtimeSync({
@@ -438,6 +444,7 @@ function LocalRealtimeSync({
   setConnection,
   setCommentsRevision,
   setAttachmentsRevision,
+  setContextRevision,
 }: LocalRealtimeSyncProps) {
   useEffect(() => {
     const source = new EventSource("/api/events");
@@ -482,6 +489,10 @@ function LocalRealtimeSync({
         if (selectedProjectId) void refreshWorkflowOptions(selectedProjectId);
         return;
       }
+      if (event.type.startsWith("context.")) {
+        setContextRevision((current) => current + 1);
+        return;
+      }
       if (event.type.startsWith("comment.")) {
         if (!detailTaskId || !payload.taskId || payload.taskId === detailTaskId) {
           setCommentsRevision((current) => current + 1);
@@ -523,6 +534,7 @@ function LocalRealtimeSync({
     setAttachmentsRevision,
     setCommentsRevision,
     setConnection,
+    setContextRevision,
   ]);
 
   return null;
@@ -560,6 +572,8 @@ export function App() {
   const [commentsRevision, setCommentsRevision] = useState(0);
   const [attachmentsRevision, setAttachmentsRevision] = useState(0);
   const [workflowRevision, setWorkflowRevision] = useState(0);
+  const [contextRevision, setContextRevision] = useState(0);
+  const [contextCreateRequest, setContextCreateRequest] = useState(0);
   const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>(DEFAULT_WORKFLOW_OPTIONS);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -1238,6 +1252,7 @@ export function App() {
           void refreshWorkflowOptions(projectId).catch(() => {});
         }
         setWorkflowRevision((current) => current + 1);
+        setContextRevision((current) => current + 1);
         setCommentsRevision((current) => current + 1);
         setAttachmentsRevision((current) => current + 1);
       },
@@ -1324,6 +1339,10 @@ export function App() {
       if (event.key === "/" && !detailTaskId && selectedProjectId && boardView === "issues") {
         event.preventDefault();
         document.getElementById("task-search")?.focus();
+      }
+      if (event.key === "/" && !detailTaskId && selectedProjectId && boardView === "context") {
+        event.preventDefault();
+        document.getElementById("context-search")?.focus();
       }
       if (event.key === "Escape" && detailTaskId) {
         closeTaskDetail();
@@ -1823,6 +1842,7 @@ export function App() {
           setConnection={setConnection}
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}
+          setContextRevision={setContextRevision}
         />
       )}
       {!embedded && (
@@ -2000,13 +2020,15 @@ export function App() {
                 onChange={(options) => void saveProjectAutomation(options)}
               />
             )}
-            {selectedProjectId && boardView === "issues" && (
+            {selectedProjectId && (boardView === "issues" || boardView === "context") && (
               <button
                 className="icon-button header-create-button"
                 type="button"
-                onClick={() => setEditor({ task: null, status: "backlog" })}
-                aria-label="新建议题"
-                title="新建议题 (C)"
+                onClick={() => boardView === "context"
+                  ? setContextCreateRequest((current) => current + 1)
+                  : setEditor({ task: null, status: "backlog" })}
+                aria-label={boardView === "context" ? "新建 Context" : "新建议题"}
+                title={boardView === "context" ? "新建 Context" : "新建议题 (C)"}
               >
                 <LinearIcon name="plus" />
               </button>
@@ -2017,8 +2039,15 @@ export function App() {
           <div ref={dragRegionRef} className="home-window-drag-region" aria-hidden="true" />
         )}
 
+        {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
+          <div className="security-warning" role="status">
+            <LinearIcon name="shieldAlert" />
+            <span>局域网模式未启用账号认证，请仅在可信网络中使用。</span>
+          </div>
+        )}
+
         {selectedProjectId && !detailTask && <div className="board-toolbar">
-          <div className="view-tabs" aria-label="看板视图">
+          <div className="view-tabs" aria-label="项目视图">
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
               type="button"
@@ -2026,6 +2055,14 @@ export function App() {
               onClick={() => selectBoardView("issues")}
             >
               议题看板
+            </button>
+            <button
+              className={`view-tab${boardView === "context" ? " active" : ""}`}
+              type="button"
+              aria-pressed={boardView === "context"}
+              onClick={() => selectBoardView("context")}
+            >
+              Context
             </button>
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
@@ -2195,6 +2232,14 @@ export function App() {
             onOpenInThread={openTaskInThread}
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
+            onAnnounce={setAnnouncement}
+          />
+        ) : boardView === "context" ? (
+          <ContextView
+            key={selectedProject?.id ?? "local"}
+            projectId={selectedProject?.id ?? "local"}
+            revision={contextRevision}
+            createRequest={contextCreateRequest}
             onAnnounce={setAnnouncement}
           />
         ) : boardView === "workflow" ? (
