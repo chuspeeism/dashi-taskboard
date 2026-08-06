@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { createServer as createHttpServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import {
   CompanionError,
@@ -13,6 +18,32 @@ import {
 } from "../mcp/companion-client.mjs";
 
 const DEFAULT_COMPANION_URL = "http://127.0.0.1:47823";
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MCP_SERVER_ENTRY = path.join(REPO_ROOT, "mcp", "server.mjs");
+const PRIVATE_PATH_SENTINEL = "/private/device/alice/taskboard";
+const PASSWORD_SENTINEL = "mcp-shared-password-sentinel";
+const ENV_SENTINEL = "mcp-environment-secret-sentinel";
+
+const BASE_ENTRY = Object.freeze({
+  id: "context-1",
+  projectId: "project-1",
+  kind: "decision",
+  title: "Use the companion boundary",
+  body: "The MCP server uses the loopback companion HTTP API.",
+  tags: ["mcp", "architecture"],
+  sourceType: "agent",
+  sourceId: "ASH-48",
+  sourceThreadId: null,
+  authorType: "agent",
+  authorId: "codex",
+  authorName: "Codex",
+  pinned: true,
+  archivedAt: null,
+  version: 1,
+  idempotencyKey: "ASH-48:decision:companion-boundary",
+  createdAt: "2026-08-06T00:00:00.000Z",
+  updatedAt: "2026-08-06T00:00:00.000Z",
+});
 
 function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -384,4 +415,474 @@ test("client rejects invalid JSON and absolute request URLs without leaking eith
   });
   assert.equal(fetchCalled, false);
   assert.doesNotMatch(JSON.stringify(publicCompanionError(invalidPath)), /example|private|token|secret/i);
+});
+
+function sendHttpJson(response, status, payload) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(payload));
+}
+
+async function requestJson(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  if (chunks.length === 0) return undefined;
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function fixtureError(code, details = undefined) {
+  return {
+    error: {
+      code,
+      message: `Do not leak ${PASSWORD_SENTINEL} at ${PRIVATE_PATH_SENTINEL}`,
+      ...(details === undefined ? {} : {
+        details: {
+          ...details,
+          authorization: `Basic ${PASSWORD_SENTINEL}`,
+          workspacePath: PRIVATE_PATH_SENTINEL,
+          env: { MCP_TEST_SECRET: ENV_SENTINEL },
+        },
+      }),
+    },
+  };
+}
+
+async function startContextCompanion() {
+  const requests = [];
+  const published = new Map();
+  let createCount = 0;
+  const server = createHttpServer(async (request, response) => {
+    try {
+      const url = new URL(request.url, "http://127.0.0.1");
+      const body = await requestJson(request);
+      requests.push({
+        method: request.method,
+        pathname: url.pathname,
+        query: Object.fromEntries(url.searchParams),
+        headers: request.headers,
+        body,
+      });
+
+      if (request.method === "GET" && url.pathname === "/api/projects") {
+        sendHttpJson(response, 200, {
+          projects: [{
+            id: "project-1",
+            name: "Shared Taskboard",
+            workspacePath: REPO_ROOT,
+            issueCount: 48,
+            deviceMappings: [{ workspacePath: PRIVATE_PATH_SENTINEL }],
+            authorization: `Basic ${PASSWORD_SENTINEL}`,
+            password: PASSWORD_SENTINEL,
+            env: { MCP_TEST_SECRET: ENV_SENTINEL },
+          }],
+        });
+        return;
+      }
+
+      if (
+        request.method === "GET"
+        && url.pathname === "/api/projects/project-1/context/brief"
+      ) {
+        sendHttpJson(response, 200, {
+          brief: "## [decision] Use the companion boundary\n\nRead and write through HTTP.",
+          includedEntryIds: [BASE_ENTRY.id],
+          truncated: false,
+          workspacePath: PRIVATE_PATH_SENTINEL,
+        });
+        return;
+      }
+
+      if (
+        request.method === "GET"
+        && url.pathname === "/api/projects/project-1/context"
+      ) {
+        sendHttpJson(response, 200, {
+          entries: [{
+            ...BASE_ENTRY,
+            workspacePath: PRIVATE_PATH_SENTINEL,
+            authorization: `Basic ${PASSWORD_SENTINEL}`,
+            env: { MCP_TEST_SECRET: ENV_SENTINEL },
+          }],
+          nextCursor: "next-page-token",
+          password: PASSWORD_SENTINEL,
+        });
+        return;
+      }
+
+      if (
+        request.method === "POST"
+        && url.pathname === "/api/projects/project-1/context"
+      ) {
+        if (body?.idempotencyKey === "conflicting-key") {
+          sendHttpJson(response, 409, fixtureError("IDEMPOTENCY_CONFLICT"));
+          return;
+        }
+        let entry = published.get(body?.idempotencyKey);
+        if (!entry) {
+          createCount += 1;
+          entry = {
+            ...BASE_ENTRY,
+            id: "published-1",
+            kind: body.kind,
+            title: body.title,
+            body: body.body,
+            tags: body.tags,
+            sourceType: body.sourceType,
+            sourceId: body.sourceId ?? null,
+            sourceThreadId: body.sourceThreadId ?? null,
+            pinned: body.pinned,
+            idempotencyKey: body.idempotencyKey,
+          };
+          published.set(body.idempotencyKey, entry);
+        }
+        sendHttpJson(response, createCount === 1 ? 201 : 200, {
+          entry,
+          authorization: `Basic ${PASSWORD_SENTINEL}`,
+        });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/context/context-1") {
+        sendHttpJson(response, 200, {
+          entry: {
+            ...BASE_ENTRY,
+            workspacePath: PRIVATE_PATH_SENTINEL,
+            password: PASSWORD_SENTINEL,
+          },
+        });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/context/missing") {
+        sendHttpJson(response, 404, fixtureError("CONTEXT_NOT_FOUND"));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/context/auth-required") {
+        sendHttpJson(response, 401, fixtureError("UNAUTHORIZED"));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/context/remote-down") {
+        sendHttpJson(response, 502, fixtureError("REMOTE_UNAVAILABLE"));
+        return;
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/api/context/version-conflict") {
+        sendHttpJson(response, 409, fixtureError("VERSION_CONFLICT", {
+          expectedVersion: 3,
+          actualVersion: 4,
+        }));
+        return;
+      }
+      if (request.method === "PATCH" && url.pathname === "/api/context/context-1") {
+        sendHttpJson(response, 200, {
+          entry: {
+            ...BASE_ENTRY,
+            ...body,
+            id: BASE_ENTRY.id,
+            version: 2,
+            updatedAt: "2026-08-06T01:00:00.000Z",
+          },
+        });
+        return;
+      }
+
+      if (
+        request.method === "POST"
+        && url.pathname === "/api/context/already-archived/archive"
+      ) {
+        sendHttpJson(response, 409, fixtureError("CONTEXT_ALREADY_ARCHIVED"));
+        return;
+      }
+      if (
+        request.method === "POST"
+        && url.pathname === "/api/context/context-1/archive"
+      ) {
+        sendHttpJson(response, 200, {
+          entry: {
+            ...BASE_ENTRY,
+            archivedAt: "2026-08-06T02:00:00.000Z",
+            version: 3,
+            updatedAt: "2026-08-06T02:00:00.000Z",
+          },
+        });
+        return;
+      }
+
+      sendHttpJson(response, 404, fixtureError("ROUTE_NOT_FOUND"));
+    } catch {
+      sendHttpJson(response, 500, fixtureError("FIXTURE_FAILURE"));
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    requests,
+    get createCount() {
+      return createCount;
+    },
+    async close() {
+      await new Promise((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    },
+  };
+}
+
+async function createMcpFixture(t) {
+  const companion = await startContextCompanion();
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [MCP_SERVER_ENTRY],
+    cwd: REPO_ROOT,
+    env: {
+      CODEX_TASKBOARD_COMPANION_URL: companion.origin,
+      MCP_TEST_SECRET: ENV_SENTINEL,
+    },
+    stderr: "pipe",
+  });
+  let stderr = "";
+  transport.stderr?.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+  const client = new Client({ name: "taskboard-mcp-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await companion.close();
+    assert.equal(stderr, "");
+  });
+  await client.connect(transport);
+  return { client, companion };
+}
+
+function assertStructuredResult(result) {
+  assert.equal(Array.isArray(result.content), true);
+  assert.equal(result.content[0]?.type, "text");
+  assert.equal(typeof result.content[0]?.text, "string");
+  assert.ok(result.content[0].text.length > 0);
+  assert.equal(typeof result.structuredContent, "object");
+  return result.structuredContent;
+}
+
+test("stdio server initializes and advertises exactly seven strict context tools", async (t) => {
+  const { client } = await createMcpFixture(t);
+
+  assert.deepEqual(client.getServerVersion(), {
+    name: "dashi-taskboard",
+    version: "0.1.0",
+  });
+  assert.deepEqual(client.getServerCapabilities(), { tools: { listChanged: true } });
+
+  const { tools } = await client.listTools();
+  assert.deepEqual(tools.map((tool) => tool.name), [
+    "taskboard_context_current_project",
+    "taskboard_context_brief",
+    "taskboard_context_search",
+    "taskboard_context_get",
+    "taskboard_context_publish",
+    "taskboard_context_update",
+    "taskboard_context_archive",
+  ]);
+  for (const tool of tools) {
+    assert.equal(tool.inputSchema.type, "object", tool.name);
+    assert.equal(tool.inputSchema.additionalProperties, false, tool.name);
+    assert.equal(tool.outputSchema.type, "object", tool.name);
+    assert.equal(tool.outputSchema.additionalProperties, false, tool.name);
+  }
+
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  assert.deepEqual(byName.get("taskboard_context_publish").inputSchema.required.sort(), [
+    "body",
+    "idempotencyKey",
+    "kind",
+    "title",
+  ]);
+  assert.deepEqual(byName.get("taskboard_context_update").inputSchema.required.sort(), ["id", "version"]);
+  assert.deepEqual(byName.get("taskboard_context_archive").inputSchema.required.sort(), ["id", "version"]);
+  assert.equal(byName.get("taskboard_context_get").annotations.readOnlyHint, true);
+  assert.equal(byName.get("taskboard_context_publish").annotations.idempotentHint, true);
+  assert.equal(byName.get("taskboard_context_archive").annotations.destructiveHint, true);
+});
+
+test("stdio tools route reads and versioned writes through the companion safely", async (t) => {
+  const { client, companion } = await createMcpFixture(t);
+  const results = [];
+
+  results.push(await client.callTool({
+    name: "taskboard_context_current_project",
+    arguments: {},
+  }));
+  assert.deepEqual(assertStructuredResult(results.at(-1)), {
+    ok: true,
+    project: { id: "project-1", name: "Shared Taskboard", issueCount: 48 },
+  });
+
+  results.push(await client.callTool({ name: "taskboard_context_brief", arguments: {} }));
+  assert.deepEqual(assertStructuredResult(results.at(-1)), {
+    ok: true,
+    brief: "## [decision] Use the companion boundary\n\nRead and write through HTTP.",
+    includedEntryIds: [BASE_ENTRY.id],
+    truncated: false,
+  });
+
+  results.push(await client.callTool({
+    name: "taskboard_context_search",
+    arguments: {
+      query: "companion + http",
+      kind: "decision",
+      tag: "mcp",
+      pinned: true,
+      archived: "false",
+      limit: 10,
+      cursor: "cursor/with+symbols=",
+    },
+  }));
+  assert.deepEqual(assertStructuredResult(results.at(-1)), {
+    ok: true,
+    entries: [BASE_ENTRY],
+    nextCursor: "next-page-token",
+  });
+
+  results.push(await client.callTool({
+    name: "taskboard_context_get",
+    arguments: { id: BASE_ENTRY.id },
+  }));
+  assert.deepEqual(assertStructuredResult(results.at(-1)), { ok: true, entry: BASE_ENTRY });
+
+  const publishArguments = {
+    kind: "handoff",
+    title: "Backend handoff",
+    body: "The MCP contract is ready for review.",
+    tags: ["ASH-48"],
+    sourceId: "ASH-48",
+    sourceThreadId: "thread-1",
+    pinned: false,
+    idempotencyKey: "ASH-48:handoff:backend",
+  };
+  const firstPublish = await client.callTool({
+    name: "taskboard_context_publish",
+    arguments: publishArguments,
+  });
+  const replayedPublish = await client.callTool({
+    name: "taskboard_context_publish",
+    arguments: publishArguments,
+  });
+  results.push(firstPublish, replayedPublish);
+  assert.deepEqual(
+    assertStructuredResult(firstPublish).entry,
+    assertStructuredResult(replayedPublish).entry,
+  );
+  assert.equal(companion.createCount, 1);
+
+  results.push(await client.callTool({
+    name: "taskboard_context_update",
+    arguments: {
+      id: BASE_ENTRY.id,
+      version: 1,
+      title: "Use the strict companion boundary",
+      pinned: false,
+    },
+  }));
+  assert.equal(assertStructuredResult(results.at(-1)).entry.version, 2);
+
+  results.push(await client.callTool({
+    name: "taskboard_context_archive",
+    arguments: { id: BASE_ENTRY.id, version: 2 },
+  }));
+  assert.equal(assertStructuredResult(results.at(-1)).entry.version, 3);
+
+  const searchRequest = companion.requests.find((request) => (
+    request.method === "GET"
+    && request.pathname === "/api/projects/project-1/context"
+  ));
+  assert.deepEqual(searchRequest.query, {
+    query: "companion + http",
+    kind: "decision",
+    tag: "mcp",
+    pinned: "true",
+    archived: "false",
+    limit: "10",
+    cursor: "cursor/with+symbols=",
+  });
+  const publishRequests = companion.requests.filter((request) => request.method === "POST" && (
+    request.pathname === "/api/projects/project-1/context"
+  ));
+  assert.equal(publishRequests.length, 2);
+  assert.equal(publishRequests[0].body.sourceType, "agent");
+  assert.equal(publishRequests[0].body.idempotencyKey, publishArguments.idempotencyKey);
+  assert.deepEqual(
+    companion.requests.find((request) => request.method === "PATCH").body,
+    { version: 1, title: "Use the strict companion boundary", pinned: false },
+  );
+  assert.deepEqual(
+    companion.requests.find((request) => request.pathname.endsWith("/archive")).body,
+    { version: 2 },
+  );
+  for (const request of companion.requests) {
+    assert.equal(request.headers.authorization, undefined);
+    assert.equal(request.headers["x-taskboard-client"], "taskctl");
+  }
+
+  const serialized = JSON.stringify(results);
+  assert.doesNotMatch(serialized, new RegExp(PRIVATE_PATH_SENTINEL));
+  assert.doesNotMatch(serialized, new RegExp(PASSWORD_SENTINEL));
+  assert.doesNotMatch(serialized, new RegExp(ENV_SENTINEL));
+  assert.doesNotMatch(serialized, /workspacePath|authorization|password|deviceMappings|env/i);
+});
+
+test("stdio tools preserve safe error codes and actionable conflict details", async (t) => {
+  const { client } = await createMcpFixture(t);
+  const cases = [
+    ["taskboard_context_get", { id: "missing" }, 404, "CONTEXT_NOT_FOUND", "not_found"],
+    ["taskboard_context_get", { id: "auth-required" }, 401, "UNAUTHORIZED", "authentication_required"],
+    ["taskboard_context_get", { id: "remote-down" }, 502, "REMOTE_UNAVAILABLE", "cloud_unavailable"],
+    [
+      "taskboard_context_update",
+      { id: "version-conflict", version: 3, title: "New title" },
+      409,
+      "VERSION_CONFLICT",
+      "version_conflict",
+    ],
+    [
+      "taskboard_context_publish",
+      {
+        kind: "risk",
+        title: "Conflict",
+        body: "Different content",
+        idempotencyKey: "conflicting-key",
+      },
+      409,
+      "IDEMPOTENCY_CONFLICT",
+      "idempotency_conflict",
+    ],
+    [
+      "taskboard_context_archive",
+      { id: "already-archived", version: 1 },
+      409,
+      "CONTEXT_ALREADY_ARCHIVED",
+      "already_archived",
+    ],
+  ];
+
+  for (const [name, args, status, code, category] of cases) {
+    const result = await client.callTool({ name, arguments: args });
+    assert.equal(result.isError, true, name);
+    const structured = assertStructuredResult(result);
+    assert.equal(structured.ok, false, name);
+    assert.equal(structured.error.status, status, name);
+    assert.equal(structured.error.code, code, name);
+    assert.equal(structured.error.category, category, name);
+    assert.equal(typeof structured.error.action, "string", name);
+    if (code === "VERSION_CONFLICT") {
+      assert.deepEqual(structured.error.details, { expectedVersion: 3, actualVersion: 4 });
+    }
+    const serialized = JSON.stringify(result);
+    assert.doesNotMatch(serialized, new RegExp(PRIVATE_PATH_SENTINEL));
+    assert.doesNotMatch(serialized, new RegExp(PASSWORD_SENTINEL));
+    assert.doesNotMatch(serialized, new RegExp(ENV_SENTINEL));
+    assert.doesNotMatch(serialized, /upstream|authorization|workspacePath|password|env/i);
+  }
 });
