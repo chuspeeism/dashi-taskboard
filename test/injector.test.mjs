@@ -67,6 +67,7 @@ test("the package injection command remains resident for tab-triggered recovery"
   assert.match(source, /port: defaultCodexDebuggingPort/);
   assert.match(source, /--startup-token/);
   assert.match(source, /__codexTaskboardHostStartupTokenV1/);
+  assert.match(source, /if \(!options\.watch \|\| error\.message !== "No Codex renderer target found"\) throw error/);
 });
 
 test("attach reconciles the renderer against a hashed current injection source", () => {

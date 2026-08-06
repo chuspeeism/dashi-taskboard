@@ -1264,18 +1264,25 @@ async function main() {
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
-    const firstResults = await injectAll(
-      options.port,
-      source,
-      sourceHash,
-      options.open,
-      options.screenshot,
-      injectedTargets,
-      options.watch,
-      supervisor,
-      options.attachExisting,
-      options.startupToken,
-    );
+    let firstResults;
+    try {
+      firstResults = await injectAll(
+        options.port,
+        source,
+        sourceHash,
+        options.open,
+        options.screenshot,
+        injectedTargets,
+        options.watch,
+        supervisor,
+        options.attachExisting,
+        options.startupToken,
+      );
+    } catch (error) {
+      if (!options.watch || error.message !== "No Codex renderer target found") throw error;
+      console.error(`Waiting for Codex renderer: ${error.message}`);
+      firstResults = [];
+    }
     console.log(JSON.stringify({ injected: firstResults }, null, 2));
 
     if (!options.watch) {
