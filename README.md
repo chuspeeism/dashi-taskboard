@@ -57,6 +57,22 @@ The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optim
 
 ## Embed in Codex
 
+### Replace the system ChatGPT entry
+
+Install a Taskboard launcher at the standard ChatGPT application path:
+
+```bash
+npm run codex:install-launcher
+```
+
+The installer preserves the signed official app at `/Applications/.ChatGPT Official.app` and places a same-icon launcher at `/Applications/ChatGPT.app`. Opening ChatGPT from Finder, Launchpad, or Spotlight then launches the official app with a loopback-only CDP port and starts the resident Taskboard injector. The official app bundle is not modified.
+
+Restore the original application entry with:
+
+```bash
+npm run codex:uninstall-launcher
+```
+
 ### Recommended: keep your current window and open a separate Taskboard window
 
 Keep the existing Codex window open. From the Taskboard repository, start a second Codex instance with a dedicated CDP port:

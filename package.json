@@ -13,6 +13,8 @@
     "codex": "node scripts/codex-injector.mjs --launch --watch --open",
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
+    "codex:install-launcher": "node scripts/install-chatgpt-launcher.mjs",
+    "codex:uninstall-launcher": "node scripts/install-chatgpt-launcher.mjs --uninstall",
     "codex:refresh": "node scripts/codex-injector.mjs --refresh",
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch server/index.mjs --dev",

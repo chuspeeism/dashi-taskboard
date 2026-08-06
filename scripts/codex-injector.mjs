@@ -263,10 +263,18 @@ class CdpConnection {
   }
 
   send(method, params = {}) {
+    if (this.closed || this.socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("CDP WebSocket is closed"));
+    }
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -1137,10 +1145,20 @@ async function injectTarget(
       });
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    const status = await waitForInjectionStatus(cdp, shouldOpen, sourceHash, 15_000);
-    const frameLoaded = status.frameUrl
+    let status = await waitForInjectionStatus(cdp, shouldOpen, sourceHash, 15_000);
+    let frameLoaded = status.frameUrl
       ? await waitForFrame(cdp, status.frameUrl, 15_000)
       : false;
+    if (shouldOpen && !frameLoaded) {
+      await cdp.send("Runtime.evaluate", {
+        expression: "window.__codexTaskboardInjection__?.open()",
+        returnByValue: true,
+      });
+      status = await waitForInjectionStatus(cdp, true, sourceHash, 15_000);
+      frameLoaded = status.frameUrl
+        ? await waitForFrame(cdp, status.frameUrl, 15_000)
+        : false;
+    }
     if (shouldOpen && !frameLoaded) {
       throw new Error("Taskboard iframe did not finish loading in the Codex renderer");
     }
