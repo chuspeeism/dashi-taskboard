@@ -1,6 +1,6 @@
 # Codex Taskboard
 
-A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `taskctl` CLI used by the bundled Codex Skill.
+A local-first issue board with an official Codex plugin for issue workflows and durable shared project context. The plugin bundles two Skills and a stdio MCP server; the React UI and `taskctl` use the same companion HTTP API. An optional CDP injector can place the browser UI inside Codex, but it is separate from the official plugin.
 
 ## Requirements
 
@@ -44,18 +44,37 @@ npm run taskctl -- issue create \
 
 Use `npm link` if you want `taskctl` on your shell path. Set `CODEX_TASKBOARD_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the loopback companion with `taskctl cloud login`.
 
-## Install the Codex Skill
+## Install the official Codex plugin
 
-Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then start a new Codex task:
+Install dependencies and expose the plugin's `taskctl` and `dashi-taskboard-mcp` bins:
 
 ```bash
-ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
+npm ci
+npm link
+npm run plugin:validate
 ```
 
-The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
+Keep the loopback companion running, then register this checkout's repository marketplace and install the plugin:
 
-## Embed in Codex
+```bash
+CODEX_TASKBOARD_HOST=127.0.0.1 npm start
+```
+
+Run these in another terminal on first installation:
+
+```bash
+codex plugin marketplace add .
+codex plugin add dashi-taskboard@dashi-taskboard-local
+codex plugin list --json
+```
+
+Restart Codex or start a new thread after installation so it discovers `manage-taskboard`, `shared-project-context`, and the seven `taskboard_context_*` MCP tools. The plugin does not start the companion and does not add a visual sidebar; open <http://127.0.0.1:47823> for the board UI. See [Shared project context](docs/shared-project-context.md) for the tool contract, two-device setup, security boundary, and troubleshooting.
+
+`manage-taskboard` teaches Codex to inspect and claim issues with optimistic versions, verify work, publish durable context when useful, and hand work to `in_review`. It moves an issue to `done` only after explicit user acceptance. `shared-project-context` reads and writes context through the MCP server without direct SQLite, D1, credential, or Codex-state access.
+
+## Optional CDP UI injection (not the official plugin)
+
+The following launcher adds the browser board as a visual Codex sidebar entry. It is optional compatibility tooling and is not the official plugin or its MCP transport. The plugin remains usable when CDP injection is disabled.
 
 ### Recommended: keep your current window and open a separate Taskboard window
 
@@ -110,6 +129,7 @@ To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the us
 | `CODEX_TASKBOARD_PORT` | `47823` | Local HTTP port |
 | `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite data directory |
 | `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API origin |
+| `CODEX_TASKBOARD_COMPANION_URL` | `CODEX_TASKBOARD_URL` or `http://127.0.0.1:47823` | Loopback companion origin for cloud control and MCP |
 
 `npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same taskboard service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `taskctl` can point it at the shared service with `CODEX_TASKBOARD_URL=http://<host-ip>:47823`.
 
@@ -119,7 +139,7 @@ LAN mode has no account authentication: anyone on the trusted local network who 
 
 For two trusted collaborators, the taskboard can run on Cloudflare with Worker Static Assets and API routes, D1 as the authoritative business database, and a private R2 bucket for attachments. The deployment uses HTTPS Basic Authentication with a shared password and refreshes open boards after a global revision changes.
 
-Each device keeps its own project checkout mapping and continues to use a local companion for Codex, Git/worktree, Skill, and MCP capabilities. Cloud mode never falls back to or double-writes the local SQLite database.
+Each device installs the plugin, keeps its own project checkout mapping, and continues to use a local companion for Codex, Git/worktree, Skill, and MCP capabilities. Installing the plugin does not distribute board data, the shared password, or device mappings. Cloud mode never falls back to or double-writes the local SQLite database.
 
 See [Cloud collaboration](docs/cloud-collaboration.md) for owner deployment, existing GitHub installation setup, password rotation, local path mapping, and the one-time local-data migration flow.
 

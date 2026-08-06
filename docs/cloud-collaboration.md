@@ -22,7 +22,9 @@ This is intentionally a shared-password trust model. The Basic username is only 
 
 The cloud stores project, issue, comment, relation, workflow, and attachment data. It does not store a device's absolute project or worktree paths.
 
-Each collaborator runs the local companion for Codex, Git/worktree scanning, installed Skill/MCP discovery, and project path mapping. The companion keeps the cloud URL, actor name, shared password, and device-specific project mappings in `.data/cloud-companion.json` with mode `0600`.
+Each collaborator installs the official plugin and runs the local companion for Codex, Git/worktree scanning, Skill/MCP discovery, and project path mapping. The companion keeps the cloud URL, actor name, shared password, and device-specific project mappings in `.data/cloud-companion.json` with mode `0600`.
+
+Plugin installation does not distribute credentials or business data. Codex chats, execution environments, and session state also stay on their originating device. A context entry's `sourceThreadId` is provenance only; it cannot restore or transfer a Codex session.
 
 When cloud mode is active, the cloud is the only business-data source. A failed cloud request fails visibly. The companion does not fall back to the local SQLite database and does not write to both databases. `taskctl cloud logout` returns that device to its separate local mode; it does not merge local and cloud data.
 
@@ -96,8 +98,20 @@ The owner follows this device setup too, using the owner's own actor name and ch
 ```bash
 git pull --ff-only
 npm ci
+npm link
 npm run build:web
+npm run plugin:validate
 ```
+
+On first installation, register this checkout's marketplace and install the official plugin:
+
+```bash
+codex plugin marketplace add .
+codex plugin add dashi-taskboard@dashi-taskboard-local
+codex plugin list --json
+```
+
+The plugin bundles both Skills and the stdio MCP server, but it does not start the companion or share the cloud password. Repeat the plugin installation and device configuration on both computers.
 
 Start the local companion:
 
@@ -127,15 +141,19 @@ npm run taskctl -- project map PROJECT_ID \
 
 The owner runs the same mapping command with the owner's own path. Mappings are intentionally different on each device and are never synchronized to D1.
 
-Launch the injected Codex window:
+Restart Codex or start a new thread after plugin installation. Keep the companion running while using `manage-taskboard`, `shared-project-context`, or any `taskboard_context_*` tool. Verify the checkout mapping from that checkout:
 
 ```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
+npm run taskctl -- context current --json
 ```
 
-`npm run codex` reuses or starts the loopback companion. Keep it running while using the embedded board. The companion supplies local Codex/Git/Skill/MCP capabilities and sends the shared password to the Worker only in the HTTPS Basic `Authorization` header. It does not write that password to D1 or R2, return it to the browser UI, or print it in logs. Device paths also stay off Cloudflare.
+The companion supplies local Codex/Git/Skill/MCP capabilities and sends the shared password to the Worker only in the HTTPS Basic `Authorization` header. It does not write that password to D1 or R2, return it to the browser UI, expose it to MCP, or print it in logs. Device paths also stay off Cloudflare.
+
+The browser board remains available at the local companion URL. To add that browser UI to a separate Codex window, optionally run `CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex`. This CDP launcher is UI compatibility tooling, not the official plugin, and is not required for Skills or MCP tools.
 
 Do not point `CODEX_TASKBOARD_URL` directly at the cloud origin for this workflow. `taskctl` talks to the loopback companion, which applies Basic Authentication and the device's local project mapping. If the companion uses a non-default loopback port, set `CODEX_TASKBOARD_COMPANION_URL` to that loopback origin.
+
+See [Shared project context](shared-project-context.md) for the seven tool contracts, structured errors, security boundary, and `VERSION_CONFLICT` / `REMOTE_UNAVAILABLE` troubleshooting.
 
 ## Browser-only access
 
