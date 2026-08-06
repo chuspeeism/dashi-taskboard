@@ -16,7 +16,7 @@ import {
 export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
 
-const BOOLEAN_OPTIONS = new Set(["json"]);
+const BOOLEAN_OPTIONS = new Set(["json", "help"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
@@ -79,6 +79,221 @@ const COMMAND_OPTIONS = new Map([
   ["context current", new Set(["cwd", "json"])],
 ]);
 
+// Value placeholders shown in help. Options absent from this map are boolean flags.
+const OPTION_VALUES = new Map([
+  ["id", "ID"],
+  ["name", "NAME"],
+  ["workspace-path", "PATH"],
+  ["url", "HTTPS_ORIGIN"],
+  ["actor-name", "NAME"],
+  ["project", "PROJECT_ID"],
+  ["status", "STATUS"],
+  ["title", "TITLE"],
+  ["description", "TEXT"],
+  ["description-file", "FILE"],
+  ["priority", "PRIORITY"],
+  ["labels", "a,b"],
+  ["thread-id", "ID"],
+  ["git-branch", "BRANCH"],
+  ["worktree-path", "PATH"],
+  ["worktree-branch", "BRANCH"],
+  ["due-date", "YYYY-MM-DD"],
+  ["recurrence-interval", "N"],
+  ["recurrence-unit", "day|week|month|year"],
+  ["if-version", "N"],
+  ["type", "parent|blocks|blocked_by|related"],
+  ["issue", "ISSUE_ID"],
+  ["body", "TEXT"],
+  ["output", "PATH"],
+  ["cwd", "PATH"],
+]);
+
+// Operand signature, summary, and required options per command. The optional
+// options are derived from COMMAND_OPTIONS so help cannot drift from the parser.
+const COMMAND_HELP = new Map([
+  ["project list", { operands: "", summary: "List every project." }],
+  ["project create", { operands: "", summary: "Create a project.", required: ["name"] }],
+  [
+    "project map",
+    {
+      operands: "PROJECT_ID",
+      summary: "Map a project to a local workspace path.",
+      required: ["workspace-path"],
+    },
+  ],
+  [
+    "cloud login",
+    {
+      operands: "",
+      summary: "Point the local companion at a shared cloud board (prompts for the shared key).",
+      required: ["url", "actor-name"],
+    },
+  ],
+  ["cloud status", { operands: "", summary: "Show the current cloud session." }],
+  ["cloud logout", { operands: "", summary: "Clear the stored cloud session." }],
+  ["issue list", { operands: "", summary: "List issues, optionally filtered." }],
+  ["issue get", { operands: "ID", summary: "Read one issue." }],
+  [
+    "issue create",
+    { operands: "", summary: "Create an issue.", required: ["project", "title"] },
+  ],
+  ["issue update", { operands: "ID", summary: "Update issue fields." }],
+  ["issue move", { operands: "ID", summary: "Move an issue to a status.", required: ["status"] }],
+  ["issue archive", { operands: "ID", summary: "Archive an issue." }],
+  ["issue restore", { operands: "ID", summary: "Restore an archived issue." }],
+  [
+    "issue relation",
+    {
+      operands: "add|remove ISSUE_ID",
+      summary: "Add or remove a relation on an issue.",
+      required: ["type", "issue"],
+    },
+  ],
+  ["comment list", { operands: "ISSUE_ID", summary: "List an issue's comments." }],
+  ["comment add", { operands: "ISSUE_ID", summary: "Append a comment.", required: ["body"] }],
+  [
+    "comment update",
+    { operands: "COMMENT_ID", summary: "Edit a comment.", required: ["body", "if-version"] },
+  ],
+  [
+    "comment delete",
+    { operands: "COMMENT_ID", summary: "Delete a comment.", required: ["if-version"] },
+  ],
+  [
+    "attachment download",
+    {
+      operands: "ATTACHMENT_ID",
+      summary: "Download an inline attachment to a local path.",
+      required: ["output"],
+    },
+  ],
+  ["context current", { operands: "", summary: "Report the project for the current directory." }],
+]);
+
+const EXIT_CODE_NOTES = [
+  "Every successful command writes one JSON object with schemaVersion "
+    + `${SCHEMA_VERSION} to stdout; errors write one JSON object to stderr.`,
+  "Exit codes: 0 success, 2 invalid input, 3 service unavailable, 4 API or response error,"
+    + " 5 conflict.",
+];
+
+function optionSignature(name) {
+  const value = OPTION_VALUES.get(name);
+  return value === undefined ? `--${name}` : `--${name} ${value}`;
+}
+
+// COMMAND_OPTIONS is the single source of truth for which commands exist, so a new
+// command shows up in help even before it gains a COMMAND_HELP description.
+function commandSpec(command) {
+  return COMMAND_HELP.get(command) ?? { operands: "", summary: "" };
+}
+
+function partitionOptions(command) {
+  const required = commandSpec(command).required ?? [];
+  return {
+    required,
+    optional: [...COMMAND_OPTIONS.get(command)].filter((name) => !required.includes(name)),
+  };
+}
+
+function renderTopLevelHelp() {
+  const lines = [
+    "taskctl — Taskboard CLI",
+    "",
+    "Usage:",
+    "  taskctl <resource> <action> [operands] [options]",
+    "  taskctl help [<resource> <action>]",
+    "",
+    "Commands:",
+  ];
+  const commands = [...COMMAND_OPTIONS.keys()];
+  const labels = commands.map((command) =>
+    [command, commandSpec(command).operands].filter(Boolean).join(" "));
+  const width = Math.max(...labels.map((label) => label.length));
+  for (const [index, command] of commands.entries()) {
+    lines.push(`  ${labels[index].padEnd(width)}  ${commandSpec(command).summary}`);
+  }
+  lines.push(
+    "",
+    "Global options:",
+    "  --json      Emit machine-readable JSON.",
+    "  -h, --help  Show this help.",
+    "",
+    ...EXIT_CODE_NOTES,
+    "",
+    "Run `taskctl help <resource> <action>` for a command's full option list.",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function renderCommandHelp(command) {
+  const spec = commandSpec(command);
+  const { required, optional } = partitionOptions(command);
+  const lines = [
+    spec.summary,
+    "",
+    "Usage:",
+    `  ${["taskctl", command, spec.operands, "[options]"].filter(Boolean).join(" ")}`,
+  ];
+  if (required.length > 0) {
+    lines.push("", "Required options:");
+    for (const name of required) lines.push(`  ${optionSignature(name)}`);
+  }
+  lines.push("", "Optional options:");
+  for (const name of optional) lines.push(`  ${optionSignature(name)}`);
+  lines.push("  -h, --help");
+  return `${lines.join("\n")}\n`;
+}
+
+// `help issue create` parses as resource "help", action "issue", operand "create",
+// while `issue create --help` parses as resource "issue", action "create".
+function resolveHelpTopic(parsed) {
+  const words = parsed.resource === "help"
+    ? [parsed.action, ...parsed.operands]
+    : [parsed.resource, parsed.action];
+  const topic = words.filter(Boolean).join(" ");
+  if (topic === "") return undefined;
+  if (COMMAND_OPTIONS.has(topic)) return topic;
+  // `taskctl issue --help` has no command to scope to; fall back to the full list.
+  if (parsed.resource !== "help") return undefined;
+  throw usageError(`Unknown command: ${topic}. Run \`taskctl help\` for the command list.`);
+}
+
+function helpCommandPayload(command) {
+  const spec = commandSpec(command);
+  const { required, optional } = partitionOptions(command);
+  return {
+    command,
+    summary: spec.summary,
+    operands: spec.operands,
+    options: [...required, ...optional].map((name) => ({
+      name,
+      value: OPTION_VALUES.get(name) ?? null,
+      required: required.includes(name),
+    })),
+  };
+}
+
+function helpPayload(topic) {
+  const commands = topic === undefined ? [...COMMAND_OPTIONS.keys()] : [topic];
+  return {
+    help: {
+      usage: "taskctl <resource> <action> [operands] [options]",
+      commands: commands.map((command) => helpCommandPayload(command)),
+      notes: EXIT_CODE_NOTES,
+    },
+    schemaVersion: SCHEMA_VERSION,
+  };
+}
+
+function writeHelp(stream, topic, asJson) {
+  if (asJson) {
+    writeJson(stream, helpPayload(topic));
+    return;
+  }
+  stream.write(topic === undefined ? renderTopLevelHelp() : renderCommandHelp(topic));
+}
+
 class TaskctlError extends Error {
   constructor(message, { code = "TASKCTL_ERROR", exitCode = 2, details } = {}) {
     super(message);
@@ -102,6 +317,11 @@ export function parseArgs(argv) {
     if (token === "--") {
       positionals.push(...argv.slice(index + 1));
       break;
+    }
+
+    if (token === "-h") {
+      options.help = true;
+      continue;
     }
 
     if (!token.startsWith("--")) {
@@ -154,6 +374,10 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
 
   try {
     const parsed = parseArgs(argv);
+    if (parsed.options.help || parsed.resource === "help" || parsed.resource === undefined) {
+      writeHelp(stdout, resolveHelpTopic(parsed), parsed.options.json === true);
+      return 0;
+    }
     const result = await execute(parsed, overrides);
     writeJson(stdout, { ...result, schemaVersion: SCHEMA_VERSION });
     return 0;

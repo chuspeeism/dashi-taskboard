@@ -8,7 +8,21 @@ function capture() {
   return {
     stream: { write(chunk) { value += chunk; } },
     json() { return JSON.parse(value); },
+    text() { return value; },
   };
+}
+
+async function runRaw(argv, overrides = {}) {
+  const stdout = capture();
+  const stderr = capture();
+  const exitCode = await main(argv, {
+    fetch: async () => assert.fail("help must not call the service"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    env: {},
+    ...overrides,
+  });
+  return { exitCode, stdout: stdout.text(), stderr: stderr.text() };
 }
 
 function response(payload, status = 200) {
@@ -503,6 +517,217 @@ test("API conflicts produce stable JSON on stderr and exit code 5", async () => 
     schemaVersion: 2,
     error: { code: "VERSION_CONFLICT", message: "Task changed" },
   });
+});
+
+test("--help prints text help for every command group on stdout and exits 0", async () => {
+  const result = await runRaw(["--help"]);
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, "");
+  for (const command of [
+    "project list",
+    "project create",
+    "project map",
+    "cloud login",
+    "cloud status",
+    "cloud logout",
+    "issue list",
+    "issue get",
+    "issue create",
+    "issue update",
+    "issue move",
+    "issue archive",
+    "issue restore",
+    "issue relation",
+    "comment list",
+    "comment add",
+    "comment update",
+    "comment delete",
+    "attachment download",
+    "context current",
+  ]) {
+    assert.match(result.stdout, new RegExp(command), `help omits ${command}`);
+  }
+});
+
+test("-h is an alias for --help", async () => {
+  const short = await runRaw(["-h"]);
+  const long = await runRaw(["--help"]);
+
+  assert.equal(short.exitCode, 0);
+  assert.equal(short.stdout, long.stdout);
+});
+
+test("the help subcommand prints the same help as --help", async () => {
+  const subcommand = await runRaw(["help"]);
+  const flag = await runRaw(["--help"]);
+
+  assert.equal(subcommand.exitCode, 0);
+  assert.equal(subcommand.stdout, flag.stdout);
+});
+
+test("a bare invocation prints top-level help instead of erroring", async () => {
+  const bare = await runRaw([]);
+  const flag = await runRaw(["--help"]);
+
+  assert.equal(bare.exitCode, 0);
+  assert.equal(bare.stderr, "");
+  assert.equal(bare.stdout, flag.stdout);
+});
+
+test("help <resource> <action> prints that command's own option list", async () => {
+  const result = await runRaw(["help", "issue", "create"]);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /taskctl issue create/);
+  for (const signature of [
+    "--project PROJECT_ID",
+    "--title TITLE",
+    "--description TEXT",
+    "--description-file FILE",
+    "--status STATUS",
+    "--priority PRIORITY",
+    "--labels a,b",
+    "--thread-id ID",
+    "--git-branch BRANCH",
+    "--worktree-path PATH",
+    "--worktree-branch BRANCH",
+    "--due-date YYYY-MM-DD",
+    "--recurrence-interval N",
+    "--recurrence-unit day|week|month|year",
+    "--json",
+  ]) {
+    assert.ok(result.stdout.includes(signature), `issue create help omits ${signature}`);
+  }
+  assert.ok(
+    !result.stdout.includes("attachment download"),
+    "command help must not fall back to the full command list",
+  );
+});
+
+test("help for an unknown command reports a usage error on stderr", async () => {
+  const result = await runRaw(["help", "issue", "teleport"]);
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stdout, "");
+  assert.equal(JSON.parse(result.stderr).error.code, "USAGE_ERROR");
+  assert.match(JSON.parse(result.stderr).error.message, /issue teleport/);
+});
+
+test("--help --json emits a structured help object with schemaVersion", async () => {
+  const result = await runRaw(["--help", "--json"]);
+
+  assert.equal(result.exitCode, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.schemaVersion, 2);
+  assert.deepEqual(
+    payload.help.commands.map((entry) => entry.command),
+    [
+      "project list",
+      "project create",
+      "project map",
+      "cloud login",
+      "cloud status",
+      "cloud logout",
+      "issue list",
+      "issue get",
+      "issue create",
+      "issue update",
+      "issue move",
+      "issue archive",
+      "issue restore",
+      "issue relation",
+      "comment list",
+      "comment add",
+      "comment update",
+      "comment delete",
+      "attachment download",
+      "context current",
+    ],
+  );
+
+  const create = payload.help.commands.find((entry) => entry.command === "issue create");
+  assert.deepEqual(create.options.filter((option) => option.required).map((o) => o.name), [
+    "project",
+    "title",
+  ]);
+  assert.deepEqual(create.options.map((option) => option.name).sort(), [
+    "description",
+    "description-file",
+    "due-date",
+    "git-branch",
+    "json",
+    "labels",
+    "priority",
+    "project",
+    "recurrence-interval",
+    "recurrence-unit",
+    "status",
+    "thread-id",
+    "title",
+    "worktree-branch",
+    "worktree-path",
+  ]);
+});
+
+test("every option advertised by help is actually accepted by that command", async () => {
+  const { help } = JSON.parse((await runRaw(["--help", "--json"])).stdout);
+
+  for (const entry of help.commands) {
+    const [resource, action] = entry.command.split(" ");
+    for (const option of entry.options) {
+      const argv = [resource, action, `--${option.name}`];
+      if (option.value !== null) argv.push("placeholder");
+      const result = await run(argv, async () => response({}));
+      if (result.exitCode !== 0) {
+        // "Unknown option" means help advertises an option the command rejects.
+        // "requires a value" means help mis-classified a value option as a flag.
+        assert.ok(
+          !/Unknown option|requires a value/.test(result.stderr.error.message),
+          `${entry.command} rejects the advertised --${option.name}: `
+            + result.stderr.error.message,
+        );
+      }
+    }
+  }
+});
+
+test("--help after a command scopes help to that command", async () => {
+  const flag = await runRaw(["issue", "create", "--help"]);
+  const subcommand = await runRaw(["help", "issue", "create"]);
+
+  assert.equal(flag.exitCode, 0);
+  assert.equal(flag.stdout, subcommand.stdout);
+});
+
+test("help <command> --json narrows the structured payload to that command", async () => {
+  const result = await runRaw(["help", "comment", "update", "--json"]);
+
+  assert.equal(result.exitCode, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.schemaVersion, 2);
+  assert.equal(payload.help.commands.length, 1);
+  assert.equal(payload.help.commands[0].command, "comment update");
+  assert.equal(payload.help.commands[0].operands, "COMMENT_ID");
+  assert.deepEqual(
+    payload.help.commands[0].options.filter((option) => option.required).map((o) => o.name),
+    ["body", "if-version"],
+  );
+});
+
+test("boolean flags parse without a value while value options still require one", () => {
+  assert.deepEqual(parseArgs(["--help"]).options, { help: true });
+  assert.deepEqual(parseArgs(["-h"]).options, { help: true });
+  assert.deepEqual(parseArgs(["issue", "list", "--json"]).options, { json: true });
+  assert.deepEqual(parseArgs(["issue", "list", "--json", "--status", "todo"]).options, {
+    json: true,
+    status: "todo",
+  });
+
+  for (const argv of [["--help=true"], ["issue", "list", "--json=true"]]) {
+    assert.throws(() => parseArgs(argv), /does not accept a value/);
+  }
+  assert.throws(() => parseArgs(["issue", "list", "--status"]), /requires a value/);
 });
 
 test("usage errors are stable and never call the service", async () => {
