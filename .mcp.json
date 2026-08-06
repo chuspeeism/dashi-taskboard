@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dashi-taskboard": {
+      "command": "dashi-taskboard-mcp",
+      "args": []
+    }
+  }
+}

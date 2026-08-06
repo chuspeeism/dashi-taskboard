@@ -7,7 +7,8 @@
     "node": ">=22.5"
   },
   "bin": {
-    "taskctl": "./cli/taskctl.mjs"
+    "taskctl": "./cli/taskctl.mjs",
+    "dashi-taskboard-mcp": "./mcp/server.mjs"
   },
   "scripts": {
     "codex": "node scripts/codex-injector.mjs --launch --watch --open",
@@ -23,6 +24,7 @@
     "typecheck": "tsc -p web/tsconfig.json --noEmit",
     "start": "node server/index.mjs",
     "taskctl": "node cli/taskctl.mjs",
+    "plugin:validate": "node scripts/validate-plugin.mjs",
     "test": "node --test",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs test/cloud-project-context.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",

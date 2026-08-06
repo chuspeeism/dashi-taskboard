@@ -1,0 +1,20 @@
+{
+  "name": "dashi-taskboard-local",
+  "interface": {
+    "displayName": "Dashi Taskboard Local"
+  },
+  "plugins": [
+    {
+      "name": "dashi-taskboard",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
