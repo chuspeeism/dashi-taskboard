@@ -255,11 +255,30 @@ class CdpConnection {
     });
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 10_000) {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP request timed out: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -295,6 +314,7 @@ class CdpConnection {
   }
 
   close() {
+    this.closed = true;
     this.socket.close();
   }
 }
@@ -1036,6 +1056,21 @@ async function registerInjectionSource(cdp, source) {
   return registration.identifier;
 }
 
+async function publishTaskboardHtml(cdp) {
+  try {
+    const response = await fetch(`${taskboardOrigin}/?host=codex`);
+    if (!response.ok) return;
+    const html = await response.text();
+    await cdp.send("Runtime.evaluate", {
+      expression: `window.__codexTaskboardHtml__ = ${JSON.stringify(html)}`,
+      returnByValue: true,
+    });
+  } catch (_) {
+    // The panel falls back to a direct http iframe when the managed HTML is
+    // unavailable (older Codex builds without the CSP restriction).
+  }
+}
+
 async function injectTarget(
   target,
   source,
@@ -1055,6 +1090,7 @@ async function injectTarget(
     await cdp.send("Page.setBypassCSP", { enabled: true });
     await cdp.send("Runtime.enable");
     if (keepAlive) await installTaskboardHostBinding(cdp, supervisor);
+    if (keepAlive) await publishTaskboardHtml(cdp);
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
@@ -1101,6 +1137,7 @@ async function injectTarget(
     await reloaded;
     await evaluateInjectionSource(cdp, source);
     await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
+    if (keepAlive) await publishTaskboardHtml(cdp);
     if (keepAlive) await publishHostHeartbeat(cdp, startupToken);
     if (shouldOpen) {
       await cdp.send("Runtime.evaluate", {
@@ -1264,18 +1301,27 @@ async function main() {
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
-    const firstResults = await injectAll(
-      options.port,
-      source,
-      sourceHash,
-      options.open,
-      options.screenshot,
-      injectedTargets,
-      options.watch,
-      supervisor,
-      options.attachExisting,
-      options.startupToken,
-    );
+    let firstResults = [];
+    try {
+      firstResults = await injectAll(
+        options.port,
+        source,
+        sourceHash,
+        options.open,
+        options.screenshot,
+        injectedTargets,
+        options.watch,
+        supervisor,
+        options.attachExisting,
+        options.startupToken,
+      );
+    } catch (error) {
+      if (!options.watch) throw error;
+      // In watch mode the renderer may appear a few seconds after CDP starts
+      // listening (fresh app launch); keep the loop running and retry there
+      // instead of exiting into a zombie resident process.
+      console.error(`Waiting for Codex renderer: ${error.message}`);
+    }
     console.log(JSON.stringify({ injected: firstResults }, null, 2));
 
     if (!options.watch) {
@@ -1298,10 +1344,14 @@ async function main() {
       } catch (error) {
         console.error(`Waiting for Taskboard service: ${error.message}`);
       }
-      for (const connection of injectedTargets.values()) {
+      for (const [id, connection] of injectedTargets) {
         try {
           await publishHostHeartbeat(connection, options.startupToken);
-        } catch (_) {}
+        } catch (error) {
+          console.error(`Taskboard host heartbeat failed for ${id}: ${error.message}`);
+          connection.close();
+          injectedTargets.delete(id);
+        }
       }
       try {
         const results = await injectAll(
