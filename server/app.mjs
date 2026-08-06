@@ -15,6 +15,14 @@ import {
   isTaskPriority,
   isTaskStatus,
 } from "../shared/domain.mjs";
+import {
+  CONTEXT_BODY_MAX_BYTES,
+  CONTEXT_KINDS,
+  CONTEXT_LIST_DEFAULT_LIMIT,
+  CONTEXT_LIST_MAX_LIMIT,
+  CONTEXT_SOURCE_TYPES,
+  decodeContextCursor,
+} from "../shared/project-context.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
@@ -634,6 +642,179 @@ function parseArchive(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["version", "threadId"]));
   return { version: parseVersion(body.version), threadId: parseThreadId(body.threadId) };
+}
+
+function parseContextKind(value, name = "kind") {
+  if (!CONTEXT_KINDS.includes(value)) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be one of: ${CONTEXT_KINDS.join(", ")}`);
+  }
+  return value;
+}
+
+function parseContextSourceType(value, name = "sourceType") {
+  if (!CONTEXT_SOURCE_TYPES.includes(value)) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELD",
+      `'${name}' must be one of: ${CONTEXT_SOURCE_TYPES.join(", ")}`,
+    );
+  }
+  return value;
+}
+
+function parseContextBody(value, name = "body", { required = false } = {}) {
+  if (value === undefined) {
+    if (required) throw new ApiError(400, "INVALID_FIELD", `'${name}' is required`);
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be a string`);
+  }
+  if (Buffer.byteLength(value, "utf8") > CONTEXT_BODY_MAX_BYTES) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' cannot exceed 65536 UTF-8 bytes`);
+  }
+  return value;
+}
+
+function parseContextTags(value, name = "tags") {
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be an array with at most 20 entries`);
+  }
+  const tags = value.map((tag, index) => {
+    if (typeof tag !== "string") {
+      throw new ApiError(400, "INVALID_FIELD", `'${name}[${index}]' must be a string`);
+    }
+    const normalized = tag.trim();
+    if (normalized.length === 0 || normalized.length > 64) {
+      throw new ApiError(400, "INVALID_FIELD", `'${name}[${index}]' must contain 1 to 64 characters`);
+    }
+    return normalized;
+  });
+  if (new Set(tags).size !== tags.length) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must contain unique values`);
+  }
+  return tags;
+}
+
+function parseContextBoolean(value, name) {
+  if (value === "true" || value === true) return true;
+  if (value === "false" || value === false) return false;
+  throw new ApiError(400, "INVALID_QUERY_PARAMETER", `'${name}' must be true or false`);
+}
+
+function parseContextCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "kind", "title", "body", "tags", "sourceType", "sourceId", "sourceThreadId",
+    "pinned", "idempotencyKey",
+  ]));
+  if (body.pinned !== undefined && typeof body.pinned !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'pinned' must be a boolean");
+  }
+  return {
+    kind: parseContextKind(body.kind),
+    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
+    body: parseContextBody(body.body, "body", { required: true }),
+    tags: body.tags === undefined ? [] : parseContextTags(body.tags),
+    sourceType: body.sourceType === undefined ? "manual" : parseContextSourceType(body.sourceType),
+    sourceId: stringField(body.sourceId ?? null, "sourceId", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
+    sourceThreadId: stringField(body.sourceThreadId ?? null, "sourceThreadId", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
+    pinned: body.pinned ?? false,
+    idempotencyKey: stringField(body.idempotencyKey ?? null, "idempotencyKey", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
+  };
+}
+
+function parseContextPatch(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "kind", "title", "body", "tags", "pinned"]));
+  const version = parseVersion(body.version);
+  const changes = {};
+  if (body.kind !== undefined) changes.kind = parseContextKind(body.kind);
+  if (body.title !== undefined) {
+    changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
+  }
+  if (body.body !== undefined) changes.body = parseContextBody(body.body);
+  if (body.tags !== undefined) changes.tags = parseContextTags(body.tags);
+  if (body.pinned !== undefined) {
+    if (typeof body.pinned !== "boolean") throw new ApiError(400, "INVALID_FIELD", "'pinned' must be a boolean");
+    changes.pinned = body.pinned;
+  }
+  if (Object.keys(changes).length === 0) {
+    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one context field");
+  }
+  return { version, changes };
+}
+
+function parseContextMutation(body, routeLabel) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version"]));
+  if (body.version === undefined) {
+    throw new ApiError(400, "INVALID_FIELD", `'version' is required for ${routeLabel}`);
+  }
+  return { version: parseVersion(body.version) };
+}
+
+function parseContextListFilters(searchParams) {
+  assertAllowedQuery(
+    searchParams,
+    new Set(["query", "kind", "tag", "pinned", "archived", "limit", "cursor"]),
+    "GET /api/projects/:projectId/context",
+  );
+  const rawLimit = searchParams.get("limit");
+  const limit = rawLimit === null ? CONTEXT_LIST_DEFAULT_LIMIT : Number(rawLimit);
+  if (!/^\d+$/.test(rawLimit ?? String(CONTEXT_LIST_DEFAULT_LIMIT))
+    || !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > CONTEXT_LIST_MAX_LIMIT) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", `'limit' must be an integer from 1 to ${CONTEXT_LIST_MAX_LIMIT}`);
+  }
+  const archived = searchParams.get("archived") ?? "false";
+  if (!["false", "true", "all"].includes(archived)) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'archived' must be false, true, or all");
+  }
+  const rawPinned = searchParams.get("pinned");
+  const query = searchParams.get("query");
+  if (query !== null && query.length > 256) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'query' cannot exceed 256 characters");
+  }
+  const rawTag = searchParams.get("tag");
+  const tag = rawTag === null ? undefined : stringField(rawTag, "tag", { required: true, maxLength: 64 });
+  const kind = searchParams.get("kind");
+  if (kind !== null) parseContextKind(kind, "kind");
+  let cursor;
+  const rawCursor = searchParams.get("cursor");
+  if (rawCursor !== null) {
+    try {
+      cursor = decodeContextCursor(rawCursor);
+    } catch {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'cursor' is invalid");
+    }
+  }
+  return {
+    query: query === null ? undefined : query,
+    kind: kind ?? undefined,
+    tag,
+    pinned: rawPinned === null ? undefined : parseContextBoolean(rawPinned, "pinned"),
+    archived,
+    limit,
+    cursor,
+  };
+}
+
+function contextAuthContext(request) {
+  return { mechanism: "local", actor: actorFromRequest(request) };
 }
 
 function parseIssueRelationType(value) {
@@ -1628,6 +1809,42 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
+      const projectContextBriefRoute = pathname.match(/^\/api\/projects\/([^/]+)\/context\/brief$/);
+      if (projectContextBriefRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/projects/:projectId/context/brief");
+        const projectId = validateProjectId(
+          decodeRouteSegment(projectContextBriefRoute[1], "Project id"),
+        );
+        return sendJson(response, 200, database.getProjectContextBrief(projectId));
+      }
+
+      const projectContextRoute = pathname.match(/^\/api\/projects\/([^/]+)\/context$/);
+      if (projectContextRoute) {
+        const projectId = validateProjectId(
+          decodeRouteSegment(projectContextRoute[1], "Project id"),
+        );
+        if (request.method === "GET") {
+          return sendJson(response, 200, database.listProjectContext(
+            projectId,
+            parseContextListFilters(url.searchParams),
+          ));
+        }
+        if (request.method === "POST") {
+          assertNoQuery(url.searchParams, "POST /api/projects/:projectId/context");
+          const result = database.createContextEntry(
+            projectId,
+            parseContextCreate(await readJson(request)),
+            contextAuthContext(request).actor,
+          );
+          if (result.created) {
+            events.emit("context.created", { projectId, entry: result.entry });
+          }
+          return sendJson(response, result.created ? 201 : 200, { entry: result.entry });
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
       const developmentContextsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/development-contexts$/);
       if (developmentContextsRoute) {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
@@ -1702,6 +1919,54 @@ export function createTaskboardServer(options = {}) {
         }
         events.connect(request, response);
         return;
+      }
+
+      const contextRevisionsRoute = pathname.match(/^\/api\/context\/([^/]+)\/revisions$/);
+      if (contextRevisionsRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/context/:id/revisions");
+        const id = decodeRouteSegment(contextRevisionsRoute[1], "Context entry id");
+        return sendJson(response, 200, { revisions: database.listContextRevisions(id) });
+      }
+
+      const contextActionRoute = pathname.match(/^\/api\/context\/([^/]+)\/(archive|restore)$/);
+      if (contextActionRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "Context archive/restore routes");
+        const id = decodeRouteSegment(contextActionRoute[1], "Context entry id");
+        const { version } = parseContextMutation(
+          await readJson(request),
+          `POST /api/context/:id/${contextActionRoute[2]}`,
+        );
+        const actor = contextAuthContext(request).actor;
+        const entry = contextActionRoute[2] === "archive"
+          ? database.archiveContextEntry(id, version, actor)
+          : database.restoreContextEntry(id, version, actor);
+        events.emit(`context.${contextActionRoute[2]}`, { projectId: entry.projectId, entry });
+        return sendJson(response, 200, { entry });
+      }
+
+      const contextEntryRoute = pathname.match(/^\/api\/context\/([^/]+)$/);
+      if (contextEntryRoute) {
+        assertNoQuery(url.searchParams, "Context entry routes");
+        const id = decodeRouteSegment(contextEntryRoute[1], "Context entry id");
+        if (request.method === "GET") {
+          const entry = database.getContextEntry(id);
+          if (!entry) throw new ApiError(404, "CONTEXT_NOT_FOUND", `Context entry '${id}' does not exist`);
+          return sendJson(response, 200, { entry });
+        }
+        if (request.method === "PATCH") {
+          const patch = parseContextPatch(await readJson(request));
+          const entry = database.updateContextEntry(
+            id,
+            patch.version,
+            patch.changes,
+            contextAuthContext(request).actor,
+          );
+          events.emit("context.updated", { projectId: entry.projectId, entry });
+          return sendJson(response, 200, { entry });
+        }
+        return methodNotAllowed(response, ["GET", "PATCH"]);
       }
 
       const taskRelationRoute = pathname.match(

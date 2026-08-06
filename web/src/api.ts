@@ -11,6 +11,12 @@ import type {
   DevelopmentScan,
   IssueRelationType,
   Project,
+  ProjectContextCreateInput,
+  ProjectContextEntry,
+  ProjectContextFilters,
+  ProjectContextListResponse,
+  ProjectContextPatch,
+  ProjectContextRevision,
   Task,
   TaskboardMetadata,
   TaskDraft,
@@ -280,6 +286,118 @@ export async function listDevelopmentContexts(
     `/api/projects/${encodeURIComponent(projectId)}/development-contexts${suffix}`,
     { signal },
   );
+}
+
+export async function listProjectContext(
+  projectId: string,
+  filters: ProjectContextFilters,
+  signal?: AbortSignal,
+): Promise<ProjectContextListResponse> {
+  const query = new URLSearchParams();
+  if (filters.query !== undefined) query.set("query", filters.query);
+  if (filters.kind !== undefined) query.set("kind", filters.kind);
+  if (filters.tag !== undefined) query.set("tag", filters.tag);
+  if (filters.pinned !== undefined) query.set("pinned", String(filters.pinned));
+  // The API defaults to the active (archived=false) view, so omit that value.
+  if (filters.archived !== undefined && filters.archived !== "false") {
+    query.set("archived", filters.archived);
+  }
+  if (filters.limit !== undefined) query.set("limit", String(filters.limit));
+  if (filters.cursor !== undefined) query.set("cursor", filters.cursor);
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return request<ProjectContextListResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/context${suffix}`,
+    { signal },
+  );
+}
+
+export async function getProjectContextBrief(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<{ brief: string; includedEntryIds: string[]; truncated: boolean }> {
+  return request<{ brief: string; includedEntryIds: string[]; truncated: boolean }>(
+    `/api/projects/${encodeURIComponent(projectId)}/context/brief`,
+    { signal },
+  );
+}
+
+export async function createProjectContextEntry(
+  projectId: string,
+  input: ProjectContextCreateInput,
+): Promise<ProjectContextEntry> {
+  const data = await request<{ entry: ProjectContextEntry }>(
+    `/api/projects/${encodeURIComponent(projectId)}/context`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return data.entry;
+}
+
+export async function getProjectContextEntry(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ProjectContextEntry> {
+  const data = await request<{ entry: ProjectContextEntry }>(
+    `/api/context/${encodeURIComponent(id)}`,
+    { signal },
+  );
+  return data.entry;
+}
+
+export async function updateProjectContextEntry(
+  id: string,
+  version: number,
+  changes: ProjectContextPatch,
+): Promise<ProjectContextEntry> {
+  const data = await request<{ entry: ProjectContextEntry }>(
+    `/api/context/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ version, ...changes }),
+    },
+  );
+  return data.entry;
+}
+
+export async function archiveProjectContextEntry(
+  id: string,
+  version: number,
+): Promise<ProjectContextEntry> {
+  const data = await request<{ entry: ProjectContextEntry }>(
+    `/api/context/${encodeURIComponent(id)}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    },
+  );
+  return data.entry;
+}
+
+export async function restoreProjectContextEntry(
+  id: string,
+  version: number,
+): Promise<ProjectContextEntry> {
+  const data = await request<{ entry: ProjectContextEntry }>(
+    `/api/context/${encodeURIComponent(id)}/restore`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    },
+  );
+  return data.entry;
+}
+
+export async function listProjectContextRevisions(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ProjectContextRevision[]> {
+  const data = await request<{ revisions: ProjectContextRevision[] }>(
+    `/api/context/${encodeURIComponent(id)}/revisions`,
+    { signal },
+  );
+  return data.revisions;
 }
 
 export async function listTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {

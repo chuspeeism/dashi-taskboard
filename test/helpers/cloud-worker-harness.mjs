@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +7,28 @@ import { Miniflare } from "miniflare";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ENTRY_PATH = path.join(PROJECT_ROOT, "cloud", "src", "index.mjs");
-const MIGRATION_PATH = path.join(PROJECT_ROOT, "cloud", "migrations", "0001_initial.sql");
+const MIGRATIONS_DIRECTORY = path.join(PROJECT_ROOT, "cloud", "migrations");
+
+async function migrationPaths() {
+  const entries = await readdir(MIGRATIONS_DIRECTORY);
+  const paths = entries
+    .filter((entry) => entry.endsWith(".sql"))
+    .sort()
+    .map((entry) => path.join(MIGRATIONS_DIRECTORY, entry));
+  if (paths.length === 0) throw new Error("Cloud implementation has no D1 migrations");
+  return paths;
+}
 
 async function requireCloudImplementation() {
   const missing = [];
-  for (const filename of [ENTRY_PATH, MIGRATION_PATH]) {
+  let migrations = [];
+  try {
+    migrations = await migrationPaths();
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    missing.push(path.relative(PROJECT_ROOT, MIGRATIONS_DIRECTORY));
+  }
+  for (const filename of [ENTRY_PATH, ...migrations]) {
     try {
       await access(filename);
     } catch (error) {
@@ -22,12 +39,13 @@ async function requireCloudImplementation() {
   if (missing.length > 0) {
     throw new Error(`Cloud implementation is missing:\n${missing.join("\n")}`);
   }
+  return migrations;
 }
 
 export async function createCloudWorkerHarness({
   sharedSecret = "two-person-shared-secret",
 } = {}) {
-  await requireCloudImplementation();
+  const migrations = await requireCloudImplementation();
   const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-worker-"));
   const miniflare = new Miniflare({
     modules: true,
@@ -48,7 +66,9 @@ export async function createCloudWorkerHarness({
   try {
     await miniflare.ready;
     const db = await miniflare.getD1Database("DB");
-    await db.exec(await readFile(MIGRATION_PATH, "utf8"));
+    for (const migration of migrations) {
+      await db.exec(await readFile(migration, "utf8"));
+    }
     const attachments = await miniflare.getR2Bucket("ATTACHMENTS");
 
     async function request(pathname, {
