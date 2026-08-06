@@ -33,6 +33,11 @@ test("context view uses safe markdown and preserves drafts on version conflict",
   assert.match(viewSource, /VERSION_CONFLICT/);
   assert.match(viewSource, /archived: showArchived \? "all" : "false"/);
   assert.match(viewSource, /sortContextEntries/);
+  assert.match(viewSource, /entryMatchesCurrentFilters/);
+  assert.match(viewSource, /handleMobileBack/);
+  assert.match(viewSource, /archiveTarget/);
+  assert.match(viewSource, /actionConflict/);
+  assert.match(viewSource, /aria-invalid={validationField === "body"}/);
   assert.match(viewSource, /刷新后重试/);
   assert.match(viewSource, /sourceThreadId/);
   assert.match(viewSource, /visibleSourceIdentifier/);
@@ -46,5 +51,6 @@ test("context view is integrated as an accessible project peer tab", () => {
   assert.match(appSource, /context\.created/);
   assert.match(appSource, /局域网模式未启用账号认证/);
   assert.match(styles, /\.context-view/);
+  assert.match(styles, /\.context-editor-field input:focus-visible/);
   assert.match(styles, /@media \(max-width: 760px\)/);
 });

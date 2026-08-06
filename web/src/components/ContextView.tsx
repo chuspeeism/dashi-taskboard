@@ -48,6 +48,17 @@ interface ContextConflict {
   baseVersion: number;
 }
 
+type ContextAction = "pin" | "archive" | "restore";
+
+interface ContextActionConflict extends ContextConflict {
+  action: ContextAction;
+}
+
+interface DraftValidationError {
+  field: "title" | "body" | "tags";
+  message: string;
+}
+
 interface ContextViewProps {
   projectId: string;
   revision: number;
@@ -181,12 +192,14 @@ export function ContextView({
   const [draft, setDraft] = useState<ContextDraft>(emptyDraft);
   const [baseVersion, setBaseVersion] = useState<number | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [validationField, setValidationField] = useState<DraftValidationError["field"] | null>(null);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<ContextConflict | null>(null);
+  const [actionConflict, setActionConflict] = useState<ContextActionConflict | null>(null);
   const [revisions, setRevisions] = useState<ProjectContextRevision[] | null>(null);
   const [revisionsLoading, setRevisionsLoading] = useState(false);
   const [revisionPreview, setRevisionPreview] = useState<ProjectContextRevision | null>(null);
-  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<ProjectContextEntry | null>(null);
   const [mobileDetail, setMobileDetail] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const loadSequence = useRef(0);
@@ -198,12 +211,16 @@ export function ContextView({
   const archiveConfirmRef = useRef<HTMLButtonElement>(null);
   const archiveDialogRef = useRef<HTMLDivElement>(null);
   const savingRef = useRef(saving);
+  const tagsRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedFromEntries = useMemo(
     () => entries.find((entry) => entry.id === selectedId) ?? null,
     [entries, selectedId],
   );
-  const selected = editorOpen && editingEntry ? editingEntry : selectedFromEntries;
+  const selected = editorOpen && editingEntry
+    ? editingEntry
+    : actionConflict?.latest ?? selectedFromEntries;
   const availableTags = useMemo(
     () => [...new Set(entries.flatMap((entry) => entry.tags))].sort(),
     [entries],
@@ -211,6 +228,39 @@ export function ContextView({
   const filtersActive = Boolean(query || kind || tag || pinned || showArchived);
   const bodyBytes = byteLength(draft.body);
   const visibleSourceThreadId = visibleSourceIdentifier(selected?.sourceThreadId ?? null);
+  const confirmArchive = archiveTarget !== null;
+
+  function entryMatchesCurrentFilters(entry: ProjectContextEntry): boolean {
+    if (kind && entry.kind !== kind) return false;
+    if (tag.trim() && !entry.tags.includes(tag.trim())) return false;
+    if (pinned === "true" && !entry.pinned) return false;
+    if (pinned === "false" && entry.pinned) return false;
+    if (!showArchived && entry.archivedAt) return false;
+    if (query.trim()) {
+      const needle = query.trim().toLocaleLowerCase();
+      const haystack = [entry.title, entry.body, ...entry.tags].join("\n").toLocaleLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    return true;
+  }
+
+  function invalidateRevisions() {
+    revisionSequence.current += 1;
+    setRevisions(null);
+    setRevisionsLoading(false);
+    setRevisionPreview(null);
+  }
+
+  function applySavedEntry(entry: ProjectContextEntry) {
+    const matches = entryMatchesCurrentFilters(entry);
+    setEntries((current) => {
+      const withoutSaved = current.filter((candidate) => candidate.id !== entry.id);
+      return matches ? sortContextEntries([entry, ...withoutSaved]) : withoutSaved;
+    });
+    setSelectedId(matches ? entry.id : null);
+    if (!matches) setMobileDetail(false);
+    invalidateRevisions();
+  }
 
   async function loadEntries({ append = false, cursor }: { append?: boolean; cursor?: string } = {}) {
     const sequence = ++loadSequence.current;
@@ -273,6 +323,11 @@ export function ContextView({
   }, [projectId, query, kind, tag, pinned, showArchived]);
 
   useEffect(() => {
+    setNextCursor(null);
+    setLoadMoreError(null);
+  }, [projectId, query, kind, tag, pinned, showArchived]);
+
+  useEffect(() => {
     if (revision === 0) return;
     void loadEntries();
   // A realtime refresh updates the list but never resets the editor draft.
@@ -303,7 +358,7 @@ export function ContextView({
     function handleArchiveDialogKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && !savingRef.current) {
         event.preventDefault();
-        setConfirmArchive(false);
+        setArchiveTarget(null);
         window.setTimeout(() => archiveTriggerRef.current?.focus(), 0);
         return;
       }
@@ -334,10 +389,13 @@ export function ContextView({
     setCreating(true);
     setEditorOpen(true);
     setEditingEntry(null);
+    setActionConflict(null);
+    setArchiveTarget(null);
     setDraft(emptyDraft());
     setBaseVersion(null);
     setConflict(null);
     setSaveError(null);
+    setValidationField(null);
     setRevisionPreview(null);
     idempotencyKeyRef.current = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -352,10 +410,13 @@ export function ContextView({
     setCreating(false);
     setEditorOpen(false);
     setEditingEntry(null);
+    setActionConflict(null);
+    setArchiveTarget(null);
     setDraft(draftFromEntry(entry));
     setBaseVersion(entry.version);
     setConflict(null);
     setSaveError(null);
+    setValidationField(null);
     setRevisions(null);
     setRevisionPreview(null);
     setMobileDetail(true);
@@ -366,10 +427,13 @@ export function ContextView({
     setCreating(false);
     setEditorOpen(true);
     setEditingEntry(selected);
+    setActionConflict(null);
+    setArchiveTarget(null);
     setDraft(draftFromEntry(selected));
     setBaseVersion(selected.version);
     setConflict(null);
     setSaveError(null);
+    setValidationField(null);
     window.setTimeout(() => titleRef.current?.focus(), 0);
   }
 
@@ -379,17 +443,28 @@ export function ContextView({
     setEditingEntry(null);
     setConflict(null);
     setSaveError(null);
+    setValidationField(null);
     if (selected) setDraft(draftFromEntry(selected));
   }
 
-  function validateDraft(): string | null {
-    if (!draft.title.trim()) return "标题不能为空。";
-    if (draft.title.trim().length > 240) return "标题不能超过 240 个字符。";
-    if (bodyBytes > CONTEXT_BODY_MAX_BYTES) return "正文不能超过 64 KiB，请删减后保存。";
+  function validateDraft(): DraftValidationError | null {
+    if (!draft.title.trim()) return { field: "title", message: "标题不能为空。" };
+    if (draft.title.trim().length > 240) return { field: "title", message: "标题不能超过 240 个字符。" };
+    if (bodyBytes > CONTEXT_BODY_MAX_BYTES) {
+      return { field: "body", message: "正文不能超过 64 KiB，请删减后保存。" };
+    }
     const tags = parseTags(draft.tags);
-    if (tags.length > 20) return "最多添加 20 个标签。";
-    if (tags.some((item) => item.length > 64)) return "每个标签不能超过 64 个字符。";
+    if (tags.length > 20) return { field: "tags", message: "最多添加 20 个标签。" };
+    if (tags.some((item) => item.length > 64)) {
+      return { field: "tags", message: "每个标签不能超过 64 个字符。" };
+    }
     return null;
+  }
+
+  function focusValidationField(field: DraftValidationError["field"]) {
+    if (field === "title") titleRef.current?.focus();
+    if (field === "tags") tagsRef.current?.focus();
+    if (field === "body") bodyRef.current?.focus();
   }
 
   async function refreshConflict(error: ApiError, version: number) {
@@ -405,18 +480,21 @@ export function ContextView({
     }
   }
 
-  async function refreshStaleAction(error: ApiError, entryId: string) {
+  async function refreshStaleAction(error: ApiError, entryId: string, action: ContextAction, baseVersion: number) {
+    if (action === "archive") setArchiveTarget(null);
     try {
       const latest = await getProjectContextEntry(entryId);
       setEntries((current) => {
-        const next = current.some((entry) => entry.id === latest.id)
-          ? current.map((entry) => entry.id === latest.id ? latest : entry)
-          : [latest, ...current];
-        return sortContextEntries(next);
+        const withoutLatest = current.filter((entry) => entry.id !== latest.id);
+        return entryMatchesCurrentFilters(latest)
+          ? sortContextEntries([latest, ...withoutLatest])
+          : withoutLatest;
       });
       setSelectedId(latest.id);
       setBaseVersion(latest.version);
-      setSaveError(`${error.message} 已加载最新版本，请重试。`);
+      setActionConflict({ latest, action, baseVersion });
+      setArchiveTarget(null);
+      setSaveError(null);
     } catch {
       setSaveError(`${error.message} 无法加载最新版本，请刷新后重试。`);
     }
@@ -425,12 +503,14 @@ export function ContextView({
   async function saveDraft() {
     const validation = validateDraft();
     if (validation) {
-      setSaveError(validation);
-      titleRef.current?.focus();
+      setValidationField(validation.field);
+      setSaveError(validation.message);
+      focusValidationField(validation.field);
       return;
     }
     setSaving(true);
     setSaveError(null);
+    setValidationField(null);
     try {
       const values = {
         kind: draft.kind,
@@ -450,18 +530,13 @@ export function ContextView({
           baseVersion ?? selected!.version,
           values satisfies ProjectContextUpdateInput,
         );
-      setEntries((current) => {
-        const next = current.some((entry) => entry.id === saved.id)
-          ? current.map((entry) => entry.id === saved.id ? saved : entry)
-          : [saved, ...current];
-        return sortContextEntries(next);
-      });
-      setSelectedId(saved.id);
+      applySavedEntry(saved);
       setCreating(false);
       setEditorOpen(false);
       setEditingEntry(null);
       setBaseVersion(saved.version);
       setConflict(null);
+      setActionConflict(null);
       setRevisionPreview(null);
       idempotencyKeyRef.current = null;
       onAnnounce(creating ? "Context 已创建。" : "Context 已保存。");
@@ -476,60 +551,71 @@ export function ContextView({
     }
   }
 
-  async function togglePin() {
-    if (!selected || selected.archivedAt) return;
+  async function togglePin(target = selected) {
+    if (!target || target.archivedAt) return;
     setSaving(true);
+    setActionConflict(null);
     try {
-      const saved = await updateProjectContextEntry(selected.id, selected.version, {
-        pinned: !selected.pinned,
+      const saved = await updateProjectContextEntry(target.id, target.version, {
+        pinned: !target.pinned,
       });
-      setEntries((current) => sortContextEntries(current.map((entry) => entry.id === saved.id ? saved : entry)));
+      applySavedEntry(saved);
       setBaseVersion(saved.version);
       onAnnounce(saved.pinned ? "Context 已置顶。" : "Context 已取消置顶。");
     } catch (error) {
       if (isContextVersionConflict(error)) {
-        await refreshStaleAction(error, selected.id);
+        await refreshStaleAction(error, target.id, "pin", target.version);
       } else setSaveError(messageFor(error));
     } finally {
       setSaving(false);
     }
   }
 
-  async function archiveSelected() {
-    if (!selected) return;
+  async function archiveSelected(target = archiveTarget) {
+    if (!target) return;
     setSaving(true);
+    setActionConflict(null);
     try {
-      const saved = await archiveProjectContextEntry(selected.id, selected.version);
-      setConfirmArchive(false);
+      const saved = await archiveProjectContextEntry(target.id, target.version);
+      setArchiveTarget(null);
       setEditingEntry(null);
-      setEntries((current) => showArchived
-        ? sortContextEntries(current.map((entry) => entry.id === saved.id ? saved : entry))
-        : current.filter((entry) => entry.id !== saved.id));
-      setSelectedId((current) => current === saved.id ? null : current);
-      setMobileDetail(false);
+      applySavedEntry(saved);
       onAnnounce("Context 已归档，可通过“显示已归档”查看。");
     } catch (error) {
-      if (isContextVersionConflict(error)) await refreshStaleAction(error, selected.id);
+      if (isContextVersionConflict(error)) await refreshStaleAction(error, target.id, "archive", target.version);
+      else {
+        setArchiveTarget(null);
+        setSaveError(messageFor(error));
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function restoreSelected(target = selected) {
+    if (!target) return;
+    setSaving(true);
+    setActionConflict(null);
+    try {
+      const saved = await restoreProjectContextEntry(target.id, target.version);
+      applySavedEntry(saved);
+      setBaseVersion(saved.version);
+      onAnnounce("Context 已恢复。");
+    } catch (error) {
+      if (isContextVersionConflict(error)) await refreshStaleAction(error, target.id, "restore", target.version);
       else setSaveError(messageFor(error));
     } finally {
       setSaving(false);
     }
   }
 
-  async function restoreSelected() {
-    if (!selected) return;
-    setSaving(true);
-    try {
-      const saved = await restoreProjectContextEntry(selected.id, selected.version);
-      setEntries((current) => sortContextEntries(current.map((entry) => entry.id === saved.id ? saved : entry)));
-      setBaseVersion(saved.version);
-      onAnnounce("Context 已恢复。");
-    } catch (error) {
-      if (isContextVersionConflict(error)) await refreshStaleAction(error, selected.id);
-      else setSaveError(messageFor(error));
-    } finally {
-      setSaving(false);
-    }
+  async function retryActionConflict() {
+    const pending = actionConflict;
+    if (!pending) return;
+    setActionConflict(null);
+    if (pending.action === "pin") await togglePin(pending.latest);
+    if (pending.action === "archive") await archiveSelected(pending.latest);
+    if (pending.action === "restore") await restoreSelected(pending.latest);
   }
 
   async function toggleRevisions() {
@@ -559,6 +645,16 @@ export function ContextView({
     setTag("");
     setPinned("");
     setShowArchived(false);
+  }
+
+  function handleMobileBack() {
+    if (editorOpen) {
+      setSaveError("请先保存或取消当前编辑，草稿仍保留在表单中。");
+      onAnnounce("请先保存或取消当前编辑。");
+      window.setTimeout(() => titleRef.current?.focus(), 0);
+      return;
+    }
+    setMobileDetail(false);
   }
 
   const displayEntry = revisionPreview ?? selected;
@@ -677,7 +773,7 @@ export function ContextView({
               {nextCursor && (
                 <div className="context-load-more">
                   {loadMoreError && <p role="alert">无法加载更多：{loadMoreError}</p>}
-                  <button className="button secondary" type="button" disabled={loadingMore} onClick={() => void loadEntries({ append: true, cursor: nextCursor })}>
+                  <button className="button secondary" type="button" disabled={loading || loadingMore} onClick={() => void loadEntries({ append: true, cursor: nextCursor })}>
                     {loadingMore ? "加载中…" : "加载更多"}
                   </button>
                 </div>
@@ -690,7 +786,7 @@ export function ContextView({
           {(selected || creating) ? (
             <div className="context-detail-scroll">
               <header className="context-detail-header">
-                <button className="detail-back-button context-mobile-back" type="button" aria-label="返回 Context 列表" onClick={() => setMobileDetail(false)}>
+                <button className="detail-back-button context-mobile-back" type="button" aria-label="返回 Context 列表" onClick={handleMobileBack}>
                   <LinearIcon name="chevronLeft" />
                 </button>
                 <div>
@@ -710,7 +806,7 @@ export function ContextView({
                     ) : (
                       <>
                         <button className="button secondary" type="button" onClick={startEdit}>编辑</button>
-                        <button ref={archiveTriggerRef} className="button danger subtle" type="button" disabled={saving} onClick={() => setConfirmArchive(true)}>归档</button>
+                        <button ref={archiveTriggerRef} className="button danger subtle" type="button" disabled={saving} onClick={() => setArchiveTarget(selected)}>归档</button>
                       </>
                     )}
                   </div>
@@ -737,12 +833,36 @@ export function ContextView({
                   <span className="sr-only">刷新后重试</span>
                 </div>
               )}
+              {actionConflict && (
+                <div className="context-conflict-banner" role="alert">
+                  <LinearIcon name="alert" />
+                  <div>
+                    <strong>操作前条目已被更新，已加载最新状态。</strong>
+                    <p>{actionConflict.latest.authorName} 于 {exactTime(actionConflict.latest.updatedAt)} 更新了 v{actionConflict.latest.version}；当前操作基于 v{actionConflict.baseVersion}。</p>
+                    <button className="button primary" type="button" disabled={saving} onClick={() => void retryActionConflict()}>刷新状态后重试</button>
+                  </div>
+                </div>
+              )}
 
               {editorOpen ? (
                 <form className="context-editor" aria-describedby={saveError ? "context-form-error" : undefined} onSubmit={(event) => { event.preventDefault(); void saveDraft(); }}>
                   <label className="context-editor-field">
                     <span>标题</span>
-                    <input ref={titleRef} type="text" required maxLength={240} value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
+                    <input
+                      ref={titleRef}
+                      type="text"
+                      required
+                      maxLength={240}
+                      value={draft.title}
+                      aria-invalid={validationField === "title"}
+                      onChange={(event) => {
+                        setDraft((current) => ({ ...current, title: event.target.value }));
+                        if (validationField === "title") {
+                          setValidationField(null);
+                          setSaveError(null);
+                        }
+                      }}
+                    />
                   </label>
                   <div className="context-editor-grid">
                     <label className="context-editor-field">
@@ -753,7 +873,21 @@ export function ContextView({
                     </label>
                     <label className="context-editor-field">
                       <span>标签</span>
-                      <input type="text" value={draft.tags} placeholder="api, phase-1" aria-describedby="context-tags-help" onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))} />
+                      <input
+                        ref={tagsRef}
+                        type="text"
+                        value={draft.tags}
+                        placeholder="api, phase-1"
+                        aria-describedby="context-tags-help"
+                        aria-invalid={validationField === "tags"}
+                        onChange={(event) => {
+                          setDraft((current) => ({ ...current, tags: event.target.value }));
+                          if (validationField === "tags") {
+                            setValidationField(null);
+                            setSaveError(null);
+                          }
+                        }}
+                      />
                       <small id="context-tags-help">用逗号分隔，最多 20 个</small>
                     </label>
                     <label className="context-pin-toggle">
@@ -763,7 +897,19 @@ export function ContextView({
                   </div>
                   <label className="context-editor-field context-body-field">
                     <span>正文（Markdown）</span>
-                    <textarea value={draft.body} aria-describedby="context-body-counter" onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} />
+                    <textarea
+                      ref={bodyRef}
+                      value={draft.body}
+                      aria-describedby="context-body-counter"
+                      aria-invalid={validationField === "body"}
+                      onChange={(event) => {
+                        setDraft((current) => ({ ...current, body: event.target.value }));
+                        if (validationField === "body") {
+                          setValidationField(null);
+                          setSaveError(null);
+                        }
+                      }}
+                    />
                     <small id="context-body-counter" className={bodyBytes > CONTEXT_BODY_MAX_BYTES ? "is-error" : bodyBytes > CONTEXT_BODY_WARNING_BYTES ? "is-warning" : ""}>{bodyBytes.toLocaleString()} / {CONTEXT_BODY_MAX_BYTES.toLocaleString()} bytes</small>
                   </label>
                   <div className="context-editor-actions">
@@ -820,19 +966,19 @@ export function ContextView({
         </article>
       </div>
 
-      {confirmArchive && selected && (
+      {archiveTarget && (
         <div className="delete-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !saving) {
-            setConfirmArchive(false);
+            setArchiveTarget(null);
             window.setTimeout(() => archiveTriggerRef.current?.focus(), 0);
           }
         }}>
           <div ref={archiveDialogRef} className="delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="archive-context-title">
             <h2 id="archive-context-title">归档这条 Context？</h2>
-            <p>“{selected.title}” 将从默认列表移除，之后可在归档筛选中恢复。</p>
+            <p>“{archiveTarget.title}” 将从默认列表移除，之后可在归档筛选中恢复。</p>
             <div>
               <button className="button secondary" type="button" disabled={saving} onClick={() => {
-                setConfirmArchive(false);
+                setArchiveTarget(null);
                 window.setTimeout(() => archiveTriggerRef.current?.focus(), 0);
               }}>取消</button>
               <button ref={archiveConfirmRef} className="button danger" type="button" disabled={saving} onClick={() => void archiveSelected()}>{saving ? "归档中…" : "归档"}</button>

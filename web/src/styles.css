@@ -8515,6 +8515,20 @@ kbd {
   padding: 0 7px;
 }
 
+.context-filter-field select:focus-visible,
+.context-editor-field input:focus-visible,
+.context-editor-field select:focus-visible,
+.context-editor-field textarea:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.context-editor-field input[aria-invalid="true"],
+.context-editor-field textarea[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px var(--danger-soft);
+}
+
 .context-archive-toggle {
   display: inline-flex;
   align-items: center;
@@ -8526,6 +8540,12 @@ kbd {
 .context-archive-toggle input,
 .context-pin-toggle input {
   accent-color: var(--accent);
+}
+
+.context-archive-toggle input:focus-visible,
+.context-pin-toggle input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
 }
 
 .context-toolbar-create {
