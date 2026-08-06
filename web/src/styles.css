@@ -2440,6 +2440,70 @@ kbd {
   height: 14px;
 }
 
+.issue-detail-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(13, 14, 16, 0.32);
+  backdrop-filter: blur(1px);
+}
+
+.issue-detail-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1280px, 100%);
+  height: min(880px, 100%);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--dialog-shadow);
+}
+
+.issue-detail-dialog-header {
+  display: flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  border-bottom: var(--border-hairline) solid var(--border);
+  background: var(--header-bg);
+}
+
+.issue-detail-dialog-header > div {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 8px;
+}
+
+.issue-detail-dialog-header strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.issue-detail-dialog-header span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.issue-detail-dialog-close {
+  width: 28px;
+  height: 28px;
+}
+
+.issue-detail-dialog-close svg {
+  width: 16px;
+  height: 16px;
+}
+
 .issue-detail {
   display: flex;
   flex: 1;
@@ -8227,12 +8291,7 @@ kbd {
   width: min(140px, 20vw);
 }
 
-@media (max-width: 1040px) {
-  .workflow-board {
-    --workflow-library-width: 190px;
-    --workflow-inspector-width: 240px;
-  }
-
+@media (max-width: 1240px) {
   .issue-detail-layout {
     grid-template-columns: minmax(0, 1fr) 260px;
     gap: 40px;
@@ -8241,7 +8300,24 @@ kbd {
   }
 }
 
+@media (max-width: 1040px) {
+  .workflow-board {
+    --workflow-library-width: 190px;
+    --workflow-inspector-width: 240px;
+  }
+}
+
 @media (max-width: 760px) {
+  .issue-detail-backdrop {
+    padding: 8px;
+  }
+
+  .issue-detail-dialog {
+    width: 100%;
+    height: 100%;
+    border-radius: 6px;
+  }
+
   .issue-detail-layout {
     display: flex;
     flex-direction: column;

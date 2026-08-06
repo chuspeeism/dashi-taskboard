@@ -1719,17 +1719,6 @@ export function App() {
           <header className="workspace-header">
           <div className="workspace-title">
             <div className="workspace-kicker">
-              {detailTask && (
-                <button
-                  className="detail-back-button"
-                  type="button"
-                  aria-label="关闭详情并返回看板"
-                  title="关闭详情并返回看板 (Esc)"
-                  onClick={closeTaskDetail}
-                >
-                  <LinearIcon name="close" />
-                </button>
-              )}
               {embedded && hostContext?.sidebarCollapsed && (
                 <button
                   className="detail-back-button codex-sidebar-expand-button"
@@ -1808,7 +1797,7 @@ export function App() {
                   <strong>项目</strong>
                 </>
               )}
-              {!detailTask && selectedProjectId && (
+              {selectedProjectId && (
                 <button
                   className={`favorite-button${favoriteProjectIds.has(selectedProjectId) ? " active" : ""}`}
                   type="button"
@@ -1820,7 +1809,7 @@ export function App() {
                   <LinearIcon className="favorite-icon" name="favorite" />
                 </button>
               )}
-              {!detailTask && selectedProjectId && embedded && contextName && <span className="codex-context">{contextName}</span>}
+              {selectedProjectId && embedded && contextName && <span className="codex-context">{contextName}</span>}
             </div>
           </div>
 
@@ -1854,7 +1843,7 @@ export function App() {
           <div ref={dragRegionRef} className="home-window-drag-region" aria-hidden="true" />
         )}
 
-        {selectedProjectId && !detailTask && <div className="board-toolbar">
+        {selectedProjectId && <div className="board-toolbar">
           <div className="view-tabs" aria-label="看板视图">
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
@@ -2008,32 +1997,6 @@ export function App() {
               </div>
             )}
           </section>
-        ) : detailTask && selectedProject ? (
-          <TaskDetail
-            key={detailTask.id}
-            task={detailTask}
-            tasks={tasks}
-            currentUser={currentUser}
-            availableLabels={availableLabels}
-            workflows={workflowOptions}
-            developmentScan={developmentScan}
-            developmentScanLoading={developmentScanLoading}
-            commentsRevision={commentsRevision}
-            attachmentsRevision={attachmentsRevision}
-            onUpdate={(current, changes) => updateTaskProperties(current, changes)}
-            onOpenTask={openTaskDetail}
-            onAddRelation={(current, type, relatedTaskId) => (
-              mutateTaskRelation("add", current, type, relatedTaskId)
-            )}
-            onRemoveRelation={(current, type, relatedTaskId) => (
-              mutateTaskRelation("remove", current, type, relatedTaskId)
-            )}
-            onOpenThread={openThread}
-            onOpenInThread={openTaskInThread}
-            openingThread={openingThreadTaskId === detailTask.id}
-            onError={setActionError}
-            onAnnounce={setAnnouncement}
-          />
         ) : boardView === "workflow" ? (
           <Suspense fallback={<div className="workflow-board-loading">正在打开节点模式…</div>}>
             <WorkflowBoard
@@ -2122,6 +2085,65 @@ export function App() {
           </div>
         )}
       </main>
+
+      {detailTask && selectedProject && (
+        <div
+          className="issue-detail-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeTaskDetail();
+          }}
+        >
+          <section
+            className="issue-detail-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="issue-detail-dialog-title"
+          >
+            <header className="issue-detail-dialog-header">
+              <div>
+                <strong id="issue-detail-dialog-title">{detailTask.identifier}</strong>
+                <span>议题详情</span>
+              </div>
+              <button
+                className="icon-button issue-detail-dialog-close"
+                type="button"
+                aria-label="关闭详情并返回看板"
+                title="关闭详情并返回看板 (Esc)"
+                onClick={closeTaskDetail}
+                autoFocus
+              >
+                <LinearIcon name="close" />
+              </button>
+            </header>
+            <TaskDetail
+              key={detailTask.id}
+              task={detailTask}
+              tasks={tasks}
+              currentUser={currentUser}
+              availableLabels={availableLabels}
+              workflows={workflowOptions}
+              developmentScan={developmentScan}
+              developmentScanLoading={developmentScanLoading}
+              commentsRevision={commentsRevision}
+              attachmentsRevision={attachmentsRevision}
+              onUpdate={(current, changes) => updateTaskProperties(current, changes)}
+              onOpenTask={openTaskDetail}
+              onAddRelation={(current, type, relatedTaskId) => (
+                mutateTaskRelation("add", current, type, relatedTaskId)
+              )}
+              onRemoveRelation={(current, type, relatedTaskId) => (
+                mutateTaskRelation("remove", current, type, relatedTaskId)
+              )}
+              onOpenThread={openThread}
+              onOpenInThread={openTaskInThread}
+              openingThread={openingThreadTaskId === detailTask.id}
+              onError={setActionError}
+              onAnnounce={setAnnouncement}
+            />
+          </section>
+        </div>
+      )}
 
       {editor && (
         <TaskEditor
