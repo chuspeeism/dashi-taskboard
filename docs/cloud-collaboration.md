@@ -113,6 +113,8 @@ codex plugin list --json
 
 The plugin bundles both Skills and the stdio MCP server, but it does not start the companion or share the cloud password. Repeat the plugin installation and device configuration on both computers.
 
+For a plugin that is already installed, pulling and running `npm link` does not refresh Codex's cached Skills or MCP declaration. On each device, follow [Refresh an existing installation](shared-project-context.md#refresh-an-existing-installation), reinstall from `dashi-taskboard-local`, and start a new thread.
+
 Start the local companion:
 
 ```bash
@@ -146,6 +148,8 @@ Restart Codex or start a new thread after plugin installation. Keep the companio
 ```bash
 npm run taskctl -- context current --json
 ```
+
+Explicitly confirm that the CLI result contains the intended `project.id` and that `workspacePath` is this device's checkout; `taskctl context current` can otherwise return its legacy fallback. In the new Codex thread, require `taskboard_context_current_project` to return the same project ID because the MCP resolver never falls back.
 
 The companion supplies local Codex/Git/Skill/MCP capabilities and sends the shared password to the Worker only in the HTTPS Basic `Authorization` header. It does not write that password to D1 or R2, return it to the browser UI, expose it to MCP, or print it in logs. Device paths also stay off Cloudflare.
 

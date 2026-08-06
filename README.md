@@ -51,6 +51,7 @@ Install dependencies and expose the plugin's `taskctl` and `dashi-taskboard-mcp`
 ```bash
 npm ci
 npm link
+npm run build:web
 npm run plugin:validate
 ```
 
@@ -69,6 +70,8 @@ codex plugin list --json
 ```
 
 Restart Codex or start a new thread after installation so it discovers `manage-taskboard`, `shared-project-context`, and the seven `taskboard_context_*` MCP tools. The plugin does not start the companion and does not add a visual sidebar; open <http://127.0.0.1:47823> for the board UI. See [Shared project context](docs/shared-project-context.md) for the tool contract, two-device setup, security boundary, and troubleshooting.
+
+After pulling plugin changes, `npm link` alone does not refresh Codex's cached Skills and MCP declaration. Follow the [local plugin refresh procedure](docs/shared-project-context.md#refresh-an-existing-installation), then start a new thread.
 
 `manage-taskboard` teaches Codex to inspect and claim issues with optimistic versions, verify work, publish durable context when useful, and hand work to `in_review`. It moves an issue to `done` only after explicit user acceptance. `shared-project-context` reads and writes context through the MCP server without direct SQLite, D1, credential, or Codex-state access.
 
@@ -130,6 +133,8 @@ To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the us
 | `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite data directory |
 | `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API origin |
 | `CODEX_TASKBOARD_COMPANION_URL` | `CODEX_TASKBOARD_URL` or `http://127.0.0.1:47823` | Loopback companion origin for cloud control and MCP |
+
+When `CODEX_TASKBOARD_URL` points `taskctl` at a LAN service, set `CODEX_TASKBOARD_COMPANION_URL` separately to the local loopback companion before starting Codex. The MCP server intentionally rejects a LAN origin with `INVALID_COMPANION_URL`.
 
 `npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same taskboard service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `taskctl` can point it at the shared service with `CODEX_TASKBOARD_URL=http://<host-ip>:47823`.
 

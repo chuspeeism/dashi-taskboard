@@ -63,6 +63,21 @@ codex plugin list --json
 
 Restart Codex or start a new thread. New sessions should expose both Skills and exactly seven `taskboard_context_*` tools. The plugin does not start the companion and does not embed the board UI. Use the browser at <http://127.0.0.1:47823>, or separately enable the optional CDP UI injector documented in the README.
 
+## Refresh an existing installation
+
+Codex caches installed local plugin contents. After pulling changes, update dependencies and UI artifacts, validate the clean manifest, add one local cachebuster, and reinstall from the already configured marketplace:
+
+```bash
+npm ci
+npm link
+npm run build:web
+npm run plugin:validate
+python3 "$CODEX_HOME/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py" .
+codex plugin add dashi-taskboard@dashi-taskboard-local
+```
+
+The helper replaces any existing `+codex.*` suffix and intentionally changes only the local `.codex-plugin/plugin.json` version so Codex sees new contents. Do not commit the generated timestamp as a product release version. Start a new thread after reinstalling. If `CODEX_HOME` is not exported, use the equivalent `skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py` path under the active Codex home.
+
 ## Two-device cloud setup
 
 Plugin files, cloud access, and project mappings are separate concerns. On each trusted device:
@@ -72,7 +87,7 @@ Plugin files, cloud access, and project mappings are separate concerns. On each 
 3. Start the local companion with `CODEX_TASKBOARD_HOST=127.0.0.1 npm start`.
 4. Run `taskctl cloud login --url HTTPS_ORIGIN --actor-name NAME` and enter the shared password only at the private prompt.
 5. Run `taskctl project list`, then map each shared project with `taskctl project map PROJECT_ID --workspace-path /that/devices/checkout`.
-6. Confirm `taskctl context current --json` from the checkout, then call `taskboard_context_current_project` in a new Codex thread.
+6. Run `taskctl context current --json` from the checkout and explicitly confirm its `project.id` and `workspacePath`; this legacy CLI command can fall back when no mapping matches. Then call `taskboard_context_current_project` in a new Codex thread and require the expected project ID. The MCP result is the strict no-fallback check.
 
 The owner performs the same device steps. Each mapping stays local and may differ. Installing the plugin does not copy the shared password, D1 data, attachments, Codex chats, execution environments, or filesystem paths. See [Cloud collaboration](cloud-collaboration.md) for Worker provisioning and password rotation.
 
