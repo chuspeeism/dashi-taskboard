@@ -1,0 +1,11 @@
+interface:
+  display_name: "Shared Project Context"
+  short_description: "Read and publish durable project context"
+  default_prompt: "Use $shared-project-context to load this project context before work."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "dashi-taskboard"
+      description: "Dashi Taskboard shared project context tools"
+policy:
+  allow_implicit_invocation: true
