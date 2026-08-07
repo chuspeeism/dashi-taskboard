@@ -301,14 +301,55 @@ class CdpConnection {
   }
 }
 
+// 页面识别参考 Codex++：Windows 版主页面可能是 https://chatgpt.com 或标题含 codex，
+// 不一定是 app://；浮层/快捷聊天窗按 initialRoute 排除，避免注入错窗口
+function targetInitialRoute(target) {
+  try {
+    const url = new URL(target.url || "");
+    if (url.protocol !== "app:") return null;
+    return url.searchParams.get("initialRoute")?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isChatGptDesktopPage(target) {
+  const title = (target.title || "").trim().toLowerCase();
+  const url = (target.url || "").trim().toLowerCase();
+  return (
+    title === "chatgpt" &&
+    (url === "https://chatgpt.com" ||
+      url.startsWith("https://chatgpt.com/") ||
+      url === "https://chat.openai.com" ||
+      url.startsWith("https://chat.openai.com/") ||
+      url.startsWith("data:text/html"))
+  );
+}
+
+function isCodexPageTarget(target) {
+  const haystack = `${target.title || ""} ${target.url || ""}`.toLowerCase();
+  return haystack.includes("codex") || isChatGptDesktopPage(target);
+}
+
+function isExcludedCodexRoute(target) {
+  const route = targetInitialRoute(target);
+  return (
+    route === "/global-dictation" ||
+    route === "/avatar-overlay" ||
+    route === "/chatgpt/quick-chat" ||
+    route === "/chatgpt/quick-chat-prewarm" ||
+    (route?.startsWith("/chatgpt/quick-chat/") ?? false)
+  );
+}
+
 async function codexTargets(port) {
   const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`);
   return targets.filter(
     (target) =>
       target.type === "page" &&
       target.webSocketDebuggerUrl &&
-      !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
-      (target.url?.startsWith("app://") || target.title === "Codex"),
+      !isExcludedCodexRoute(target) &&
+      (target.url?.startsWith("app://") || isCodexPageTarget(target)),
   );
 }
 
