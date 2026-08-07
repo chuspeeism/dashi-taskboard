@@ -1053,6 +1053,27 @@ test("accepts private LAN requests and rejects public Host and Origin headers", 
   });
   assert.equal(originResult.response.status, 403);
   assert.equal(originResult.body.error.code, "INVALID_ORIGIN");
+
+  const opaqueApiResult = await request(baseUrl, "/api/projects", {
+    headers: { origin: "null" },
+  });
+  assert.equal(opaqueApiResult.response.status, 403);
+  assert.equal(opaqueApiResult.body.error.code, "EMBED_TOKEN_REQUIRED");
+
+  const embedToken = "12345678-1234-1234-1234-123456789abc";
+  const registration = await request(baseUrl, "/api/local/embed-token", {
+    method: "POST",
+    headers: { "x-codex-taskboard-embed-token": embedToken },
+  });
+  assert.equal(registration.response.status, 204);
+  const embeddedApiResult = await request(baseUrl, "/api/projects", {
+    headers: {
+      origin: "null",
+      "x-codex-taskboard-embed-token": embedToken,
+    },
+  });
+  assert.equal(embeddedApiResult.response.status, 200);
+  assert.equal(embeddedApiResult.response.headers.get("access-control-allow-origin"), "null");
 });
 
 test("project and task CRUD flow", async () => {

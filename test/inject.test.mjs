@@ -146,14 +146,16 @@ test("reopening reuses a ready cache-busted iframe without showing the startup p
   assert.doesNotMatch(prepareSource, /async function prepareTaskboard\(generation\) \{\s*showLoading\(\);/);
 });
 
-test("iframe messages require both the exact origin and source window", () => {
+test("iframe messages require the source window and the matching direct or blob origin", () => {
   assert.match(
     source,
-    /event\.source !== frame\.contentWindow \|\| event\.origin !== frameOrigin/,
+    /if \(!frame \|\| event\.source !== frame\.contentWindow\) return;/,
   );
+  assert.match(source, /if \(frameIsBlob\) \{\s*if \(event\.origin !== "null"/);
+  assert.match(source, /else if \(event\.origin !== frameOrigin\)/);
   assert.match(source, /message\.type === "taskboard:open-thread"/);
   assert.match(source, /message\.type === "taskboard:create-thread"/);
-  assert.match(source, /postMessage\(message, frameOrigin\)/);
+  assert.match(source, /postMessage\(message, frameIsBlob \? "\*" : frameOrigin\)/);
 });
 
 test("the iframe automation contract is forwarded through the fixed host binding", () => {
@@ -306,11 +308,18 @@ test("cleanup removes observers, listeners, timers and owned DOM", () => {
 });
 
 test("host integration stays thin", () => {
+  const hostSource = source.replace(
+    source.slice(
+      source.indexOf("function taskboardBlobPrelude"),
+      source.indexOf("function createTaskboardBlobUrl"),
+    ),
+    "",
+  );
   assert.match(source, /new MutationObserver\(scheduleRefresh\)/);
   assert.match(source, /type: "taskboard:host-context"/);
   assert.match(source, /type: "taskboard:theme"/);
   assert.match(source, /type: "navigate-to-route"/);
   assert.doesNotMatch(source, /__codexSessionDeleteBridge/);
   assert.doesNotMatch(source, /import\s*\(/);
-  assert.doesNotMatch(source, /window\.fetch\s*=/);
+  assert.doesNotMatch(hostSource, /window\.fetch\s*=/);
 });

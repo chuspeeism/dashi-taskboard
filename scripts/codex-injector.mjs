@@ -27,6 +27,8 @@ const automationPoliciesPath = path.join(projectRoot, ".data", "codex-automation
 const taskboardOrigin = `http://127.0.0.1:${resolvePort()}`;
 const taskboardHealthUrl = `${taskboardOrigin}/health`;
 const taskboardPageUrl = `${taskboardOrigin}/?host=codex`;
+const taskboardEmbedToken = randomUUID();
+const taskboardEmbedTokenHeader = "x-codex-taskboard-embed-token";
 const hostBindingName = "__codexTaskboardHostV1";
 const hostHeartbeatName = "__codexTaskboardHostHeartbeatV1";
 const hostStartupTokenName = "__codexTaskboardHostStartupTokenV1";
@@ -1058,14 +1060,23 @@ async function registerInjectionSource(cdp, source) {
 
 async function publishTaskboardHtml(cdp) {
   try {
+    const registration = await fetch(`${taskboardOrigin}/api/local/embed-token`, {
+      method: "POST",
+      headers: { [taskboardEmbedTokenHeader]: taskboardEmbedToken },
+    });
+    if (!registration.ok) {
+      throw new Error(`embed token registration returned ${registration.status}`);
+    }
     const response = await fetch(`${taskboardOrigin}/?host=codex`);
-    if (!response.ok) return;
+    if (!response.ok) throw new Error(`taskboard HTML returned ${response.status}`);
     const html = await response.text();
     await cdp.send("Runtime.evaluate", {
-      expression: `window.__codexTaskboardHtml__ = ${JSON.stringify(html)}`,
+      expression: `window.__codexTaskboardHtml__ = ${JSON.stringify(html)};
+window.__codexTaskboardEmbedToken__ = ${JSON.stringify(taskboardEmbedToken)};`,
       returnByValue: true,
     });
-  } catch (_) {
+  } catch (error) {
+    console.error(`Unable to publish managed Taskboard HTML: ${error.message}`);
     // The panel falls back to a direct http iframe when the managed HTML is
     // unavailable (older Codex builds without the CSP restriction).
   }
@@ -1354,6 +1365,8 @@ async function main() {
         }
       }
       try {
+        // The initial install may reload once; later renderer recovery always
+        // reconciles in place so a lost heartbeat cannot reload the Codex UI.
         const results = await injectAll(
           options.port,
           source,
@@ -1363,7 +1376,7 @@ async function main() {
           injectedTargets,
           true,
           supervisor,
-          options.attachExisting,
+          true,
           options.startupToken,
         );
         if (results.length > 0) console.log(JSON.stringify({ injected: results }, null, 2));

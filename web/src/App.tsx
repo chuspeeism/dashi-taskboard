@@ -531,6 +531,7 @@ function LocalRealtimeSync({
 export function App() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const embedded = query.get("host") === "codex";
+  const taskboardOrigin = query.get("taskboard-origin") ?? window.location.origin;
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
@@ -618,7 +619,7 @@ export function App() {
     if (!embedded || window.parent === window) {
       return { unavailableReason: "仅可在 Codex App 中使用" };
     }
-    if (!isLocalTaskboardOrigin(window.location.origin)) {
+    if (!isLocalTaskboardOrigin(taskboardOrigin)) {
       return { unavailableReason: "仅本地任务面板可用" };
     }
     if (!selectedProject) return { unavailableReason: "请先选择项目" };
@@ -652,6 +653,7 @@ export function App() {
     hostContext,
     manageTaskboardSkillPath,
     selectedProject,
+    taskboardOrigin,
   ]);
   const detailTask = detailTaskIdentifier
     ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null

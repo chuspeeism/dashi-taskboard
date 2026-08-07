@@ -42,9 +42,20 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "text/plain",
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-// "null" is the serialized origin of blob:-document iframes, which the Codex
-// renderer uses to embed the taskboard since its CSP blocks direct http iframes.
-const TRUSTED_EMBED_ORIGINS = new Set(["app://-", "null"]);
+const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
+const EMBED_TOKEN_HEADER = "x-codex-taskboard-embed-token";
+const EMBED_TOKEN_QUERY = "__codex_taskboard_embed_token";
+const CORS_ALLOWED_HEADERS = [
+  "content-type",
+  "x-request-id",
+  "x-codex-request-id",
+  "x-taskboard-user-id",
+  "x-taskboard-user-name",
+  "x-taskboard-user-avatar",
+  "x-taskboard-filename",
+  "x-taskboard-client",
+  EMBED_TOKEN_HEADER,
+];
 const CODEX_AGENT_ACTOR = {
   type: "agent",
   id: "codex-agent",
@@ -83,7 +94,7 @@ function sendEmpty(response, status, headers = {}) {
   response.end();
 }
 
-function toFetchRequest(request) {
+function toFetchRequest(request, requestUrl = request.url) {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
     if (Array.isArray(value)) {
@@ -97,7 +108,7 @@ function toFetchRequest(request) {
     init.body = Readable.toWeb(request);
     init.duplex = "half";
   }
-  return new Request(`http://127.0.0.1${request.url}`, init);
+  return new Request(`http://127.0.0.1${requestUrl}`, init);
 }
 
 async function sendFetchResponse(response, upstream) {
@@ -152,7 +163,7 @@ function isTrustedNetworkHost(hostname) {
   return false;
 }
 
-function assertTrustedNetworkRequest(request) {
+function assertTrustedNetworkRequest(request, { allowOpaqueOrigin = false } = {}) {
   let host;
   try {
     host = new URL(`http://${request.headers.host ?? ""}`).hostname;
@@ -165,6 +176,7 @@ function assertTrustedNetworkRequest(request) {
 
   const origin = request.headers.origin;
   if (!origin) return;
+  if (origin === "null" && allowOpaqueOrigin) return;
   if (TRUSTED_EMBED_ORIGINS.has(origin)) return;
   let originHost;
   try {
@@ -174,6 +186,24 @@ function assertTrustedNetworkRequest(request) {
   }
   if (!isTrustedNetworkHost(originHost)) {
     throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+  }
+}
+
+function setCorsOrigin(request, response) {
+  const origin = request.headers.origin;
+  if (!origin) return;
+  response.setHeader("access-control-allow-origin", origin);
+  response.setHeader("vary", "origin");
+}
+
+function assertAllowedCorsHeaders(request) {
+  const requested = String(request.headers["access-control-request-headers"] ?? "")
+    .split(",")
+    .map((header) => header.trim().toLowerCase())
+    .filter(Boolean);
+  const allowed = new Set(CORS_ALLOWED_HEADERS);
+  if (requested.some((header) => !allowed.has(header))) {
+    throw new ApiError(403, "INVALID_CORS_HEADERS", "CORS request headers are not allowed");
   }
 }
 
@@ -1335,26 +1365,56 @@ export function createTaskboardServer(options = {}) {
     manageTaskboardSkillPath: resolved.skillPath,
   });
   const aiEventResponses = new Set();
+  let taskboardEmbedToken = null;
 
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
-    response.setHeader("access-control-allow-origin", "*");
-    if (request.method === "OPTIONS") {
-      const requestedHeaders = request.headers["access-control-request-headers"];
-      response.writeHead(204, {
-        "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "access-control-allow-headers": requestedHeaders
-          || "content-type, x-request-id, x-codex-request-id, x-taskboard-user-id, x-taskboard-user-name, x-taskboard-user-avatar",
-        "access-control-max-age": "600",
-      });
-      response.end();
-      return;
-    }
     try {
-      assertTrustedNetworkRequest(request);
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
+
+      if (request.method === "OPTIONS") {
+        assertTrustedNetworkRequest(request, { allowOpaqueOrigin: true });
+        assertAllowedCorsHeaders(request);
+        setCorsOrigin(request, response);
+        return sendEmpty(response, 204, {
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-headers": CORS_ALLOWED_HEADERS.join(", "),
+          "access-control-max-age": "600",
+        });
+      }
+
+      if (pathname === "/api/local/embed-token") {
+        assertTrustedNetworkRequest(request);
+        assertLoopbackRequest(request);
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        if (request.headers.origin) {
+          throw new ApiError(403, "INVALID_ORIGIN", "Embed tokens can only be registered by the local injector");
+        }
+        const token = request.headers[EMBED_TOKEN_HEADER];
+        if (typeof token !== "string" || !/^[a-f0-9-]{36}$/.test(token)) {
+          throw new ApiError(400, "INVALID_EMBED_TOKEN", "Embed token is invalid");
+        }
+        taskboardEmbedToken = token;
+        return sendEmpty(response, 204);
+      }
+
+      const opaqueOrigin = request.headers.origin === "null";
+      const headerToken = request.headers[EMBED_TOKEN_HEADER];
+      const queryToken = request.method === "GET" ? url.searchParams.get(EMBED_TOKEN_QUERY) : null;
+      const hasEmbedToken = opaqueOrigin
+        && taskboardEmbedToken !== null
+        && (headerToken === taskboardEmbedToken || queryToken === taskboardEmbedToken);
+      if (opaqueOrigin && pathname.startsWith("/api/") && !hasEmbedToken) {
+        throw new ApiError(403, "EMBED_TOKEN_REQUIRED", "Opaque embedded API requests require a valid token");
+      }
+      assertTrustedNetworkRequest(request, {
+        allowOpaqueOrigin: opaqueOrigin && (!pathname.startsWith("/api/") || hasEmbedToken),
+      });
+      if (hasEmbedToken) url.searchParams.delete(EMBED_TOKEN_QUERY);
+      setCorsOrigin(request, response);
+
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
       if (isLocalAiRoute) {
         assertAiLoopbackRequest(request);
@@ -1594,7 +1654,7 @@ export function createTaskboardServer(options = {}) {
           if (!isLocalCompanionRoute(pathname)) {
             return sendFetchResponse(
               response,
-              await cloudProxy.forward(toFetchRequest(request)),
+              await cloudProxy.forward(toFetchRequest(request, `${url.pathname}${url.search}`)),
             );
           }
         }
