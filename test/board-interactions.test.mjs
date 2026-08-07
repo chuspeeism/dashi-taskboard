@@ -107,6 +107,10 @@ test("review, blocked and canceled statuses round-trip through filter URLs", () 
   assert.match(filterSource, /filters\.statuses\.join\(","\)/);
   assert.match(filterSource, /\.split\(","\)\.filter\(isTaskStatus\)/);
   assert.match(filterSource, /TASK_STATUSES\.includes\(value as TaskStatus\)/);
+  assert.match(filterSource, /new URLSearchParams\(currentTaskboardRouteSearch\(\)\)/);
+  assert.match(filterSource, /const url = currentTaskboardRouteUrl\(\)/);
+  assert.match(filterSource, /replaceTaskboardRoute\(url\)/);
+  assert.doesNotMatch(filterSource, /window\.history\.replaceState/);
 });
 
 test("the column surface wraps its heading and issue list", () => {

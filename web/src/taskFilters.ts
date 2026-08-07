@@ -5,6 +5,11 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "./types";
+import {
+  currentTaskboardRouteSearch,
+  currentTaskboardRouteUrl,
+  replaceTaskboardRoute,
+} from "./taskboardRoute";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
 export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content";
@@ -34,7 +39,7 @@ function isTaskPriority(value: string): value is TaskPriority {
 }
 
 export function readTaskFilters(): TaskFilters {
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(currentTaskboardRouteSearch());
   const statuses = (params.get("status") ?? "").split(",").filter(isTaskStatus);
   const priorities = (params.get("priority") ?? "").split(",").filter(isTaskPriority);
   const linkValue = params.get("linked");
@@ -49,7 +54,7 @@ export function readTaskFilters(): TaskFilters {
 }
 
 export function writeTaskFilters(filters: TaskFilters) {
-  const url = new URL(window.location.href);
+  const url = currentTaskboardRouteUrl();
 
   if (filters.statuses.length) url.searchParams.set("status", filters.statuses.join(","));
   else url.searchParams.delete("status");
@@ -67,7 +72,7 @@ export function writeTaskFilters(filters: TaskFilters) {
   if (filters.content.trim()) url.searchParams.set("content", filters.content.trim());
   else url.searchParams.delete("content");
 
-  window.history.replaceState(null, "", url);
+  replaceTaskboardRoute(url);
 }
 
 export function taskFilterCount(filters: TaskFilters): number {

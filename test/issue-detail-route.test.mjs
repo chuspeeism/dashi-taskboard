@@ -39,7 +39,7 @@ test("closing issue detail removes only the issue route", () => {
 test("the app restores issue detail from the URL and follows browser history", () => {
   assert.match(
     appSource,
-    /useState<string \| null>\(\s*\(\) => readIssueIdentifier\(window\.location\.search\),?\s*\)/,
+    /useState<string \| null>\(\s*\(\) => readIssueIdentifier\(currentTaskboardRouteSearch\(\)\),?\s*\)/,
   );
   assert.match(appSource, /task\.identifier === detailTaskIdentifier/);
   assert.match(appSource, /window\.addEventListener\("popstate", syncRouteFromLocation\)/);
@@ -48,9 +48,17 @@ test("the app restores issue detail from the URL and follows browser history", (
     appSource.indexOf("function openTaskDetail"),
     appSource.indexOf("function closeTaskDetail"),
   );
-  assert.match(openTaskSource, /buildIssueUrl\(window\.location\.href, task\.projectId, null\)/);
-  assert.match(openTaskSource, /window\.history\.replaceState/);
-  assert.match(openTaskSource, /window\.history\.pushState/);
-  assert.match(appSource, /function closeTaskDetail\(\)[\s\S]*?window\.history\.replaceState/);
+  assert.match(openTaskSource, /const currentRoute = currentTaskboardRouteUrl\(\)/);
+  assert.match(openTaskSource, /buildIssueUrl\(currentRoute\.href, task\.projectId, null\)/);
+  assert.match(openTaskSource, /replaceTaskboardRoute\(boardUrl\)/);
+  assert.match(openTaskSource, /pushTaskboardRoute\(detailUrl\)/);
+  assert.match(appSource, /function closeTaskDetail\(\)[\s\S]*?replaceTaskboardRoute\(url\)/);
+  const changeProjectSource = appSource.slice(
+    appSource.indexOf("function changeProject"),
+    appSource.indexOf("function returnToProjectHome"),
+  );
+  assert.match(changeProjectSource, /buildIssueUrl\(currentTaskboardRouteUrl\(\)\.href, projectId, null\)/);
+  assert.match(changeProjectSource, /replaceTaskboardRoute\(url\)/);
+  assert.doesNotMatch(changeProjectSource, /window\.history\.replaceState/);
   assert.match(appSource, /onEdit=\{openTaskDetail\}/);
 });
