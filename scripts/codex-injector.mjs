@@ -37,6 +37,8 @@ const codexAutomationMethods = new Set([
   "automation-create",
   "automation-update",
 ]);
+const injectMaxAttempts = 3;
+const injectRetryDelayMs = 2_000;
 let codexAutomationRequestSequence = 0;
 const quotaPolicyTimers = new Map();
 const quotaPolicyRecords = new Map();
@@ -308,6 +310,54 @@ async function codexTargets(port) {
       !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
       (target.url?.startsWith("app://") || target.title === "Codex"),
   );
+}
+
+function logInjector(message) {
+  console.error(`[codex-injector ${new Date().toISOString()}] ${message}`);
+}
+
+async function waitForCodexTargets(port, timeoutMs) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let announced = false;
+  while (Date.now() < deadline) {
+    const targets = await codexTargets(port);
+    if (targets.length > 0) {
+      if (announced) {
+        logInjector(`Codex renderer ready on port ${port} after ${Date.now() - startedAt}ms (${targets.length} target(s))`);
+      }
+      return targets;
+    }
+    if (!announced) {
+      announced = true;
+      logInjector(`Waiting for Codex renderer target on port ${port} (up to ${timeoutMs}ms)...`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`No Codex renderer target found on port ${port} within ${timeoutMs}ms`);
+}
+
+// 等页面初次加载完成；启动早期 reload 会让 app:// 协议 ERR_FAILED
+async function waitForPageLoad(cdp, timeoutMs) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let announced = false;
+  while (Date.now() < deadline) {
+    const state = await cdp.send("Runtime.evaluate", {
+      expression: "document.readyState",
+      returnByValue: true,
+    });
+    if (state.result.value === "complete") {
+      if (announced) logInjector(`Codex page finished initial load after ${Date.now() - startedAt}ms`);
+      return;
+    }
+    if (!announced) {
+      announced = true;
+      logInjector(`Waiting for Codex page initial load (up to ${timeoutMs}ms)...`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Codex page did not finish initial load within ${timeoutMs}ms`);
 }
 
 function codexDebuggingPorts(preferredPort) {
@@ -1096,7 +1146,10 @@ async function injectTarget(
     cdp.on("Page.loadEventFired", () => (
       publishInjectionScriptIdentifier(cdp, scriptIdentifier)
     ));
+    await waitForPageLoad(cdp, 20_000);
     const reloaded = cdp.waitFor("Page.loadEventFired", 15_000);
+    // 防止 Page.reload 发送失败时 reloaded 的 rejection 无人接收而崩进程
+    reloaded.catch(() => {});
     await cdp.send("Page.reload");
     await reloaded;
     await evaluateInjectionSource(cdp, source);
@@ -1163,19 +1216,35 @@ async function injectAll(
   for (const target of targets) {
     if (injectedTargets.has(target.id)) continue;
     const firstTarget = injectedTargets.size === 0 && results.length === 0;
-    const { result, connection } = await injectTarget(
-      target,
-      source,
-      sourceHash,
-      shouldOpen && firstTarget,
-      firstTarget ? screenshotPath : null,
-      keepAlive,
-      supervisor,
-      attachExisting,
-      startupToken,
-    );
-    if (connection) injectedTargets.set(target.id, connection);
-    results.push({ targetId: target.id, title: target.title, url: target.url, ...result });
+    let lastError = null;
+    for (let attempt = 1; attempt <= injectMaxAttempts; attempt += 1) {
+      try {
+        const { result, connection } = await injectTarget(
+          target,
+          source,
+          sourceHash,
+          shouldOpen && firstTarget,
+          firstTarget ? screenshotPath : null,
+          keepAlive,
+          supervisor,
+          attachExisting,
+          startupToken,
+        );
+        if (connection) injectedTargets.set(target.id, connection);
+        results.push({ targetId: target.id, title: target.title, url: target.url, ...result });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        logInjector(
+          `Injection into ${target.url || target.id} failed (attempt ${attempt}/${injectMaxAttempts}): ${error.message}`,
+        );
+        if (attempt < injectMaxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, injectRetryDelayMs));
+        }
+      }
+    }
+    if (lastError) throw lastError;
   }
   return results;
 }
@@ -1264,18 +1333,35 @@ async function main() {
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
-    const firstResults = await injectAll(
-      options.port,
-      source,
-      sourceHash,
-      options.open,
-      options.screenshot,
-      injectedTargets,
-      options.watch,
-      supervisor,
-      options.attachExisting,
-      options.startupToken,
-    );
+    // CDP 端口就绪早于 renderer 窗口创建，先等 target 出现再注入；整体失败重试一轮
+    let firstResults = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await waitForCodexTargets(options.port, 15_000);
+        firstResults = await injectAll(
+          options.port,
+          source,
+          sourceHash,
+          options.open,
+          options.screenshot,
+          injectedTargets,
+          options.watch,
+          supervisor,
+          options.attachExisting,
+          options.startupToken,
+        );
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        logInjector(`Initial injection failed (attempt ${attempt}/2): ${error.message}`);
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, injectRetryDelayMs));
+        }
+      }
+    }
+    if (lastError) throw lastError;
     console.log(JSON.stringify({ injected: firstResults }, null, 2));
 
     if (!options.watch) {
