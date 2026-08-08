@@ -560,6 +560,7 @@ test("cloud import calls D1 and R2 adapters, then verifies project counts and ob
   assert.deepEqual(Object.keys(d1.calls[0]), [
     "projects",
     "tasks",
+    "task_identifier_aliases",
     "comments",
     "task_relations",
     "attachments",
@@ -672,7 +673,7 @@ test("D1 binding import uses one JSON statement per table for 100+ rows", async 
   await adapters.d1.importTables(tables);
 
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].length, 6);
+  assert.equal(batches[0].length, 7);
   for (const statement of batches[0]) assert.match(statement.sql, /json_each\(\?\)/);
   assert.equal(JSON.parse(batches[0][1].values[0]).length, 125);
 });

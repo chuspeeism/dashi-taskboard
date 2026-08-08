@@ -1,72 +1,12 @@
 ALTER TABLE projects ADD COLUMN task_prefix TEXT;
-
-UPDATE projects
-SET task_prefix = CASE id
-  WHEN 'local-91a4a013fbe224e28872fc421391aab2' THEN 'VF'
-  WHEN 'dashi-taskboard' THEN 'DT'
-  WHEN 'workflow-bridge' THEN 'WB'
-  WHEN 'local-1add370f38a64dde8725b3fc9ca87b47' THEN 'WB2'
-  WHEN '26bb1f02-ee66-4a7a-912f-4e5512b6ddfb' THEN 'KOS'
-  WHEN '685d0e85-5e48-4442-980f-446ee213f731' THEN 'VAULT'
-  WHEN '4c3a4852-c8af-407d-8b36-8ace35fb1ab3' THEN 'WMP'
-  WHEN 'idea-inbox' THEN 'IDEA'
-  WHEN 'inbox-unclassified' THEN 'INBOX'
-  WHEN 'dashi-e2e-20260804' THEN 'E2E'
-  WHEN 'novel' THEN 'NOVEL'
-  WHEN '592cbf4a-f123-4bce-be0e-15c9945f5529' THEN 'NOV2'
-  WHEN '2b8c9610-546f-4f4e-be44-9cfdfb59ee6d' THEN 'QR'
-  WHEN '60e40f4e-a8dd-4da4-b54c-defcbabdd84d' THEN 'FB'
-  WHEN 'local' THEN 'LOCAL'
-  ELSE 'P' || SUBSTR(PRINTF('%05X', rowid), 1, 5)
-END;
-
+UPDATE projects SET task_prefix = CASE id WHEN 'local-91a4a013fbe224e28872fc421391aab2' THEN 'VF' WHEN 'dashi-taskboard' THEN 'DT' WHEN 'workflow-bridge' THEN 'WB' WHEN 'local-1add370f38a64dde8725b3fc9ca87b47' THEN 'WB2' WHEN '26bb1f02-ee66-4a7a-912f-4e5512b6ddfb' THEN 'KOS' WHEN '685d0e85-5e48-4442-980f-446ee213f731' THEN 'VAULT' WHEN '4c3a4852-c8af-407d-8b36-8ace35fb1ab3' THEN 'WMP' WHEN 'idea-inbox' THEN 'IDEA' WHEN 'inbox-unclassified' THEN 'INBOX' WHEN 'dashi-e2e-20260804' THEN 'E2E' WHEN 'novel' THEN 'NOVEL' WHEN '592cbf4a-f123-4bce-be0e-15c9945f5529' THEN 'NOV2' WHEN '2b8c9610-546f-4f4e-be44-9cfdfb59ee6d' THEN 'QR' WHEN '60e40f4e-a8dd-4da4-b54c-defcbabdd84d' THEN 'FB' WHEN 'local' THEN 'LOCAL' ELSE 'P' || SUBSTR(PRINTF('%05X', rowid), 1, 5) END;
 CREATE UNIQUE INDEX projects_task_prefix ON projects(task_prefix);
-
-CREATE TABLE task_identifier_aliases (
-  identifier TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX task_identifier_aliases_task
-  ON task_identifier_aliases(task_id, created_at, identifier);
-
-CREATE TABLE task_identifier_migration (
-  task_id TEXT PRIMARY KEY,
-  old_identifier TEXT NOT NULL UNIQUE,
-  new_identifier TEXT NOT NULL UNIQUE
-);
-
-INSERT INTO task_identifier_migration (task_id, old_identifier, new_identifier)
-SELECT
-  tasks.id,
-  tasks.identifier,
-  projects.task_prefix || '-' || ROW_NUMBER() OVER (
-    PARTITION BY tasks.project_id ORDER BY tasks.created_at, tasks.id
-  )
-FROM tasks
-JOIN projects ON projects.id = tasks.project_id;
-
-INSERT INTO task_identifier_aliases (identifier, task_id, created_at)
-SELECT old_identifier, task_id, CURRENT_TIMESTAMP
-FROM task_identifier_migration
-WHERE old_identifier <> new_identifier;
-
-UPDATE tasks
-SET identifier = 'MIGRATION-' || id
-WHERE id IN (SELECT task_id FROM task_identifier_migration);
-
-UPDATE tasks
-SET identifier = (
-  SELECT new_identifier
-  FROM task_identifier_migration
-  WHERE task_identifier_migration.task_id = tasks.id
-)
-WHERE id IN (SELECT task_id FROM task_identifier_migration);
-
-UPDATE projects
-SET next_task_number = (
-  SELECT COUNT(*) + 1 FROM tasks WHERE tasks.project_id = projects.id
-);
-
+CREATE TABLE task_identifier_aliases (identifier TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, created_at TEXT NOT NULL);
+CREATE INDEX task_identifier_aliases_task ON task_identifier_aliases(task_id, created_at, identifier);
+CREATE TABLE task_identifier_migration (task_id TEXT PRIMARY KEY, old_identifier TEXT NOT NULL UNIQUE, new_identifier TEXT NOT NULL UNIQUE);
+INSERT INTO task_identifier_migration (task_id, old_identifier, new_identifier) SELECT tasks.id, tasks.identifier, projects.task_prefix || '-' || ROW_NUMBER() OVER (PARTITION BY tasks.project_id ORDER BY tasks.created_at, tasks.id) FROM tasks JOIN projects ON projects.id = tasks.project_id;
+INSERT INTO task_identifier_aliases (identifier, task_id, created_at) SELECT old_identifier, task_id, CURRENT_TIMESTAMP FROM task_identifier_migration WHERE old_identifier <> new_identifier;
+UPDATE tasks SET identifier = 'MIGRATION-' || id WHERE id IN (SELECT task_id FROM task_identifier_migration);
+UPDATE tasks SET identifier = (SELECT new_identifier FROM task_identifier_migration WHERE task_identifier_migration.task_id = tasks.id) WHERE id IN (SELECT task_id FROM task_identifier_migration);
+UPDATE projects SET next_task_number = (SELECT COUNT(*) + 1 FROM tasks WHERE tasks.project_id = projects.id);
 DROP TABLE task_identifier_migration;

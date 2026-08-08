@@ -33,9 +33,13 @@ test("issue detail renders descriptions and comments with GFM markdown", () => {
   );
   assert.match(
     detailSource,
-    /comment\.body && <div className="comment-body"><DescriptionDocument value=\{comment\.body\} \/><\/div>/,
+    /comment\.body && \([\s\S]*?<div className="comment-body">[\s\S]*?<DescriptionDocument value=\{activityCommentBody\(/,
   );
-  assert.doesNotMatch(detailSource, /value\.split\("\\n"\)/);
+  const descriptionDocumentSource = detailSource.slice(
+    detailSource.indexOf("function DescriptionDocument"),
+    detailSource.indexOf("function deliveryReviewSections"),
+  );
+  assert.doesNotMatch(descriptionDocumentSource, /value\.split\("\\n"\)/);
 });
 
 test("issue detail markdown styles cover rich document elements", () => {

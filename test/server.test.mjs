@@ -1099,7 +1099,7 @@ test("project and task CRUD flow", async () => {
   });
   assert.equal(createResult.response.status, 201);
   const created = createResult.body.task;
-  assert.equal(created.identifier, "WEBSITE-1");
+  assert.equal(created.identifier, "WEBSIT-1");
   assert.equal(created.version, 1);
   assert.equal(created.sortOrder, 1000);
   assert.equal(created.archivedAt, null);
@@ -1533,7 +1533,16 @@ test("issue relationship changes are broadcast in realtime", async () => {
 
 test("all task statuses are accepted, filtered, and listed in workflow order", async () => {
   const baseUrl = await startServer();
-  const statuses = ["canceled", "done", "blocked", "in_review", "in_progress", "todo", "backlog"];
+  const statuses = [
+    "canceled",
+    "blocked",
+    "done",
+    "pending_retrospective",
+    "in_review",
+    "in_progress",
+    "todo",
+    "backlog",
+  ];
 
   for (const status of statuses) {
     const createResult = await request(baseUrl, "/api/tasks", {
@@ -1547,10 +1556,19 @@ test("all task statuses are accepted, filtered, and listed in workflow order", a
   const listResult = await request(baseUrl, "/api/tasks");
   assert.deepEqual(
     listResult.body.tasks.map((task) => task.status),
-    ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "canceled"],
+    [
+      "backlog",
+      "todo",
+      "in_progress",
+      "in_review",
+      "pending_retrospective",
+      "done",
+      "blocked",
+      "canceled",
+    ],
   );
 
-  for (const status of ["in_review", "blocked", "canceled"]) {
+  for (const status of ["in_review", "pending_retrospective", "blocked", "canceled"]) {
     const filteredResult = await request(baseUrl, `/api/tasks?status=${status}`);
     assert.equal(filteredResult.response.status, 200);
     assert.deepEqual(filteredResult.body.tasks.map((task) => task.status), [status]);

@@ -15,6 +15,7 @@ test("the taskboard skill coordinates safe issue execution and review handoff", 
 
   assert.match(
     skillSource,
-    /after implementation[^\n]*add a comment[^\n]*key changes[^\n]*verification[^\n]*result[^\n]*risks[^\n]*then move[^\n]*`in_review`/i,
+    /after implementation and self-verification[\s\S]*?add a comment[\s\S]*?key changes[\s\S]*?verification[\s\S]*?result[\s\S]*?remaining risks[\s\S]*?move the issue to `in_review`/i,
   );
+  assert.match(skillSource, /attachment upload[\s\S]*?previewable delivery cards/i);
 });

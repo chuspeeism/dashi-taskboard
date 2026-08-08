@@ -363,12 +363,12 @@ const CLOUD_COLUMNS = {
     "creator_avatar_url", "assignee_type", "assignee_id", "assignee_name",
     "assignee_avatar_url", "workflow_id", "development_context_type", "development_branch",
     "due_date", "recurrence_interval", "recurrence_unit", "retrospective_status",
-    "delivered_at", "archived_at", "version",
+    "delivered_at", "rework_round", "archived_at", "version",
     "created_at", "updated_at",
   ],
   task_identifier_aliases: ["identifier", "task_id", "created_at"],
   comments: [
-    "id", "task_id", "body", "thread_id", "ai_thread_id", "intent", "action",
+    "id", "task_id", "body", "thread_id", "ai_thread_id", "intent", "action", "rework_round",
     "author_type", "author_id", "author_name",
     "author_avatar_url", "version", "created_at", "updated_at",
   ],
@@ -390,8 +390,26 @@ function cloudTaskRow(task) {
   };
 }
 
+function cloudCommentRow(comment) {
+  const intent = comment.intent ?? "comment";
+  return {
+    ...comment,
+    intent,
+    action: comment.action ?? (
+      intent === "discussion"
+        ? "discussion"
+        : intent === "resume"
+          ? comment.ai_thread_id == null ? "review" : "development"
+          : "comment"
+    ),
+    rework_round: comment.rework_round ?? null,
+  };
+}
+
 function cloudRows(table, rows) {
-  return table === "tasks" ? rows.map(cloudTaskRow) : rows;
+  if (table === "tasks") return rows.map(cloudTaskRow);
+  if (table === "comments") return rows.map(cloudCommentRow);
+  return rows;
 }
 
 function insertTableSql(table) {

@@ -44,9 +44,11 @@ test("text selection is reserved for editable fields", () => {
   assert.match(styles, /input,[\s\S]*?textarea,[\s\S]*?\[contenteditable="true"\][\s\S]*?user-select: text/);
 });
 
-test("issue cards omit redundant metadata and keep three compact, well-spaced rows", () => {
-  assert.doesNotMatch(cardSource, /task\.createdAt|创建于|card-footer|created-at|projectName|project-chip/);
-  assert.doesNotMatch(styles, /\.card-footer|\.created-at|\.project-chip/);
+test("issue cards omit timestamps, show project context only when supplied, and keep compact rows", () => {
+  assert.doesNotMatch(cardSource, /创建于|card-footer|created-at/);
+  assert.doesNotMatch(styles, /\.card-footer|\.created-at/);
+  assert.match(cardSource, /projectName && <span className="project-chip"/);
+  assert.match(styles, /\.project-chip \{/);
   assert.match(styles, /\.task-card \{[\s\S]*?min-height: 80px;[\s\S]*?gap: 6px;[\s\S]*?padding: 7px 8px/);
   assert.match(detailSource, /currentTask\.createdAt/);
 });
@@ -82,16 +84,19 @@ test("the complete Linear-style workflow shares one ordered status source", () =
     "todo",
     "in_progress",
     "in_review",
-    "blocked",
+    "pending_retrospective",
     "done",
+    "blocked",
     "canceled",
   ]);
   assert.match(boardColumnSource, /in_review: \{ label: "审核中", tone: "review" \}/);
+  assert.match(boardColumnSource, /pending_retrospective: \{ label: "待复盘", tone: "retrospective" \}/);
   assert.match(boardColumnSource, /blocked: \{ label: "待解决", tone: "blocked" \}/);
   assert.match(boardColumnSource, /canceled: \{ label: "已取消", tone: "canceled" \}/);
-  assert.match(cardSource, /import \{ TASK_STATUSES,/);
+  assert.match(cardSource, /import \{[\s\S]*?TASK_STATUSES,/);
   assert.doesNotMatch(cardSource, /STATUS_ORDER/);
-  assert.match(detailSource, /TASK_STATUSES\.map\(\(status\) =>/);
+  assert.match(detailSource, /statuses: MAIN_STATUS_FLOW/);
+  assert.match(detailSource, /statuses: EXCEPTION_STATUS_FLOW/);
   assert.match(editorSource, /TASK_STATUSES\.map\(\(value\) =>/);
   assert.match(contextMenuSource, /TASK_STATUSES\.map\(\(status, index\) =>/);
 });
@@ -142,7 +147,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(detailSource, /detail-property-label">Codex/);
   assert.match(detailSource, /comment\.threadId/);
   assert.match(detailSource, /threadId=\{comment\.threadId\}/);
-  assert.doesNotMatch(detailSource, /compact/);
+  assert.doesNotMatch(detailSource, /<ConversationLink[^>]*compact/);
   assert.doesNotMatch(styles, /issue-conversation-link\.compact/);
   assert.match(detailSource, /代码分支/);
   assert.match(detailSource, /Worktree/);
@@ -171,7 +176,7 @@ test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
   assert.match(detailSource, /pendingCommentFiles/);
   assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\)/);
-  assert.match(detailSource, /comment\.attachments\.map/);
+  assert.match(detailSource, /comment\.attachments[\s\S]*?\.map/);
   assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
 });
 

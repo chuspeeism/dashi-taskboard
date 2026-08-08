@@ -22,14 +22,14 @@ test("comment floors use Linear-style cards with the author inside the card", ()
 test("comment body renders document formatting at Linear typography", () => {
   assert.match(
     detailSource,
-    /comment\.body && <div className="comment-body"><DescriptionDocument value=\{comment\.body\} \/><\/div>/,
+    /comment\.body && \([\s\S]*?<div className="comment-body">[\s\S]*?<DescriptionDocument value=\{activityCommentBody\(/,
   );
   assert.match(styles, /\.comment-body\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*24px;/s);
   assert.match(styles, /\.comment-body \.issue-description-document\s*\{/);
 });
 
 test("comment composer aligns with the full comment floor width", () => {
-  assert.match(styles, /\.comment-composer\s*\{[^}]*margin:\s*18px 8px 0;/s);
+  assert.match(styles, /\.comment-composer\s*\{[^}]*margin:\s*18px 0 0;/s);
   assert.match(
     styles,
     /\.comment-composer\s*\{[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--card-shadow\);/s,

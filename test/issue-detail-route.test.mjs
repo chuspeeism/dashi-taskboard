@@ -44,21 +44,22 @@ test("the app restores issue detail from the URL and follows browser history", (
     appSource,
     /useState<string \| null>\(\s*\(\) => readIssueIdentifier\(window\.location\.search\),?\s*\)/,
   );
-  assert.match(appSource, /task\.identifier === detailTaskIdentifier/);
+  assert.match(appSource, /task\.identifier === detailTaskIdentifier[\s\S]*?task\.previousIdentifiers\?\.includes\(detailTaskIdentifier\)/);
   assert.match(appSource, /window\.addEventListener\("popstate", syncRouteFromLocation\)/);
   assert.match(appSource, /window\.removeEventListener\("popstate", syncRouteFromLocation\)/);
-  const openTaskSource = appSource.slice(
+  const showTaskSource = appSource.slice(
+    appSource.indexOf("function showTaskDetail"),
     appSource.indexOf("function openTaskDetail"),
-    appSource.indexOf("function closeTaskDetail"),
   );
   assert.match(
-    openTaskSource,
+    showTaskSource,
     /const detailProjectIds = selectedProjectIds\.includes\(task\.projectId\)[\s\S]*?\? selectedProjectIds[\s\S]*?: \[task\.projectId\]/,
   );
-  assert.match(openTaskSource, /setSelectedProjectIds\(detailProjectIds\)/);
-  assert.match(openTaskSource, /buildIssueUrl\([\s\S]*?task\.projectId,[\s\S]*?task\.identifier/);
-  assert.match(openTaskSource, /task\.identifier,[\s\S]*?detailProjectIds/);
-  assert.match(openTaskSource, /window\.history\.pushState/);
+  assert.match(showTaskSource, /setSelectedProjectIds\(detailProjectIds\)/);
+  assert.match(showTaskSource, /buildIssueUrl\([\s\S]*?task\.projectId,[\s\S]*?task\.identifier/);
+  assert.match(showTaskSource, /task\.identifier,[\s\S]*?detailProjectIds/);
+  assert.match(showTaskSource, /window\.history\.pushState/);
+  assert.match(appSource, /function openTaskDetail[\s\S]*?showTaskDetail\(task\)/);
   assert.match(appSource, /function closeTaskDetail\(\)[\s\S]*?window\.history\.replaceState/);
   assert.match(appSource, /onEdit=\{openTaskDetail\}/);
   assert.match(appSource, /<AiChat[\s\S]*?onOpenTask=\{openTaskDetail\}/);

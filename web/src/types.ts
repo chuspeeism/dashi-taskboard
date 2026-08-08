@@ -1,11 +1,11 @@
 export const TASK_STATUSES = [
   "backlog",
   "todo",
-  "blocked",
   "in_progress",
   "in_review",
   "pending_retrospective",
   "done",
+  "blocked",
   "canceled",
 ] as const;
 export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"] as const;

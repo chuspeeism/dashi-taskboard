@@ -186,10 +186,10 @@ test("AI chat API uses the stable local contract and never sends cwd or hidden p
 
 test("panel follows the measured Codex-like layout and responsive boundary", () => {
   assert.match(styles, /\.ai-chat-launcher\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;/);
-  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*min\(500px,/);
-  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?height:\s*min\(680px,\s*calc\(100vh - 80px\)\);/);
-  assert.match(styles, /\.ai-chat-panel-header\s*\{[\s\S]*?height:\s*48px;/);
-  assert.match(styles, /\.ai-chat-composer\s*\{[\s\S]*?min-height:\s*116px;[\s\S]*?max-height:\s*240px;/);
+  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*min\(672px,/);
+  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?height:\s*calc\(100vh - 16px\);[\s\S]*?max-height:\s*calc\(100vh - 16px\);/);
+  assert.match(styles, /\.ai-chat-panel-header\s*\{[\s\S]*?height:\s*42px;/);
+  assert.match(styles, /\.ai-chat-composer\s*\{[\s\S]*?min-height:\s*108px;[\s\S]*?max-height:\s*300px;/);
   assert.match(styles, /@media \(max-width:\s*719px\)/);
   assert.doesNotMatch(chatSource, /<select/);
 });
@@ -197,7 +197,7 @@ test("panel follows the measured Codex-like layout and responsive boundary", () 
 test("chat renders Markdown, public activity cards and never renders host-only fields", () => {
   assert.match(chatSource, /ReactMarkdown/);
   assert.match(chatSource, /remarkPlugins=\{\[remarkGfm\]\}/);
-  assert.match(chatSource, /ai-chat-activity/);
+  assert.match(chatSource, /ai-chat-thinking-step-entry/);
   assert.match(chatSource, /aria-label="停止生成"/);
   assert.match(chatSource, /aria-label="发送消息"/);
   assert.doesNotMatch(chatSource, /origin\.workspacePath/);
@@ -208,7 +208,7 @@ test("chat renders Markdown, public activity cards and never renders host-only f
 test("composer does not submit during IME composition and background runs keep launcher state fresh", () => {
   const composingGuard = chatSource.indexOf("event.nativeEvent.isComposing");
   const skillSelection = chatSource.indexOf('event.key === "Enter" && skillMention');
-  const messageSubmission = chatSource.indexOf('event.key === "Enter" && !event.shiftKey');
+  const messageSubmission = chatSource.indexOf('if (event.key === "Enter")');
   assert.ok(composingGuard > 0);
   assert.ok(composingGuard < skillSelection);
   assert.ok(composingGuard < messageSubmission);
@@ -218,10 +218,10 @@ test("composer does not submit during IME composition and background runs keep l
 });
 
 test("composer and Enter submission stay disabled while a snapshot is loading", () => {
-  assert.match(chatSource, /disabled=\{[\s\S]*?loading[\s\S]*?\}/);
-  assert.match(chatSource, /const composerBlocked = loading[\s\S]*?\|\| settingsSaving/);
+  assert.match(chatSource, /contentEditable=\{!composerBlocked\}/);
+  assert.match(chatSource, /const composerBlocked = Boolean\([\s\S]*?loading/);
   assert.match(chatSource, /if \(composerBlocked\) return;/);
-  assert.match(chatSource, /chatPrimaryAction\([\s\S]*?composerBlocked/);
+  assert.match(chatSource, /chatPrimaryAction\([\s\S]*?sendBlocked/);
 });
 
 test("new threads cannot inherit settings from a selected thread in another project", () => {
@@ -256,15 +256,17 @@ test("failed task conversations resume through a fresh server-managed attempt", 
 test("SSE hints are coalesced and the panel remains resizable without clipping narrow menus", () => {
   assert.match(chatSource, /createAiSnapshotRefreshQueue/);
   assert.match(chatSource, /selectedHintRefreshQueue\.request\(selectedThreadId\)/);
-  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?resize:\s*both;/);
-  assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-panel\s*\{[\s\S]*?resize:\s*none;/);
+  assert.match(chatSource, /className="ai-chat-resize-handle is-top"/);
+  assert.match(chatSource, /className="ai-chat-resize-handle is-left"/);
+  assert.match(chatSource, /className="ai-chat-resize-handle is-top-left"/);
+  assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-resize-handle\s*\{[\s\S]*?display:\s*none;/);
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-menu-wrap\s*\{[\s\S]*?position:\s*static;/);
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-option-menu\s*\{[\s\S]*?right:\s*0;[\s\S]*?left:\s*0;/);
 });
 
 test("history archives local records without adding rename controls", () => {
   assert.match(chatSource, /archiveAiChatThread\(/);
-  assert.match(chatSource, /aria-label=\{`删除对话 \$\{thread\.title\}`\}/);
-  assert.match(chatSource, /window\.confirm\(`删除本地对话“\$\{thread\.title\}”\？`\)/);
+  assert.match(chatSource, /aria-label=\{`归档对话 \$\{thread\.title\}`\}/);
+  assert.match(chatSource, /window\.confirm\(`归档本地对话“\$\{thread\.title\}”\？`\)/);
   assert.doesNotMatch(chatSource, /重命名对话|renameAiChatThread/);
 });

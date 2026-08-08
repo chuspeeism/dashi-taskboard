@@ -34,6 +34,8 @@ const testWindow = {
   removeEventListener: () => {},
   clearTimeout,
   setTimeout,
+  clearInterval,
+  setInterval,
   confirm: () => true,
 };
 testWindow.parent = testWindow;

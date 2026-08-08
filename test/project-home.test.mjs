@@ -6,6 +6,7 @@ const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url),
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const editorSource = await readFile(new URL("../web/src/components/TaskEditor.tsx", import.meta.url), "utf8");
+const pendingAttachmentsSource = await readFile(new URL("../web/src/components/PendingAttachments.tsx", import.meta.url), "utf8");
 const detailSource = await readFile(new URL("../web/src/components/TaskDetail.tsx", import.meta.url), "utf8");
 const labelPickerSource = await readFile(new URL("../web/src/components/LabelPicker.tsx", import.meta.url), "utf8");
 const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.url), "utf8");
@@ -54,7 +55,8 @@ test("the home uses the same restrained surface language as the issue board", ()
 
 test("new issues stage attachments in the composer and upload them after creation", () => {
   assert.match(editorSource, /type="file"[\s\S]*?multiple/);
-  assert.match(editorSource, /className="composer-attachment-list"/);
+  assert.match(editorSource, /<PendingAttachments/);
+  assert.match(pendingAttachmentsSource, /className="composer-attachment-list"/);
   assert.match(editorSource, /保存后上传/);
   assert.match(appSource, /Promise\.allSettled/);
   assert.match(appSource, /uploadAttachment\(saved\.id, file\)/);
@@ -93,7 +95,7 @@ test("the project header exposes real controls instead of decorative actions", (
 test("the project breadcrumb stops at the project name", () => {
   assert.match(
     appSource,
-    /className="detail-back-button project-home-button"[\s\S]*?<span>首页<\/span>[\s\S]*?selectedProjectId && <span className="breadcrumb-chevron"[\s\S]*?className="header-project-switcher"/,
+    /className="detail-back-button project-home-button"[\s\S]*?<span>首页<\/span>[\s\S]*?hasSelectedProjects && <span className="breadcrumb-chevron"[\s\S]*?className="header-project-switcher"/,
   );
   assert.doesNotMatch(appSource, /className="issue-root-button"/);
   assert.doesNotMatch(appSource, /detailTask\?\.identifier \?\? "议题"/);
@@ -116,6 +118,6 @@ test("the project home keeps an invisible drag region and exposes embedded navig
 
 test("realtime updates remain active on the project home and reconcile after reconnecting", () => {
   assert.match(appSource, /useEffect\(\(\) => \{\s*const source = new EventSource\("\/api\/events"\)/);
-  assert.match(appSource, /event\.type\.startsWith\("task\."\)[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: affectsSelectedProject \}\)/);
-  assert.match(appSource, /source\.onopen = \(\) => \{[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: Boolean\(selectedProjectId\) \}\)/);
+  assert.match(appSource, /event\.type\.startsWith\("task\."\)[\s\S]*?scheduleRefresh\(\{[\s\S]*?projects: true,[\s\S]*?tasks: affectsSelectedProject/);
+  assert.match(appSource, /source\.onopen = \(\) => \{[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: selectedProjectIds\.length > 0 \}\)/);
 });
