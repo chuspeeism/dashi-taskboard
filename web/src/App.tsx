@@ -18,6 +18,7 @@ import {
   type AutomationModel,
   type AutomationReasoningEffort,
 } from "../../shared/taskboard-automation-options.mjs";
+import { buildThreadInstruction } from "../../shared/thread-instruction.mjs";
 import {
   ApiError,
   addTaskRelation,
@@ -1699,7 +1700,12 @@ export function App() {
       ?? selectedDeviceWorkspacePath
       ?? developmentScan.workspacePath
       ?? hostContext?.workspacePath;
-    const instruction = `e-taskboard Addressing the issues mentioned in ${task.identifier}`;
+    const instruction = buildThreadInstruction({
+      identifier: task.identifier,
+      projectName: selectedProject?.name,
+      projectId: task.projectId,
+      workspacePath,
+    });
     const prompt = `[$manage-taskboard](${manageTaskboardSkillPath}) ${instruction}`;
 
     if (!embedded || window.parent === window) {

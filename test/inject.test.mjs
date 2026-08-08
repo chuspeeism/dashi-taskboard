@@ -236,8 +236,9 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.doesNotMatch(webApp, /taskboard:thread-created/);
   assert.match(
     webApp,
-    /const instruction = `e-taskboard Addressing the issues mentioned in \$\{task\.identifier\}`/,
+    /const instruction = buildThreadInstruction\(\{\s*identifier: task\.identifier,\s*projectName: selectedProject\?\.name,\s*projectId: task\.projectId,\s*workspacePath,\s*\}\);/,
   );
+  assert.doesNotMatch(webApp, /e-taskboard Addressing the issues mentioned in/);
   assert.match(
     webApp,
     /const prompt = `\[\$manage-taskboard\]\(\$\{manageTaskboardSkillPath\}\) \$\{instruction\}`/,
