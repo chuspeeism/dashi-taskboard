@@ -951,7 +951,7 @@ kbd {
   border-radius: 16px;
   outline: 0;
   background: transparent;
-  color: #1b1b1b;
+  color: var(--text-secondary);
   filter: drop-shadow(0 3px 3px rgba(0, 0, 0, .02)) drop-shadow(0 1px .5px rgba(0, 0, 0, .04));
   font: inherit;
   font-size: 10px;
@@ -8854,7 +8854,7 @@ kbd {
   border: .5px solid transparent;
   border-radius: 16px;
   background: transparent;
-  color: #1b1b1b;
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 500;
   line-height: 15px;
