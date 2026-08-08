@@ -13,6 +13,7 @@ const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.
 test("the project home merges live Codex projects with persisted Taskboard projects", () => {
   assert.match(appSource, /hostContext\?\.projects \?\? \[\]/);
   assert.match(appSource, /persistedById/);
+  assert.match(appSource, /persistedByWorkspace/);
   assert.match(appSource, /project\.inCodex \? "Codex 项目" : "已保存的项目"/);
   assert.match(appSource, /createProjectRequest/);
   assert.match(apiSource, /export async function createProject/);
@@ -43,9 +44,10 @@ test("project selection is remembered until the user explicitly returns home", (
 
 test("the home uses the same restrained surface language as the issue board", () => {
   assert.match(appSource, /<section className="project-home">/);
-  assert.match(appSource, /title: "已有议题", projects: projectsWithIssues/);
-  assert.match(appSource, /title: "尚未添加议题", projects: projectsWithoutIssues/);
-  assert.match(appSource, /project\.issueCount > 0/);
+  assert.match(appSource, /title: "正式项目"/);
+  assert.match(appSource, /title: "收件箱"/);
+  assert.match(appSource, /title: "跨项目任务组"/);
+  assert.match(appSource, /project\.inCodex \|\| project\.issueCount > 0/);
   assert.match(styles, /\.project-grid \{[\s\S]*?grid-template-columns:/);
   assert.match(styles, /\.project-card \{[\s\S]*?border: var\(--border-hairline\)/);
 });
@@ -71,9 +73,11 @@ test("the issue composer includes Linear-style labels and scheduling", () => {
   assert.match(editorSource, /developmentScan\.contexts/);
 });
 
-test("the current project is shown only in navigation, not in issue creation or detail properties", () => {
+test("the current project stays out of issue creation while task details expose reassignment", () => {
   assert.doesNotMatch(editorSource, /property-project|dialog-project-icon|project\?\.name/);
-  assert.doesNotMatch(detailSource, /detail-property-label">项目|project-property-icon|project\.name/);
+  assert.match(detailSource, /detail-property-label">项目[\s\S]*?切换项目…/);
+  assert.doesNotMatch(detailSource, /currentTask\.status === "backlog"[\s\S]*?切换项目…/);
+  assert.doesNotMatch(detailSource, /project-property-icon|project\.name/);
   assert.doesNotMatch(styles, /\.property-project|\.dialog-project-icon|\.project-property-icon/);
   assert.match(appSource, /createTaskRequest\(selectedProjectId, draft\)/);
   assert.match(appSource, /className="header-project-switcher"/);
@@ -103,8 +107,9 @@ test("the collapsed Codex sidebar can be expanded immediately left of Home", () 
   assert.match(styles, /\.codex-sidebar-expand-button \+ \.project-home-button \{[\s\S]*?margin-left: 0;/);
 });
 
-test("the project home omits the navigation bar but keeps an invisible drag region", () => {
-  assert.match(appSource, /selectedProjectId \? \([\s\S]*?<header className="workspace-header"/);
+test("the project home keeps an invisible drag region and exposes embedded navigation as a drawer", () => {
+  assert.match(appSource, /className=\{`app-nav\$\{embedded \? ` taskboard-drawer/);
+  assert.match(appSource, /className="taskboard-sidebar-trigger home-sidebar-trigger"/);
   assert.match(appSource, /className="home-window-drag-region"/);
   assert.match(styles, /\.home-window-drag-region \{[\s\S]*?position: absolute;[\s\S]*?pointer-events: none/);
 });

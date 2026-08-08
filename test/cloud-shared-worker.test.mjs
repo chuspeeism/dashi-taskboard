@@ -336,21 +336,39 @@ test("task lifecycle keeps optimistic versions and never persists a worktree pat
   assert.equal(moved.response.status, 200);
   assert.equal(moved.body.task.status, "in_progress");
 
+  const staleArchive = await cloud.request(`/api/tasks/${created.body.task.id}/archive`, {
+    method: "POST",
+    actorName: alice,
+    json: { version: created.body.task.version, threadId: "cloud-stale-archive-thread" },
+  });
+  assert.equal(staleArchive.response.status, 409);
+  assert.equal(staleArchive.body.error.code, "VERSION_CONFLICT");
+
   const archived = await cloud.request(`/api/tasks/${created.body.task.id}/archive`, {
     method: "POST",
     actorName: alice,
-    json: { version: moved.body.task.version },
+    json: { version: moved.body.task.version, threadId: "cloud-archive-thread" },
   });
   assert.equal(archived.response.status, 200);
   assert.ok(archived.body.task.archivedAt);
+  assert.equal(archived.body.task.threadId, "cloud-archive-thread");
+
+  const staleRestore = await cloud.request(`/api/tasks/${created.body.task.id}/restore`, {
+    method: "POST",
+    actorName: alice,
+    json: { version: moved.body.task.version, threadId: "cloud-stale-restore-thread" },
+  });
+  assert.equal(staleRestore.response.status, 409);
+  assert.equal(staleRestore.body.error.code, "VERSION_CONFLICT");
 
   const restored = await cloud.request(`/api/tasks/${created.body.task.id}/restore`, {
     method: "POST",
     actorName: alice,
-    json: { version: archived.body.task.version },
+    json: { version: archived.body.task.version, threadId: "cloud-restore-thread" },
   });
   assert.equal(restored.response.status, 200);
   assert.equal(restored.body.task.archivedAt, null);
+  assert.equal(restored.body.task.threadId, "cloud-restore-thread");
 });
 
 test("relation direction, deletion, and parent-cycle checks match the local contract", async () => {

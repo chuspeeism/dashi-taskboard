@@ -15,7 +15,11 @@ import {
   findResidentInjectorPids,
   handleHostBindingPayload,
   reconcileInjectionRuntime,
+  reloadPageAndWait,
+  removeRegisteredPageScript,
   restartResidentInjector,
+  shouldStopWatchingForMissingRenderer,
+  waitForWebSocketOpen,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 
@@ -32,6 +36,9 @@ const hostHeartbeatName = "__codexTaskboardHostHeartbeatV1";
 const hostStartupTokenName = "__codexTaskboardHostStartupTokenV1";
 const injectionSourceHashName = "__CODEX_TASKBOARD_SOURCE_HASH__";
 const injectionScriptIdentifierName = "__CODEX_TASKBOARD_SCRIPT_IDENTIFIER__";
+const cdpConnectionTimeoutMs = 3_000;
+const cdpCommandTimeoutMs = 10_000;
+const rendererRecoveryGraceMs = 10_000;
 const codexAutomationMethods = new Set([
   "list-automations",
   "automation-create",
@@ -55,6 +62,7 @@ function parseArgs(argv) {
     refresh: false,
     refreshIfRunning: false,
     attachExisting: false,
+    managedTaskboard: false,
     startupToken: null,
     daemon: false,
     screenshot: null,
@@ -69,6 +77,7 @@ function parseArgs(argv) {
     else if (arg === "--refresh") options.refresh = true;
     else if (arg === "--refresh-if-running") options.refreshIfRunning = true;
     else if (arg === "--attach-existing") options.attachExisting = true;
+    else if (arg === "--managed-taskboard") options.managedTaskboard = true;
     else if (arg === "--startup-token") {
       options.startupToken = argv[++index];
       if (!/^[a-z0-9-]{1,100}$/i.test(options.startupToken || "")) {
@@ -92,7 +101,7 @@ function parseArgs(argv) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(3_000) });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json();
 }
@@ -123,7 +132,7 @@ function startTaskboard({ detached }) {
   });
 }
 
-function createTaskboardSupervisor({ detached }) {
+function createTaskboardSupervisor({ detached, managed }) {
   let child = null;
   let ensureInFlight = null;
   let retryAfter = 0;
@@ -139,6 +148,10 @@ function createTaskboardSupervisor({ detached }) {
     }
 
     ensureInFlight = (async () => {
+      if (managed) {
+        await waitUntilReachable(taskboardHealthUrl, 10_000);
+        return { status: "ok", restarted: false };
+      }
       if (child?.exitCode === null && !child.killed) {
         try {
           await waitUntilReachable(taskboardHealthUrl, 3_000);
@@ -184,21 +197,33 @@ function createTaskboardSupervisor({ detached }) {
   return { ensure, stop };
 }
 
-function codexIsRunning() {
-  return spawnSync("/usr/bin/pgrep", ["-x", "ChatGPT"], { stdio: "ignore" }).status === 0;
+export function codexLaunchArguments(
+  appPath,
+  port,
+  userDataPath = process.env.CODEX_TASKBOARD_CODEX_USER_DATA_PATH,
+) {
+  const args = [
+    "-W",
+    "-n",
+  ];
+  if (userDataPath) {
+    args.push("--env", `CODEX_ELECTRON_USER_DATA_PATH=${userDataPath}`);
+  }
+  args.push(
+    "-a",
+    appPath,
+    "--args",
+    ...(userDataPath ? [`--user-data-dir=${userDataPath}`] : []),
+    `--remote-debugging-port=${port}`,
+    `--remote-allow-origins=http://127.0.0.1:${port}`,
+  );
+  return args;
 }
 
 function launchCodex(appPath, port) {
   return spawn(
     "/usr/bin/open",
-    [
-      "-W",
-      "-a",
-      appPath,
-      "--args",
-      `--remote-debugging-port=${port}`,
-      `--remote-allow-origins=http://127.0.0.1:${port}`,
-    ],
+    codexLaunchArguments(appPath, port),
     { stdio: "ignore" },
   );
 }
@@ -214,12 +239,15 @@ class CdpConnection {
   }
 
   async open() {
-    await new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", resolve, { once: true });
-      this.socket.addEventListener("error", () => reject(new Error("CDP WebSocket connection failed")), {
-        once: true,
-      });
-    });
+    try {
+      await waitForWebSocketOpen(this.socket, cdpConnectionTimeoutMs);
+    } catch (error) {
+      this.closed = true;
+      try {
+        this.socket.close();
+      } catch {}
+      throw error;
+    }
     this.socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data));
       if (!message.id) {
@@ -241,13 +269,17 @@ class CdpConnection {
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
+      clearTimeout(pending.timeout);
       if (message.error) pending.reject(new Error(message.error.message));
       else pending.resolve(message.result);
     });
     this.socket.addEventListener("close", () => {
       this.closed = true;
       const error = new Error("CDP WebSocket closed");
-      this.pending.forEach((pending) => pending.reject(error));
+      this.pending.forEach((pending) => {
+        clearTimeout(pending.timeout);
+        pending.reject(error);
+      });
       this.pending.clear();
       this.eventWaiters.forEach((waiters) => waiters.forEach((waiter) => waiter.reject(error)));
       this.eventWaiters.clear();
@@ -256,28 +288,55 @@ class CdpConnection {
   }
 
   send(method, params = {}) {
+    if (this.closed) return Promise.reject(new Error("CDP WebSocket closed"));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      const timeout = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        this.closed = true;
+        try {
+          this.socket.close();
+        } catch {}
+        reject(new Error(`Timed out waiting for CDP command ${method}`));
+      }, cdpCommandTimeoutMs);
+      this.pending.set(id, { resolve, reject, timeout });
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
   waitFor(method, timeoutMs) {
+    if (this.closed) return Promise.reject(new Error("CDP WebSocket closed"));
     return new Promise((resolve, reject) => {
       const waiters = this.eventWaiters.get(method) || [];
-      const timeout = setTimeout(() => {
-        this.eventWaiters.set(
-          method,
-          (this.eventWaiters.get(method) || []).filter((waiter) => waiter.resolve !== wrappedResolve),
-        );
-        reject(new Error(`Timed out waiting for CDP event ${method}`));
-      }, timeoutMs);
-      const wrappedResolve = (value) => {
+      let timeout = null;
+      const cleanup = (waiter) => {
         clearTimeout(timeout);
-        resolve(value);
+        const remaining = (this.eventWaiters.get(method) || [])
+          .filter((candidate) => candidate !== waiter);
+        if (remaining.length > 0) this.eventWaiters.set(method, remaining);
+        else this.eventWaiters.delete(method);
       };
-      waiters.push({ resolve: wrappedResolve, reject });
+      const waiter = {
+        resolve: (value) => {
+          cleanup(waiter);
+          resolve(value);
+        },
+        reject: (error) => {
+          cleanup(waiter);
+          reject(error);
+        },
+      };
+      timeout = setTimeout(
+        () => waiter.reject(new Error(`Timed out waiting for CDP event ${method}`)),
+        timeoutMs,
+      );
+      waiters.push(waiter);
       this.eventWaiters.set(method, waiters);
     });
   }
@@ -295,7 +354,10 @@ class CdpConnection {
   }
 
   close() {
-    this.socket.close();
+    this.closed = true;
+    try {
+      this.socket.close();
+    } catch {}
   }
 }
 
@@ -306,8 +368,26 @@ async function codexTargets(port) {
       target.type === "page" &&
       target.webSocketDebuggerUrl &&
       !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
-      (target.url?.startsWith("app://") || target.title === "Codex"),
+      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
+      target.url?.startsWith("app://"),
   );
+}
+
+async function waitForInitialInjection(runInjection, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const results = await runInjection();
+      if (results.length > 0) return results;
+      lastError = new Error("No Codex renderer accepted the Taskboard injection");
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const detail = lastError ? `: ${lastError.message}` : "";
+  throw new Error(`Timed out waiting for a stable Codex renderer${detail}`);
 }
 
 function codexDebuggingPorts(preferredPort) {
@@ -324,6 +404,62 @@ function codexDebuggingPorts(preferredPort) {
     if (match) ports.add(Number(match[1]));
   }
   return [...ports];
+}
+
+function orphanedCodexAppServerPids() {
+  const processes = spawnSync("/bin/ps", ["-x", "-o", "pid=,ppid=,command="], {
+    encoding: "utf8",
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (processes.status !== 0) return [];
+
+  const appServerPath = /(?:^|\s)\/Applications\/(?:ChatGPT|Codex)\.app\/Contents\/Resources\/codex(?=\s|$)/;
+  const orphaned = [];
+  for (const line of processes.stdout.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+    if (!match || Number(match[2]) !== 1) continue;
+    const command = match[3];
+    if (
+      appServerPath.test(command)
+      && /(?:^|\s)-c\s+features\.code_mode_host=true(?=\s|$)/.test(command)
+      && /(?:^|\s)app-server(?=\s|$)/.test(command)
+      && /(?:^|\s)--analytics-default-enabled(?=\s|$)/.test(command)
+    ) {
+      orphaned.push(Number(match[1]));
+    }
+  }
+  return orphaned;
+}
+
+async function stopOrphanedCodexAppServers() {
+  const orphaned = new Set(orphanedCodexAppServerPids());
+  if (orphaned.size === 0) return [];
+
+  for (const pid of orphaned) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (error) {
+      if (error?.code === "ESRCH") orphaned.delete(pid);
+      else throw error;
+    }
+  }
+
+  const deadline = Date.now() + 5_000;
+  while (orphaned.size > 0 && Date.now() < deadline) {
+    for (const pid of orphaned) {
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        if (error?.code === "ESRCH") orphaned.delete(pid);
+        else throw error;
+      }
+    }
+    if (orphaned.size > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (orphaned.size > 0) {
+    throw new Error(`Timed out stopping orphaned Codex app-server pids: ${[...orphaned].join(", ")}`);
+  }
+  return [...orphaned];
 }
 
 function processCwd(pid) {
@@ -365,12 +501,14 @@ function startResidentInjector(
   shouldOpen,
   attachExisting = false,
   startupToken = null,
+  managedTaskboard = false,
 ) {
   const [existingPid] = residentInjectorPids(port);
   if (existingPid) return { pid: existingPid, started: false };
   const args = [injectorPath, "--watch", "--port", String(port)];
   if (shouldOpen) args.push("--open");
   if (attachExisting) args.push("--attach-existing");
+  if (managedTaskboard) args.push("--managed-taskboard");
   if (startupToken) args.push("--startup-token", startupToken);
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
@@ -408,6 +546,8 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
           const readiness = await cdp.send("Runtime.evaluate", {
             expression: `({
               token: window[${JSON.stringify(hostStartupTokenName)}],
+              hostBindingReady: typeof window[${JSON.stringify(hostBindingName)}] === "function",
+              heartbeatAge: Date.now() - Number(window[${JSON.stringify(hostHeartbeatName)}] || 0),
               taskboardEntryMounted: Boolean(document.getElementById("codex-taskboard-entry")),
               sourceHash: window.__codexTaskboardInjection__?.sourceHash || null
             })`,
@@ -415,6 +555,8 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
           });
           if (
             readiness.result.value?.token === startupToken
+            && readiness.result.value.hostBindingReady
+            && readiness.result.value.heartbeatAge <= 8_000
             && readiness.result.value.taskboardEntryMounted
             && readiness.result.value.sourceHash === expectedSourceHash
           ) return;
@@ -430,12 +572,19 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
 
 async function restartResidentInjectorForRefresh(port) {
   const { sourceHash } = await currentInjectionSource();
+  const managedTaskboard = residentInjectorPids(port).some((pid) => {
+    const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024,
+    });
+    return result.status === 0 && /(?:^|\s)--managed-taskboard(?=\s|$)/.test(result.stdout);
+  });
   return restartResidentInjector(port, {
     findResidents: residentInjectorPids,
     stopResident: stopResidentInjector,
     createStartupToken: randomUUID,
     startResident: (targetPort, startupToken) => (
-      startResidentInjector(targetPort, false, true, startupToken)
+      startResidentInjector(targetPort, false, true, startupToken, managedTaskboard)
     ),
     waitUntilReady: (targetPort, pid, startupToken) => (
       waitForResidentInjectorReady(targetPort, pid, startupToken, sourceHash)
@@ -443,20 +592,88 @@ async function restartResidentInjectorForRefresh(port) {
   });
 }
 
-async function refreshTaskboardFrames(port) {
-  const targets = await codexTargets(port);
-  const results = [];
+export function decideRefreshTaskboardPass({
+  currentTargets,
+  successfulResults,
+  attemptedTargets,
+  failures,
+}) {
+  const currentIds = new Set(currentTargets.map((target) => target.id));
+  for (const targetId of successfulResults.keys()) {
+    if (!currentIds.has(targetId)) successfulResults.delete(targetId);
+  }
+  const unresolvedTargets = currentTargets.filter(
+    (target) => !successfulResults.has(target.id),
+  );
+  const focusedFailures = unresolvedTargets.filter(
+    (target) => failures.get(target.id)?.focused === true,
+  );
+  if (focusedFailures.length > 0) {
+    const details = focusedFailures.map(
+      (target) => `${target.id}: ${failures.get(target.id).message}`,
+    );
+    return {
+      action: "fail",
+      message: `Taskboard open failed in the focused Codex renderer: ${details.join("; ")}`,
+    };
+  }
 
-  for (const target of targets) {
+  const focusedSuccess = [...successfulResults.values()]
+    .some((result) => result.focused === true);
+  if (focusedSuccess) {
+    return { action: "success", results: [...successfulResults.values()] };
+  }
+
+  const newTargets = unresolvedTargets.filter(
+    (target) => !attemptedTargets.has(target.id),
+  );
+  if (newTargets.length > 0) return { action: "retry" };
+  if (successfulResults.size > 0) {
+    return { action: "success", results: [...successfulResults.values()] };
+  }
+
+  const persistentFailures = unresolvedTargets.filter(
+    (target) => attemptedTargets.has(target.id),
+  );
+  if (persistentFailures.length > 0) {
+    const details = persistentFailures.map(
+      (target) => `${target.id}: ${failures.get(target.id)?.message || "Taskboard did not open"}`,
+    );
+    return {
+      action: "fail",
+      message: `Taskboard open failed in a live Codex renderer: ${details.join("; ")}`,
+    };
+  }
+  return { action: "retry" };
+}
+
+async function refreshTaskboardFrames(port, shouldOpen = false) {
+  async function refreshTarget(target, signal) {
     const cdp = new CdpConnection(target.webSocketDebuggerUrl);
-    await cdp.open();
+    const cancel = () => cdp.close();
+    let focused = false;
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
+      if (signal?.aborted) throw new Error("Taskboard refresh was superseded");
+      await cdp.open();
+      await cdp.send("Page.enable");
       await cdp.send("Runtime.enable");
+      if (shouldOpen) await cdp.send("Page.bringToFront");
+      const focusStatus = await cdp.send("Runtime.evaluate", {
+        expression: "document.hasFocus()",
+        returnByValue: true,
+      });
+      focused = focusStatus.result.value === true;
       const evaluation = await cdp.send("Runtime.evaluate", {
         expression: `(() => {
           const taskboard = window.__codexTaskboardInjection__;
+          if (${shouldOpen ? "true" : "false"} && typeof taskboard?.open === "function") {
+            taskboard.open();
+            return { refreshed: false, opened: true, via: "injection" };
+          }
           if (typeof taskboard?.reloadFrame === "function") {
-            return { refreshed: taskboard.reloadFrame(), via: "injection" };
+            const refreshed = taskboard.reloadFrame();
+            if (refreshed) return { refreshed: true, via: "injection" };
           }
           const frame = document.getElementById("codex-taskboard-frame");
           if (!frame) return { refreshed: false, via: "not-mounted" };
@@ -472,41 +689,95 @@ async function refreshTaskboardFrames(port) {
           evaluation.exceptionDetails.exception?.description || "Taskboard frame refresh failed",
         );
       }
-      results.push({
+      const outcome = evaluation.result.value;
+      let openStatus = null;
+      if (shouldOpen) {
+        if (!outcome?.opened) {
+          throw new Error("Taskboard injection is not mounted in the Codex renderer");
+        }
+        const status = await waitForInjectionStatus(cdp, true, null, 15_000);
+        if (!injectionStatusReady(status, true, null)) {
+          throw new Error("Taskboard injection did not become ready in the Codex renderer");
+        }
+        openStatus = status;
+      }
+      return {
         targetId: target.id,
         title: target.title,
         url: target.url,
-        ...evaluation.result.value,
-      });
+        focused,
+        ...outcome,
+        ...(openStatus || {}),
+        ...(shouldOpen ? { frameLoaded: openStatus.frameReady === true } : {}),
+      };
+    } catch (error) {
+      if (error && typeof error === "object") error.codexTargetFocused = focused;
+      throw error;
     } finally {
+      signal?.removeEventListener("abort", cancel);
       cdp.close();
     }
   }
 
-  return results;
-}
-
-function frameTreeContains(frameTree, expectedUrl) {
-  if (frameTree.frame?.url === expectedUrl) return true;
-  return frameTree.childFrames?.some((child) => frameTreeContains(child, expectedUrl)) || false;
-}
-
-async function waitForFrame(cdp, expectedUrl, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const [{ targetInfos }, { frameTree }] = await Promise.all([
-      cdp.send("Target.getTargets"),
-      cdp.send("Page.getFrameTree"),
-    ]);
-    if (
-      targetInfos.some((target) => target.type === "iframe" && target.url === expectedUrl) ||
-      frameTreeContains(frameTree, expectedUrl)
-    ) {
-      return true;
+  const successfulResults = new Map();
+  const attemptedTargets = new Set();
+  const failures = new Map();
+  for (let pass = 0; pass < 3; pass += 1) {
+    const targets = (await codexTargets(port))
+      .filter((target) => !successfulResults.has(target.id));
+    targets.forEach((target) => attemptedTargets.add(target.id));
+    const controller = new AbortController();
+    const attempts = targets.map((target) => (
+      refreshTarget(target, controller.signal).then(
+        (value) => ({ status: "fulfilled", focused: value.focused === true, target, value }),
+        (error) => ({
+          status: "rejected",
+          focused: error?.codexTargetFocused === true,
+          target,
+          message: error?.message || String(error),
+        }),
+      )
+    ));
+    const batch = shouldOpen
+      ? await waitForFocusedRendererAttempt(attempts)
+      : { action: "all-settled", outcomes: await Promise.all(attempts) };
+    if (batch.action === "focused-success") {
+      const currentTargets = await codexTargets(port);
+      if (currentTargets.some((target) => target.id === batch.outcome.target.id)) {
+        successfulResults.set(batch.outcome.target.id, batch.outcome.value);
+        controller.abort();
+        await Promise.all(attempts);
+        return [...successfulResults.values()];
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    const outcomes = batch.action === "all-settled"
+      ? batch.outcomes
+      : await Promise.all(attempts);
+    outcomes.forEach((attempt) => {
+      const { target } = attempt;
+      if (attempt.status === "fulfilled") {
+        successfulResults.set(target.id, attempt.value);
+        failures.delete(target.id);
+      } else {
+        failures.set(target.id, {
+          focused: attempt.focused,
+          message: attempt.message,
+        });
+      }
+    });
+
+    const currentTargets = await codexTargets(port);
+    const decision = decideRefreshTaskboardPass({
+      currentTargets,
+      successfulResults,
+      attemptedTargets,
+      failures,
+    });
+    if (decision.action === "success") return decision.results;
+    if (decision.action === "fail") throw new Error(decision.message);
+    if (pass < 2) await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return false;
+  throw new Error("Codex renderer kept changing before Taskboard could open");
 }
 
 async function requestCodexAutomationViaCdp(cdp, executionContextId, method, params) {
@@ -963,17 +1234,20 @@ async function installTaskboardHostBinding(cdp, supervisor) {
     });
   });
   await cdp.send("Runtime.addBinding", { name: hostBindingName });
-  await restoreQuotaPolicies(cdp);
 }
 
 async function publishHostHeartbeat(cdp, startupToken) {
-  await cdp.send("Runtime.evaluate", {
+  const heartbeat = await cdp.send("Runtime.evaluate", {
     expression: `(() => {
       window[${JSON.stringify(hostHeartbeatName)}] = Date.now();
       window[${JSON.stringify(hostStartupTokenName)}] = ${JSON.stringify(startupToken)};
+      return typeof window[${JSON.stringify(hostBindingName)}] === "function";
     })()`,
     returnByValue: true,
   });
+  if (heartbeat.result.value !== true) {
+    throw new Error("Taskboard host binding is unavailable");
+  }
 }
 
 async function readInjectionStatus(cdp) {
@@ -982,9 +1256,13 @@ async function readInjectionStatus(cdp) {
       version: window.__codexTaskboardInjection__?.version || null,
       sourceHash: window.__codexTaskboardInjection__?.sourceHash || null,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
+      hostBindingReady: typeof window[${JSON.stringify(hostBindingName)}] === "function",
+      heartbeatAge: Date.now() - Number(window[${JSON.stringify(hostHeartbeatName)}] || 0),
       entryMounted: Boolean(document.getElementById("codex-taskboard-entry")),
       pageMounted: Boolean(document.getElementById("codex-taskboard-page")),
       pageVisible: document.getElementById("codex-taskboard-page")?.hidden === false,
+      frameReady: window.__codexTaskboardInjection__?.frameReady === true,
+      frameVisible: document.getElementById("codex-taskboard-frame")?.hidden === false,
       frameUrl: document.getElementById("codex-taskboard-frame")?.src || null
     })`,
     returnByValue: true,
@@ -992,18 +1270,61 @@ async function readInjectionStatus(cdp) {
   return status.result.value;
 }
 
-async function waitForInjectionStatus(cdp, shouldOpen, expectedSourceHash, timeoutMs) {
+function injectionStatusReady(status, shouldOpen, expectedSourceHash) {
+  return Boolean(
+    (expectedSourceHash === null || status.sourceHash === expectedSourceHash)
+    && status.entryMounted
+    && (
+      !shouldOpen
+      || (
+        status.hostBindingReady
+        && status.heartbeatAge <= 8_000
+        && status.pageVisible
+        && status.frameReady
+        && status.frameVisible
+        && status.frameUrl
+      )
+    ),
+  );
+}
+
+async function waitForInjectionStatus(
+  cdp,
+  shouldOpen,
+  expectedSourceHash,
+  timeoutMs,
+  refreshReadiness = null,
+) {
   const deadline = Date.now() + timeoutMs;
+  let nextReadinessRefreshAt = Date.now() + 2_000;
+  let nextOpenAttemptAt = Date.now();
   let status = await readInjectionStatus(cdp);
   while (
     Date.now() < deadline
-    && (
-      status.sourceHash !== expectedSourceHash
-      || !status.entryMounted
-      || (shouldOpen && (!status.pageVisible || !status.frameUrl))
-    )
+    && !injectionStatusReady(status, shouldOpen, expectedSourceHash)
   ) {
+    if (
+      shouldOpen
+      && !refreshReadiness
+      && (!status.hostBindingReady || status.heartbeatAge > 8_000)
+    ) return status;
+    if (
+      shouldOpen
+      && status.entryMounted
+      && !status.pageVisible
+      && Date.now() >= nextOpenAttemptAt
+    ) {
+      await cdp.send("Runtime.evaluate", {
+        expression: "window.__codexTaskboardInjection__?.open()",
+        returnByValue: true,
+      });
+      nextOpenAttemptAt = Date.now() + 500;
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
+    if (refreshReadiness && Date.now() >= nextReadinessRefreshAt) {
+      await refreshReadiness();
+      nextReadinessRefreshAt = Date.now() + 2_000;
+    }
     status = await readInjectionStatus(cdp);
   }
   return status;
@@ -1049,13 +1370,28 @@ async function injectTarget(
 ) {
   const cdp = new CdpConnection(target.webSocketDebuggerUrl);
   let retained = false;
+  let focused = false;
   await cdp.open();
   try {
     await cdp.send("Page.enable");
     await cdp.send("Page.setBypassCSP", { enabled: true });
     await cdp.send("Runtime.enable");
+    if (shouldOpen) {
+      await cdp.send("Page.bringToFront");
+      const focusStatus = await cdp.send("Runtime.evaluate", {
+        expression: "document.hasFocus()",
+        returnByValue: true,
+      });
+      focused = focusStatus.result.value === true;
+    }
     if (keepAlive) await installTaskboardHostBinding(cdp, supervisor);
     if (keepAlive && attachExisting) {
+      const previousStatus = await readInjectionStatus(cdp);
+      await removeRegisteredPageScript(
+        (identifier) => cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }),
+        previousStatus.scriptIdentifier,
+      );
+      await reloadPageAndWait(cdp);
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
         currentStatus,
@@ -1072,6 +1408,7 @@ async function injectTarget(
           expression: "window.__codexTaskboardInjection__?.open()",
           returnByValue: true,
         }),
+        forceOpen: shouldOpen,
       });
       cdp.on("Page.loadEventFired", () => (
         publishInjectionScriptIdentifier(cdp, reconciled.scriptIdentifier)
@@ -1082,23 +1419,29 @@ async function injectTarget(
         reconciled.shouldRemainOpen,
         sourceHash,
         15_000,
+        () => publishHostHeartbeat(cdp, startupToken),
       );
-      const frameLoaded = status.frameUrl
-        ? await waitForFrame(cdp, status.frameUrl, 15_000)
-        : false;
+      if (!injectionStatusReady(status, reconciled.shouldRemainOpen, sourceHash)) {
+        throw new Error("Taskboard injection did not become ready in the Codex renderer");
+      }
+      const frameLoaded = status.frameReady === true;
       retained = true;
       return {
-        result: { ...status, cspBypassed: true, frameLoaded },
+        result: { ...status, focused, cspBypassed: true, frameLoaded },
         connection: cdp,
       };
     }
+    const previousStatus = await readInjectionStatus(cdp);
+    await removeRegisteredPageScript(
+      (identifier) => cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }),
+      previousStatus.scriptIdentifier,
+    );
     const scriptIdentifier = await registerInjectionSource(cdp, source);
     cdp.on("Page.loadEventFired", () => (
       publishInjectionScriptIdentifier(cdp, scriptIdentifier)
     ));
-    const reloaded = cdp.waitFor("Page.loadEventFired", 15_000);
-    await cdp.send("Page.reload");
-    await reloaded;
+    await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
+    await reloadPageAndWait(cdp);
     await evaluateInjectionSource(cdp, source);
     await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
     if (keepAlive) await publishHostHeartbeat(cdp, startupToken);
@@ -1112,15 +1455,20 @@ async function injectTarget(
       });
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    const status = await waitForInjectionStatus(cdp, shouldOpen, sourceHash, 15_000);
-    const frameLoaded = status.frameUrl
-      ? await waitForFrame(cdp, status.frameUrl, 15_000)
-      : false;
-    if (shouldOpen && !frameLoaded) {
-      throw new Error("Taskboard iframe did not finish loading in the Codex renderer");
+    const status = await waitForInjectionStatus(
+      cdp,
+      shouldOpen,
+      sourceHash,
+      15_000,
+      keepAlive ? () => publishHostHeartbeat(cdp, startupToken) : null,
+    );
+    if (!injectionStatusReady(status, shouldOpen, sourceHash)) {
+      throw new Error("Taskboard injection did not become ready in the Codex renderer");
     }
+    const frameLoaded = status.frameReady === true;
     const result = {
       ...status,
+      focused,
       cspBypassed: true,
       frameLoaded,
     };
@@ -1131,9 +1479,31 @@ async function injectTarget(
     }
     retained = keepAlive;
     return { result, connection: retained ? cdp : null };
+  } catch (error) {
+    if (error && typeof error === "object") error.codexTargetFocused = focused;
+    throw error;
   } finally {
     if (!retained) cdp.close();
   }
+}
+
+export async function waitForFocusedRendererAttempt(attempts) {
+  const pendingForever = new Promise(() => {});
+  const focusedSuccess = Promise.race(attempts.map((attempt) => (
+    Promise.resolve(attempt).then(
+      (outcome) => (
+        outcome.status === "fulfilled" && outcome.focused
+          ? { action: "focused-success", outcome }
+          : pendingForever
+      ),
+      () => pendingForever,
+    )
+  )));
+  const allSettled = Promise.all(attempts).then((outcomes) => ({
+    action: "all-settled",
+    outcomes,
+  }));
+  return Promise.race([focusedSuccess, allSettled]);
 }
 
 async function injectAll(
@@ -1143,6 +1513,7 @@ async function injectAll(
   shouldOpen,
   screenshotPath,
   injectedTargets,
+  injectionAttempts,
   keepAlive,
   supervisor,
   attachExisting,
@@ -1159,23 +1530,72 @@ async function injectAll(
     }
   }
 
-  const results = [];
+  const hadInjectedTargets = injectedTargets.size > 0;
+  const screenshotTargetId = targets.find(
+    (target) => !injectedTargets.has(target.id) && !injectionAttempts.has(target.id),
+  )?.id;
   for (const target of targets) {
-    if (injectedTargets.has(target.id)) continue;
-    const firstTarget = injectedTargets.size === 0 && results.length === 0;
-    const { result, connection } = await injectTarget(
-      target,
-      source,
-      sourceHash,
-      shouldOpen && firstTarget,
-      firstTarget ? screenshotPath : null,
-      keepAlive,
-      supervisor,
-      attachExisting,
-      startupToken,
+    if (injectedTargets.has(target.id) || injectionAttempts.has(target.id)) continue;
+    let attempt;
+    attempt = (async () => {
+      try {
+        const { result, connection } = await injectTarget(
+          target,
+          source,
+          sourceHash,
+          shouldOpen,
+          target.id === screenshotTargetId ? screenshotPath : null,
+          keepAlive,
+          supervisor,
+          attachExisting,
+          startupToken,
+        );
+        if (connection) injectedTargets.set(target.id, connection);
+        return {
+          status: "fulfilled",
+          focused: result.focused === true,
+          value: { targetId: target.id, title: target.title, url: target.url, ...result },
+        };
+      } catch (error) {
+        return {
+          status: "rejected",
+          focused: error?.codexTargetFocused === true,
+          targetId: target.id,
+          message: error?.message || String(error),
+        };
+      }
+    })().finally(() => {
+      if (injectionAttempts.get(target.id) === attempt) injectionAttempts.delete(target.id);
+    });
+    injectionAttempts.set(target.id, attempt);
+  }
+
+  if (hadInjectedTargets) return [];
+  const attempts = targets
+    .map((target) => injectionAttempts.get(target.id))
+    .filter(Boolean);
+  if (attempts.length === 0) return [];
+  const decision = screenshotPath
+    ? { action: "all-settled", outcomes: await Promise.all(attempts) }
+    : await waitForFocusedRendererAttempt(attempts);
+  if (decision.action === "focused-success") return [decision.outcome.value];
+
+  const focusedFailure = decision.outcomes.find(
+    (outcome) => outcome.status === "rejected" && outcome.focused,
+  );
+  if (focusedFailure) {
+    throw new Error(
+      `Taskboard injection failed in the focused Codex renderer: ${focusedFailure.targetId}: ${focusedFailure.message}`,
     );
-    if (connection) injectedTargets.set(target.id, connection);
-    results.push({ targetId: target.id, title: target.title, url: target.url, ...result });
+  }
+  const results = decision.outcomes
+    .filter((outcome) => outcome.status === "fulfilled")
+    .map((outcome) => outcome.value);
+  if (results.length === 0) {
+    const failures = decision.outcomes.map(
+      (outcome) => `${outcome.targetId}: ${outcome.message}`,
+    );
+    throw new Error(`Taskboard injection failed in every Codex renderer: ${failures.join("; ")}`);
   }
   return results;
 }
@@ -1193,6 +1613,14 @@ ${userScript}`;
     source: `window[${JSON.stringify(injectionSourceHashName)}] = ${JSON.stringify(sourceHash)};
 ${runtimeSource}`,
   };
+}
+
+function isTransientRendererDisconnect(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "No Codex renderer target found"
+    || message === "fetch failed"
+    || message === "CDP WebSocket closed"
+    || message === "CDP WebSocket connection failed";
 }
 
 async function main() {
@@ -1213,7 +1641,10 @@ async function main() {
       if (!activePort) throw new Error("No debuggable Codex window found");
       port = activePort;
     }
-    console.log(JSON.stringify({ launcher: startResidentInjector(port, options.open), port }, null, 2));
+    console.log(JSON.stringify({
+      launcher: startResidentInjector(port, options.open, false, null, options.managedTaskboard),
+      port,
+    }, null, 2));
     return;
   }
 
@@ -1225,7 +1656,7 @@ async function main() {
     for (const port of ports) {
       if (!(await isReachable(`http://127.0.0.1:${port}/json/version`))) continue;
       if (options.refreshIfRunning) await restartResidentInjectorForRefresh(port);
-      const results = await refreshTaskboardFrames(port);
+      const results = await refreshTaskboardFrames(port, options.open);
       refreshed.push(...results.map((result) => ({ port, ...result })));
     }
     if (refreshed.length === 0) {
@@ -1240,7 +1671,10 @@ async function main() {
   }
 
   let codexProcess = null;
-  const supervisor = createTaskboardSupervisor({ detached: !options.watch });
+  const supervisor = createTaskboardSupervisor({
+    detached: !options.watch,
+    managed: options.managedTaskboard,
+  });
 
   try {
     const cdpReachable = await isReachable(cdpVersionUrl);
@@ -1248,33 +1682,34 @@ async function main() {
       if (!options.launch) {
         throw new Error(`Codex CDP is not listening on 127.0.0.1:${options.port}`);
       }
-      if (codexIsRunning()) {
-        throw new Error(
-          "Codex is already running without this CDP port. Quit Codex completely, then run this command again.",
-        );
-      }
     }
 
     await supervisor.ensure({ force: true });
 
     if (!cdpReachable) {
+      await stopOrphanedCodexAppServers();
       codexProcess = launchCodex(options.appPath, options.port);
       await waitUntilReachable(cdpVersionUrl, 30_000);
     }
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
-    const firstResults = await injectAll(
-      options.port,
-      source,
-      sourceHash,
-      options.open,
-      options.screenshot,
-      injectedTargets,
-      options.watch,
-      supervisor,
-      options.attachExisting,
-      options.startupToken,
+    const injectionAttempts = new Map();
+    const firstResults = await waitForInitialInjection(
+      () => injectAll(
+        options.port,
+        source,
+        sourceHash,
+        options.open,
+        options.screenshot,
+        injectedTargets,
+        injectionAttempts,
+        options.watch,
+        supervisor,
+        options.attachExisting,
+        options.startupToken,
+      ),
+      30_000,
     );
     console.log(JSON.stringify({ injected: firstResults }, null, 2));
 
@@ -1291,6 +1726,8 @@ async function main() {
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
 
+    let missingRendererSince = null;
+    let rendererMissingLogged = false;
     while (true) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       try {
@@ -1298,38 +1735,65 @@ async function main() {
       } catch (error) {
         console.error(`Waiting for Taskboard service: ${error.message}`);
       }
-      for (const connection of injectedTargets.values()) {
+      for (const [targetId, connection] of injectedTargets) {
         try {
           await publishHostHeartbeat(connection, options.startupToken);
-        } catch (_) {}
+        } catch (error) {
+          connection.close();
+          injectedTargets.delete(targetId);
+          console.error(`Reconnecting Taskboard host binding: ${error.message}`);
+        }
       }
       try {
         const results = await injectAll(
           options.port,
           source,
           sourceHash,
-          false,
+          options.open,
           null,
           injectedTargets,
+          injectionAttempts,
           true,
           supervisor,
           options.attachExisting,
           options.startupToken,
         );
+        missingRendererSince = null;
+        rendererMissingLogged = false;
         if (results.length > 0) console.log(JSON.stringify({ injected: results }, null, 2));
       } catch (error) {
-        if (codexProcess && codexProcess.exitCode !== null) break;
+        const codexProcessExited = Boolean(codexProcess && codexProcess.exitCode !== null);
+        const cdpReachable = await isReachable(cdpVersionUrl);
+        if (!cdpReachable || isTransientRendererDisconnect(error)) {
+          missingRendererSince ??= Date.now();
+          if (shouldStopWatchingForMissingRenderer({
+            missingSince: missingRendererSince,
+            graceMs: rendererRecoveryGraceMs,
+            codexProcessExited,
+          })) break;
+          if (!rendererMissingLogged) {
+            console.error("Codex renderer unavailable; waiting briefly for a normal reopen.");
+            rendererMissingLogged = true;
+          }
+          continue;
+        }
+        missingRendererSince = null;
+        rendererMissingLogged = false;
+        if (codexProcessExited) break;
         console.error(`Waiting for Codex renderer: ${error.message}`);
       }
     }
     supervisor.stop();
   } catch (error) {
     supervisor.stop();
+    codexProcess?.unref();
     throw error;
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === injectorPath) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

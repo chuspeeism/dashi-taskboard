@@ -24,8 +24,12 @@ Use `taskctl` for every project, issue, and comment operation. Read [references/
 5. To claim a `todo` issue, move it to `in_progress` with `--if-version` from the latest read before starting implementation. If this claim reports a version conflict or a new read shows that its status changed, skip the issue and do not implement it.
 6. Include `--if-version <version>` on every concurrent update, using the version returned by the latest read.
 7. Before requesting review, verify the requested work and acceptance criteria.
-8. After implementation and self-verification, add a comment summarizing the key changes, verification, result, and remaining risks; then move the issue to `in_review`. Never move it directly to `done`.
-9. Move an issue from `in_review` to `done` only when the user explicitly confirms acceptance or explicitly asks to mark it complete. Codex self-verification alone is not sufficient.
-10. Move work that cannot continue to `blocked`, and work that will not continue to `canceled`.
+8. After implementation and self-verification, add a comment summarizing the key changes, verification, result, and remaining risks; the same comment must also detail what the user needs to accept, any acceptance prerequisites, and numbered acceptance steps. For every step, name the entry point, exact action, expected result, and pass condition; list anything not verified and what evidence the user should return on failure.
+   - If the result includes a real file, HTML page, report, image, PDF, or other artifact, create the delivery comment first, read its returned `comment.id`, and upload each artifact with `attachment upload`. Do not leave an absolute or temporary local path as the only delivery method.
+   - After every upload, consume the returned attachment JSON and keep the original source file unchanged. The task detail will surface these files as previewable delivery cards.
+   Then move the issue to `in_review`. Never move it directly to `done`.
+9. Move an issue from `in_review` to `pending_retrospective` only when the user explicitly confirms acceptance or confirms that it shipped. Codex self-verification alone is not sufficient.
+10. Move an issue from `pending_retrospective` to `done` only after its retrospective is completed or the user explicitly waives the retrospective.
+11. Move work that cannot continue to `blocked`, and work that will not continue to `canceled`.
 
 For version conflicts outside the initial claim, read the issue again, reconcile the newer state, and retry with its current version.

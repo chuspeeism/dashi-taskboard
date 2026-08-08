@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "任务面板操作总览",
+    "subtitle": "先定位任务，再执行操作，系统按操作类型产生本机、任务数据或 Codex/AI 后果",
+    "output": "docs/diagrams/taskboard-operations-overview.html",
+    "animation": "none",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "main_flow", "label": "操作主线", "focus": ["project_home", "select_project", "find_task", "choose_action", "apply_effect", "see_result"], "note": "任何操作都从选项目和定位任务开始，最终回到可观察结果。" },
+      { "id": "read_only", "label": "只看不改", "focus": ["project_home", "select_project", "find_task"], "note": "搜索、筛选、刷新和打开详情不改任务业务数据。" },
+      { "id": "side_effects", "label": "副作用", "focus": ["choose_action", "apply_effect", "see_result"], "note": "图下卡片逐项说明本机偏好、任务写入和 AI 执行。" }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "你的操作与系统结果" }
+  ],
+  "phases": [
+    { "id": "enter", "label": "进入", "fromCol": 0, "toCol": 1 },
+    { "id": "operate", "label": "操作", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "observe", "label": "结果", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["project_home", "select_project", "find_task", "choose_action", "apply_effect", "see_result"],
+  "nodes": [
+    { "id": "project_home", "lane": "main", "col": 0, "width": 50, "type": "frontend", "label": "项目" },
+    { "id": "select_project", "lane": "main", "col": 1, "width": 50, "type": "frontend", "label": "选项目" },
+    { "id": "find_task", "lane": "main", "col": 2, "width": 50, "type": "frontend", "label": "找任务" },
+    { "id": "choose_action", "lane": "main", "col": 3, "width": 42, "type": "frontend", "label": "选择" },
+    { "id": "apply_effect", "lane": "main", "col": 4, "width": 42, "type": "database", "label": "执行" },
+    { "id": "see_result", "lane": "main", "col": 5, "width": 50, "type": "messagebus", "label": "结果" }
+  ],
+  "edges": [
+    { "from": "project_home", "to": "select_project", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "from": "select_project", "to": "find_task", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "from": "find_task", "to": "choose_action", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "from": "choose_action", "to": "apply_effect", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "from": "apply_effect", "to": "see_result", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "只改变视图或本机", "items": ["搜索、筛选、刷新、打开详情和待我介入快捷筛选不修改任务", "收藏、主题、空列和隐藏列写浏览器 localStorage", "设备项目目录只保存本机路径映射，供 Git、AI 和自动化使用"] },
+    { "dot": "emerald", "title": "会写任务数据", "items": ["新建、编辑、拖动、状态、优先级、负责人、标签、截止日和重复都会增加任务版本", "评论、附件、父子/阻塞/相关关系、副本、归项目、归档与恢复写服务端 SQLite", "写入成功后同步其他窗口；版本冲突时拒绝覆盖并重新读取"] },
+    { "dot": "amber", "title": "会触发 Codex 或 AI", "items": ["进入待开发仅在负责人为 Codex Agent 时触发需求审核", "自动开发开关创建、更新或暂停 Codex 定时自动化，每轮最多认领一个 todo", "Dashi AI 发送消息会启动 run；在原生对话打开只预填指令，实际 taskctl 写入后才绑定 thread_id"] },
+    { "dot": "rose", "title": "边界与不会发生的事", "items": ["节点模式当前被 SHOW_WORKFLOW_BOARD_ENTRY=false 隐藏，不是现有可见入口", "直接切到进行中、审核中、待复盘或完成只改阶段，不自动生成实现、验收证据或复盘", "归档连带归档任务绑定的 AI 对话；附件删除永久生效，评论删除不可撤销"] }
+  ]
+}

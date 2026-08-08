@@ -4,10 +4,14 @@ import { test } from "node:test";
 import {
   createAiChatThread,
   deleteAiChatThread,
+  archiveAiChatThread,
   getAiChatCatalog,
   getAiChatThread,
   interruptAiChatRun,
+  listAttachments,
   listAiChatThreads,
+  retryAiChatTurn,
+  restoreAiChatThread,
   startAiChatTurn,
   subscribeAiChatThread,
   updateAiChatThread,
@@ -25,11 +29,15 @@ const thread = {
     issueIdentifier: "LOCAL-103",
   },
   codexThreadId: null,
+  role: "worker",
   model: "codex-real",
   reasoningEffort: "high",
+  serviceTier: null,
   sandbox: "read-only",
   createdAt: "2026-07-27T00:00:00.000Z",
   updatedAt: "2026-07-27T00:00:00.000Z",
+  archivedAt: null,
+  version: 1,
   currentRun: null,
 };
 
@@ -60,16 +68,22 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
       });
     }
     if (path === "/api/local/ai/threads" && !init.method) return json({ threads: [thread] });
+    if (path === "/api/local/ai/threads?archived=all" && !init.method) return json({ threads: [thread] });
     if (path === "/api/local/ai/threads" && init.method === "POST") return json({ thread });
     if (path === "/api/local/ai/threads/thread-1" && !init.method) {
       return json({ thread, events: [], runs: [] });
     }
     if (path === "/api/local/ai/threads/thread-1" && init.method === "PATCH") return json({ thread });
+    if (path === "/api/local/ai/threads/thread-1/archive" && init.method === "POST") return json({ thread });
+    if (path === "/api/local/ai/threads/thread-1/restore" && init.method === "POST") return json({ thread });
     if (path === "/api/local/ai/threads/thread-1" && init.method === "DELETE") {
       return new Response(null, { status: 204 });
     }
     if (path === "/api/local/ai/threads/thread-1/turns") {
       return json({ run: { id: "run-1", threadId: "thread-1", status: "running" } }, 202);
+    }
+    if (path === "/api/local/ai/threads/thread-1/retry") {
+      return json({ run: { id: "run-2", threadId: "thread-1", status: "running" } }, 202);
     }
     if (path === "/api/local/ai/runs/run-1/interrupt") {
       return json({ run: { id: "run-1", threadId: "thread-1", status: "interrupted" } });
@@ -83,26 +97,45 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
     assert.equal(calls.at(-1).path, "/api/local/ai/catalog?projectId=project%20%2F%20one");
 
     assert.equal((await listAiChatThreads())[0].id, "thread-1");
-    await createAiChatThread({ projectId: "project / one", issueId: "issue-1" });
+    assert.equal((await listAiChatThreads({ archived: "all" }))[0].id, "thread-1");
+    assert.equal(calls.at(-1).path, "/api/local/ai/threads?archived=all");
+    await createAiChatThread({
+      projectId: "project / one",
+      issueId: "issue-1",
+      role: "worker",
+      serviceTier: "priority",
+    });
     assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
       projectId: "project / one",
       issueId: "issue-1",
+      role: "worker",
+      serviceTier: "priority",
     });
 
     assert.equal((await getAiChatThread("thread-1")).thread.id, "thread-1");
     await updateAiChatThread("thread-1", {
       model: "codex-real",
       reasoningEffort: "high",
+      serviceTier: null,
       sandbox: "workspace-write",
     });
     assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
       model: "codex-real",
       reasoningEffort: "high",
+      serviceTier: null,
       sandbox: "workspace-write",
     });
+    await updateAiChatThread("thread-1", { serviceTier: "priority" });
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { serviceTier: "priority" });
 
     await deleteAiChatThread("thread-1");
     assert.equal(calls.at(-1).init.method, "DELETE");
+
+    await archiveAiChatThread(thread);
+    assert.equal(calls.at(-1).path, "/api/local/ai/threads/thread-1/archive");
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { version: 1 });
+    await restoreAiChatThread(thread);
+    assert.equal(calls.at(-1).path, "/api/local/ai/threads/thread-1/restore");
 
     await startAiChatTurn("thread-1", {
       message: "公开的用户消息",
@@ -118,6 +151,19 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
     assert.equal("workspacePath" in turnBody, false);
     assert.equal("model" in turnBody, false);
     assert.equal("hiddenPrompt" in turnBody, false);
+
+    const retried = await retryAiChatTurn("thread-1", {
+      message: "继续处理",
+      sourceRunId: "run-failed",
+      skillIds: [],
+    });
+    assert.equal(retried.id, "run-2");
+    assert.equal(calls.at(-1).path, "/api/local/ai/threads/thread-1/retry");
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
+      message: "继续处理",
+      sourceRunId: "run-failed",
+      skillIds: [],
+    });
 
     assert.equal((await interruptAiChatRun("run-1")).status, "interrupted");
   } finally {
@@ -135,6 +181,27 @@ test("aborted catalog requests preserve AbortError instead of reporting a servic
   try {
     await assert.rejects(
       () => getAiChatCatalog("project-1"),
+      (error) => error === abortError,
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("aborted response parsing preserves AbortError instead of returning an undefined collection", async () => {
+  const previousFetch = globalThis.fetch;
+  const abortError = new DOMException("The operation was aborted", "AbortError");
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw abortError;
+    },
+  });
+
+  try {
+    await assert.rejects(
+      () => listAttachments("task-1"),
       (error) => error === abortError,
     );
   } finally {

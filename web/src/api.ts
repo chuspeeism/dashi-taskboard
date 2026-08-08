@@ -3,7 +3,9 @@ import type {
   AiChatCatalog,
   AiChatAttachmentInput,
   AiChatRun,
+  AiChatRole,
   AiChatSandbox,
+  AiChatServiceTier,
   AiChatThread,
   AiChatThreadSnapshot,
   Attachment,
@@ -14,6 +16,9 @@ import type {
   Task,
   TaskboardMetadata,
   TaskDraft,
+  TaskExecutionOverview,
+  TaskInterventionManualMode,
+  TaskInterventionView,
   TaskStatus,
   WorkflowCapabilities,
   WorkflowWorkspaceRecord,
@@ -78,7 +83,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
   }
-  const body = (await response.json().catch(() => ({}))) as T & ApiErrorBody;
+  let body: T & ApiErrorBody;
+  try {
+    body = (await response.json()) as T & ApiErrorBody;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    body = {} as T & ApiErrorBody;
+  }
 
   if (!response.ok) throw new ApiError(response.status, body);
   return body;
@@ -111,8 +122,26 @@ export async function getAiChatCatalog(
   );
 }
 
-export async function listAiChatThreads(signal?: AbortSignal): Promise<AiChatThread[]> {
-  const data = await request<{ threads: AiChatThread[] }>("/api/local/ai/threads", { signal });
+export async function getTaskExecutionOverview(
+  parentId: string,
+  signal?: AbortSignal,
+): Promise<TaskExecutionOverview> {
+  const data = await request<{ overview: TaskExecutionOverview }>(
+    `/api/local/ai/tasks/${encodeURIComponent(parentId)}/execution-overview`,
+    { signal },
+  );
+  return data.overview;
+}
+
+export async function listAiChatThreads(
+  options: { archived?: "false" | "true" | "all"; signal?: AbortSignal } = {},
+): Promise<AiChatThread[]> {
+  const query = new URLSearchParams();
+  if (options.archived) query.set("archived", options.archived);
+  const suffix = query.size > 0 ? `?${query}` : "";
+  const data = await request<{ threads: AiChatThread[] }>(`/api/local/ai/threads${suffix}`, {
+    signal: options.signal,
+  });
   return data.threads;
 }
 
@@ -120,8 +149,10 @@ export async function createAiChatThread(input: {
   projectId: string;
   issueId?: string;
   title?: string;
+  role?: AiChatRole;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: AiChatServiceTier | null;
   sandbox?: AiChatSandbox;
 }): Promise<AiChatThread> {
   const data = await request<{ thread: AiChatThread }>("/api/local/ai/threads", {
@@ -145,8 +176,10 @@ export async function updateAiChatThread(
   threadId: string,
   input: {
     title?: string;
+    role?: AiChatRole;
     model?: string;
     reasoningEffort?: string;
+    serviceTier?: AiChatServiceTier | null;
     sandbox?: AiChatSandbox;
   },
 ): Promise<AiChatThread> {
@@ -167,6 +200,28 @@ export async function deleteAiChatThread(threadId: string): Promise<void> {
   );
 }
 
+export async function archiveAiChatThread(thread: AiChatThread): Promise<AiChatThread> {
+  const data = await request<{ thread: AiChatThread }>(
+    `/api/local/ai/threads/${encodeURIComponent(thread.id)}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: thread.version }),
+    },
+  );
+  return data.thread;
+}
+
+export async function restoreAiChatThread(thread: AiChatThread): Promise<AiChatThread> {
+  const data = await request<{ thread: AiChatThread }>(
+    `/api/local/ai/threads/${encodeURIComponent(thread.id)}/restore`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: thread.version }),
+    },
+  );
+  return data.thread;
+}
+
 export async function startAiChatTurn(
   threadId: string,
   input: {
@@ -178,6 +233,24 @@ export async function startAiChatTurn(
 ): Promise<AiChatRun> {
   const data = await request<{ run: AiChatRun }>(
     `/api/local/ai/threads/${encodeURIComponent(threadId)}/turns`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return data.run;
+}
+
+export async function retryAiChatTurn(
+  threadId: string,
+  input: {
+    message: string;
+    sourceRunId: string;
+    skillIds?: string[];
+  },
+): Promise<AiChatRun> {
+  const data = await request<{ run: AiChatRun }>(
+    `/api/local/ai/threads/${encodeURIComponent(threadId)}/retry`,
     {
       method: "POST",
       body: JSON.stringify(input),
@@ -282,8 +355,9 @@ export async function listDevelopmentContexts(
   );
 }
 
-export async function listTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
-  const params = new URLSearchParams({ projectId, archived: "false" });
+export async function listTasks(projectId?: string, signal?: AbortSignal): Promise<Task[]> {
+  const params = new URLSearchParams({ archived: "false" });
+  if (projectId) params.set("projectId", projectId);
   const data = await request<{ tasks: Task[] }>(`/api/tasks?${params}`, { signal });
   return data.tasks;
 }
@@ -304,6 +378,21 @@ export async function updateTask(task: Task, draft: TaskDraft, threadId?: string
   return data.task;
 }
 
+export async function setTaskInterventionOverride(
+  task: Task,
+  view: TaskInterventionView,
+  mode: TaskInterventionManualMode | "auto",
+): Promise<Task> {
+  const data = await request<{ task: Task }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/intervention`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: task.version, view, mode }),
+    },
+  );
+  return data.task;
+}
+
 export async function moveTask(
   task: Task,
   status: TaskStatus,
@@ -320,23 +409,38 @@ export async function moveTask(
   return data.task;
 }
 
-export async function archiveTask(task: Task, threadId?: string): Promise<Task> {
+export async function reassignTask(task: Task, projectId: string): Promise<Task> {
   const data = await request<{ task: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/archive`,
+    `/api/tasks/${encodeURIComponent(task.id)}/reassign`,
     {
       method: "POST",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({ version: task.version, projectId }),
     },
   );
   return data.task;
 }
 
-export async function restoreTask(task: Task, threadId?: string): Promise<Task> {
+export async function archiveTask(task: Task): Promise<Task> {
   const data = await request<{ task: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/restore`,
+    `/api/tasks/${encodeURIComponent(task.id)}/archive`,
     {
       method: "POST",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({ version: task.version }),
+    },
+  );
+  return data.task;
+}
+
+export async function restoreTask(task: Task): Promise<Task> {
+  return restoreTaskByVersion(task.id, task.version);
+}
+
+export async function restoreTaskByVersion(taskId: string, version: number): Promise<Task> {
+  const data = await request<{ task: Task }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/restore`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version }),
     },
   );
   return data.task;
@@ -380,23 +484,54 @@ export async function listComments(taskId: string, signal?: AbortSignal): Promis
   return data.comments;
 }
 
-export async function createComment(taskId: string, body: string, threadId?: string): Promise<Comment> {
+export async function createComment(
+  taskId: string,
+  body: string,
+  options: {
+    threadId?: string;
+    aiThreadId?: string;
+    intent?: Comment["intent"];
+    action?: Comment["action"];
+  } = {},
+): Promise<Comment> {
   const data = await request<{ comment: Comment }>(
     `/api/tasks/${encodeURIComponent(taskId)}/comments`,
     {
       method: "POST",
-      body: JSON.stringify({ body, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({ body, ...options }),
     },
   );
   return data.comment;
 }
 
-export async function updateComment(comment: Comment, body: string, threadId?: string): Promise<Comment> {
+export async function startTaskRework(
+  task: Task,
+  comment: Comment,
+  aiThreadId?: string,
+): Promise<{ task: Task; comment: Comment }> {
+  return request<{ task: Task; comment: Comment }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/rework`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        version: task.version,
+        commentId: comment.id,
+        ...(aiThreadId ? { aiThreadId } : {}),
+      }),
+    },
+  );
+}
+
+export async function updateComment(
+  comment: Comment,
+  body: string,
+  options: { threadId?: string; aiThreadId?: string } = {},
+): Promise<Comment> {
   const data = await request<{ comment: Comment }>(
     `/api/comments/${encodeURIComponent(comment.id)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ version: comment.version, body, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({ version: comment.version, body, ...options }),
     },
   );
   return data.comment;

@@ -1,0 +1,1595 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>任务状态流程 v0.1 · 交互设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Inter Variable", "PingFang SC", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-synthesis: none;
+      --bg: #fcfcfd;
+      --header-bg: #fcfcfd;
+      --sidebar-bg: #f3f3f4;
+      --surface: #ffffff;
+      --surface-raised: #ffffff;
+      --surface-muted: #f3f3f4;
+      --surface-hover: #f6f6f7;
+      --surface-active: #ececed;
+      --text-primary: #1b1b1b;
+      --text-secondary: #5d5d5f;
+      --text-tertiary: #9e9ea1;
+      --text-quaternary: #b5b5b7;
+      --border: #e1e1e1;
+      --border-strong: #d5d5d5;
+      --accent: #5e6ad2;
+      --accent-hover: #6872d5;
+      --accent-soft: rgba(94, 106, 210, 0.11);
+      --danger: #f34e52;
+      --danger-soft: #fff0f0;
+      --warning: #f0bf00;
+      --warning-soft: #fff9df;
+      --success: #43bc58;
+      --success-soft: #edf9ef;
+      --status-backlog: #9e9ea1;
+      --status-todo: #9e9ea1;
+      --status-progress: #f0bf00;
+      --status-review: #43bc58;
+      --status-retrospective: #a75ac4;
+      --status-blocked: #f34e52;
+      --status-done: #5e6ad2;
+      --status-canceled: #9e9ea1;
+      --card-shadow: 0 3px 6px -2px rgba(0, 0, 0, 0.02), 0 1px 1px rgba(0, 0, 0, 0.04);
+      --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #171719;
+      --header-bg: #1b1b1d;
+      --sidebar-bg: #151517;
+      --surface: #222225;
+      --surface-raised: #27272a;
+      --surface-muted: #29292c;
+      --surface-hover: #303034;
+      --surface-active: #37373c;
+      --text-primary: #eeeeef;
+      --text-secondary: #b8b8bd;
+      --text-tertiary: #85858b;
+      --text-quaternary: #65656b;
+      --border: rgba(255, 255, 255, 0.075);
+      --border-strong: rgba(255, 255, 255, 0.13);
+      --accent: #6e78df;
+      --accent-hover: #7c86e5;
+      --accent-soft: rgba(110, 120, 223, 0.16);
+      --danger: #ef686d;
+      --danger-soft: rgba(229, 72, 77, 0.12);
+      --warning: #e5b729;
+      --warning-soft: rgba(229, 183, 41, 0.12);
+      --success: #53b98a;
+      --success-soft: rgba(83, 185, 138, 0.12);
+      --status-backlog: #74767b;
+      --status-todo: #999ba1;
+      --status-progress: #e4b50f;
+      --status-review: #53b98a;
+      --status-retrospective: #b86bd1;
+      --status-blocked: #ef686d;
+      --status-done: #6e78df;
+      --status-canceled: #85858b;
+      --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+      --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-width: 320px; min-height: 100%; margin: 0; }
+    body {
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 450;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea, select { color: inherit; font: inherit; }
+    button, select { cursor: pointer; }
+    button:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+      outline-offset: 2px;
+    }
+
+    .prototype-bar {
+      position: relative;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 46px;
+      gap: 18px;
+      padding: 7px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-raised);
+    }
+    .prototype-copy {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 10px;
+    }
+    .prototype-badge {
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .05em;
+    }
+    .prototype-copy strong { font-size: 12px; }
+    .prototype-copy span:last-child {
+      overflow: hidden;
+      color: var(--text-tertiary);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prototype-actions { display: flex; align-items: center; gap: 7px; }
+    .prototype-actions select,
+    .prototype-actions button {
+      height: 29px;
+      padding: 0 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-size: 10px;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      height: calc(100vh - 46px);
+    }
+    .app-nav {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 13px 10px;
+      border-right: 1px solid var(--border);
+      background: var(--sidebar-bg);
+    }
+    .workspace-brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 35px;
+      padding: 0 7px;
+      font-weight: 620;
+    }
+    .workspace-mark {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      font-size: 10px;
+      font-weight: 750;
+      box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 28%, transparent);
+    }
+    .nav-section-label {
+      margin: 19px 8px 5px;
+      color: var(--text-tertiary);
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: 31px;
+      gap: 9px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+    }
+    .nav-item:hover { background: var(--surface-hover); }
+    .nav-item.active { background: var(--surface-active); color: var(--text-primary); }
+    .nav-icon {
+      display: grid;
+      place-items: center;
+      width: 16px;
+      color: var(--text-tertiary);
+      font-size: 13px;
+    }
+    .nav-spacer { flex: 1; }
+    .prototype-note {
+      margin: 10px 3px 1px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--surface) 55%, transparent);
+      color: var(--text-tertiary);
+      font-size: 9px;
+      line-height: 1.6;
+    }
+
+    .workspace {
+      display: grid;
+      min-width: 0;
+      grid-template-rows: 45px minmax(0, 1fr);
+      background: var(--bg);
+    }
+    .workspace-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--header-bg);
+    }
+    .workspace-header-left, .workspace-header-right {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 8px;
+    }
+    .back-button, .header-icon-button {
+      display: grid;
+      place-items: center;
+      width: 27px;
+      height: 27px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text-tertiary);
+    }
+    .back-button:hover, .header-icon-button:hover { background: var(--surface-hover); color: var(--text-primary); }
+    .workspace-title { color: var(--text-secondary); font-size: 11px; }
+    .workspace-title strong { color: var(--text-primary); font-weight: 580; }
+    .header-pill {
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--text-tertiary);
+      font-size: 9px;
+    }
+
+    .issue-scroll { min-width: 0; overflow: auto; }
+    .issue-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 805px) 320px;
+      align-items: start;
+      width: min(1237px, 100%);
+      min-height: 100%;
+      gap: 56px;
+      margin: 0 auto;
+      padding: 32px 40px 80px;
+    }
+    .issue-main { min-width: 0; }
+    .issue-editor { padding: 0 14px 30px; }
+    .issue-reference {
+      margin-bottom: 7px;
+      color: var(--text-tertiary);
+      font-size: 10px;
+    }
+    .issue-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -.026em;
+      line-height: 36px;
+    }
+    .issue-description {
+      margin: 12px 0 0;
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 23px;
+    }
+    .label-row { display: flex; gap: 6px; margin-top: 13px; }
+    .label {
+      padding: 3px 7px;
+      border-radius: 4px;
+      background: var(--surface-muted);
+      color: var(--text-secondary);
+      font-size: 9px;
+    }
+
+    .current-stage-panel {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 5px 12px;
+      margin: 14px 14px 20px;
+      padding: 12px 14px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface));
+    }
+    .stage-kicker {
+      grid-column: 1 / -1;
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .current-stage-panel > div {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .current-stage-panel strong { font-size: 13px; font-weight: 620; }
+    .current-stage-panel span, .current-stage-panel p { color: var(--text-secondary); font-size: 11px; }
+    .current-stage-panel p { grid-column: 1 / 3; margin: 2px 0 0; }
+    .stage-link {
+      display: inline-flex;
+      grid-column: 3;
+      grid-row: 2 / 4;
+      align-items: center;
+      min-height: 30px;
+      gap: 6px;
+      padding: 0 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text-primary);
+      font-size: 10px;
+      font-weight: 560;
+    }
+    .stage-link:hover { background: var(--surface-hover); }
+
+    .delivery-card {
+      margin: 0 14px 22px;
+      padding: 14px 16px;
+      border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border));
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--success-soft) 60%, var(--surface));
+    }
+    .delivery-card header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .delivery-card header strong { font-size: 12px; }
+    .delivery-card header span { color: var(--text-tertiary); font-size: 9px; }
+    .delivery-card p { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.7; }
+    .delivery-checks {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+      margin-top: 12px;
+    }
+    .delivery-check {
+      padding: 7px 8px;
+      border: 1px solid color-mix(in srgb, var(--success) 24%, var(--border));
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-size: 9px;
+    }
+    .delivery-check b { margin-right: 4px; color: var(--success); }
+
+    .activity-section {
+      position: relative;
+      padding: 0 14px;
+    }
+    .activity-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 28px;
+      margin: 0 0 10px;
+    }
+    .activity-heading h2 { margin: 0; font-size: 13px; font-weight: 560; }
+    .activity-heading span { color: var(--text-tertiary); font-size: 10px; }
+    .timeline { position: relative; padding-bottom: 5px; }
+    .timeline::before {
+      position: absolute;
+      top: 17px;
+      bottom: 20px;
+      left: 19px;
+      width: 1px;
+      background: var(--border-strong);
+      content: "";
+    }
+    .timeline-entry {
+      position: relative;
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      min-height: 58px;
+      padding: 5px 8px 8px 0;
+    }
+    .timeline-marker {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      margin-left: 8px;
+      border: 4px solid var(--bg);
+      border-radius: 50%;
+      background: var(--surface-muted);
+      color: var(--text-tertiary);
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .timeline-entry.done .timeline-marker { background: var(--success); color: white; }
+    .timeline-entry.current .timeline-marker {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+    .timeline-copy { padding-top: 2px; }
+    .timeline-copy strong { font-size: 11px; font-weight: 590; }
+    .timeline-copy p { margin: 3px 0 0; color: var(--text-tertiary); font-size: 10px; }
+    .timeline-copy button {
+      margin: 5px 0 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      font-size: 9px;
+    }
+
+    .comment-composer {
+      margin: 15px 0 0 38px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--card-shadow);
+    }
+    .comment-composer textarea {
+      display: block;
+      width: 100%;
+      min-height: 68px;
+      padding: 7px 8px;
+      resize: vertical;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .comment-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .button {
+      min-height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-size: 9px;
+      font-weight: 560;
+    }
+    .button:hover { background: var(--surface-hover); color: var(--text-primary); }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: white; }
+    .button.primary:hover { background: var(--accent-hover); }
+
+    .issue-properties {
+      position: sticky;
+      top: 22px;
+      min-width: 0;
+    }
+    .issue-properties h2 {
+      height: 34px;
+      margin: 0;
+      padding: 5px 7px;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 560;
+      line-height: 20px;
+    }
+    .property-row {
+      display: grid;
+      grid-template-columns: 18px 76px minmax(0, 1fr);
+      align-items: center;
+      width: 100%;
+      min-height: 36px;
+      gap: 7px;
+      padding: 4px 7px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+    }
+    .property-row:hover { background: var(--surface-hover); }
+    .property-icon {
+      display: grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      color: var(--text-tertiary);
+      font-size: 12px;
+    }
+    .property-label { color: var(--text-tertiary); font-size: 11px; }
+    .property-value {
+      overflow: hidden;
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status-property {
+      position: relative;
+      margin-bottom: 5px;
+    }
+    .status-card {
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface));
+    }
+    .status-card-trigger {
+      display: grid;
+      grid-template-columns: 18px 76px minmax(0, 1fr) 16px;
+      align-items: center;
+      width: 100%;
+      min-height: 38px;
+      gap: 7px;
+      padding: 4px 7px;
+      border: 0;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+    }
+    .status-card-trigger:hover { background: color-mix(in srgb, var(--surface-hover) 74%, transparent); }
+    .status-glyph {
+      display: grid;
+      place-items: center;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid currentColor;
+      border-radius: 50%;
+      color: var(--status-review);
+    }
+    .status-glyph::after {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+    .status-chevron {
+      color: var(--text-tertiary);
+      font-size: 13px;
+      transition: transform 140ms ease;
+    }
+    .status-card.open .status-chevron { transform: rotate(180deg); }
+    .status-card-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 8px;
+      padding: 0 9px 9px 108px;
+    }
+    .status-card-copy {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .status-card-copy strong { font-size: 10px; font-weight: 590; }
+    .status-card-copy span {
+      overflow: hidden;
+      color: var(--text-tertiary);
+      font-size: 9px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .status-card-actions { display: flex; gap: 4px; }
+    .status-card-actions button {
+      min-height: 25px;
+      padding: 0 7px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-size: 8px;
+      font-weight: 580;
+    }
+    .status-card-actions button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+    }
+
+    .status-popover {
+      position: absolute;
+      z-index: 50;
+      top: 45px;
+      right: 0;
+      display: none;
+      width: 304px;
+      overflow: hidden;
+      border: 1px solid var(--border-strong);
+      border-radius: 9px;
+      background: var(--surface-raised);
+      box-shadow: var(--dialog-shadow);
+    }
+    .status-popover.open { display: block; animation: popover-in 140ms ease both; }
+    @keyframes popover-in {
+      from { opacity: 0; transform: translateY(-4px) scale(.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .status-popover-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 42px;
+      gap: 10px;
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--border);
+    }
+    .status-popover-header strong { font-size: 11px; }
+    .status-popover-header span {
+      padding: 3px 6px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 8px;
+      font-weight: 650;
+    }
+    .status-list {
+      max-height: min(520px, calc(100vh - 180px));
+      overflow: auto;
+      padding: 7px;
+    }
+    .status-group-label {
+      padding: 6px 8px 4px 31px;
+      color: var(--text-tertiary);
+      font-size: 8px;
+      font-weight: 680;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .status-option {
+      position: relative;
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      align-items: center;
+      width: 100%;
+      min-height: 47px;
+      gap: 7px;
+      padding: 5px 7px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+    }
+    .status-option:hover { background: var(--surface-hover); }
+    .status-option.selected { background: var(--accent-soft); }
+    .status-option.current .status-option-title::after {
+      margin-left: 6px;
+      color: var(--accent);
+      content: "当前";
+      font-size: 8px;
+      font-weight: 650;
+    }
+    .status-option-node {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      border: 1.5px solid currentColor;
+      border-radius: 50%;
+      color: var(--text-quaternary);
+      background: var(--surface-raised);
+    }
+    .status-option.main:not(.last-main) .status-option-node::before {
+      position: absolute;
+      z-index: -1;
+      top: 15px;
+      left: 6px;
+      width: 1px;
+      height: 39px;
+      background: var(--border-strong);
+      content: "";
+    }
+    .status-option.current .status-option-node,
+    .status-option.selected .status-option-node {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .status-option.current .status-option-node::after,
+    .status-option.selected .status-option-node::after {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+    .status-option[data-key="in_progress"] .status-option-node { color: var(--status-progress); }
+    .status-option[data-key="in_review"] .status-option-node { color: var(--status-review); }
+    .status-option[data-key="pending_retrospective"] .status-option-node { color: var(--status-retrospective); }
+    .status-option[data-key="done"] .status-option-node { color: var(--status-done); }
+    .status-option[data-key="blocked"] .status-option-node { color: var(--status-blocked); border-radius: 4px; }
+    .status-option[data-key="canceled"] .status-option-node { color: var(--status-canceled); }
+    .status-option-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+    .status-option-title { color: var(--text-primary); font-size: 10px; font-weight: 570; }
+    .status-option-copy small {
+      overflow: hidden;
+      color: var(--text-tertiary);
+      font-size: 8px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .status-option-check { color: var(--accent); font-size: 11px; }
+    .status-divider { height: 1px; margin: 5px 7px; background: var(--border); }
+    .status-impact {
+      display: none;
+      padding: 9px 11px 10px;
+      border-top: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface-muted) 60%, var(--surface));
+    }
+    .status-impact.visible { display: block; }
+    .status-impact-copy { margin-bottom: 8px; }
+    .status-impact-copy strong { display: block; font-size: 9px; font-weight: 620; }
+    .status-impact-copy span { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: 8px; line-height: 1.5; }
+    .status-impact-actions { display: flex; justify-content: flex-end; gap: 5px; }
+    .status-impact-actions button {
+      min-height: 27px;
+      padding: 0 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-size: 8px;
+      font-weight: 590;
+    }
+    .status-impact-actions button.confirm {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+    }
+
+    .property-section-divider {
+      height: 1px;
+      margin: 12px 7px;
+      background: var(--border);
+    }
+    .properties-note {
+      margin: 8px 7px 0;
+      color: var(--text-tertiary);
+      font-size: 8px;
+      line-height: 1.6;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 120;
+      left: 50%;
+      bottom: 24px;
+      display: flex;
+      align-items: center;
+      max-width: min(440px, calc(100vw - 24px));
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 7px;
+      background: #28282d;
+      color: white;
+      box-shadow: 0 12px 35px rgba(0, 0, 0, .25);
+      font-size: 10px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 14px);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+    .toast-icon {
+      display: grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--success);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .mobile-backdrop {
+      position: fixed;
+      z-index: 40;
+      inset: 0;
+      display: none;
+      background: rgba(15, 15, 17, .28);
+    }
+    .mobile-backdrop.visible { display: block; }
+
+    @media (max-width: 1040px) {
+      .app-shell { grid-template-columns: 182px minmax(0, 1fr); }
+      .issue-layout {
+        grid-template-columns: minmax(0, 1fr) 260px;
+        gap: 36px;
+        padding-right: 26px;
+        padding-left: 26px;
+      }
+      .status-card-trigger { grid-template-columns: 18px 54px minmax(0, 1fr) 16px; }
+      .status-card-body { padding-left: 86px; }
+      .status-card-actions { flex-direction: column; }
+    }
+
+    @media (max-width: 760px) {
+      body { overflow: auto; }
+      .prototype-bar { position: sticky; top: 0; }
+      .app-shell { display: block; height: auto; min-height: calc(100vh - 46px); }
+      .app-nav { display: none; }
+      .workspace { min-height: calc(100vh - 46px); }
+      .issue-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        padding: 26px 20px 64px;
+      }
+      .issue-main, .issue-properties { width: 100%; }
+      .issue-properties {
+        position: static;
+        order: -1;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1px 8px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      .issue-properties h2,
+      .status-property,
+      .property-section-divider,
+      .properties-note {
+        grid-column: 1 / -1;
+      }
+      .status-card-body { padding-left: 108px; }
+      .status-card-actions { flex-direction: row; }
+    }
+
+    @media (max-width: 620px) {
+      .prototype-copy span:last-child, .prototype-actions { display: none; }
+      .prototype-bar { padding-right: 9px; padding-left: 9px; }
+      .workspace-header { padding: 0 9px; }
+      .header-pill { display: none; }
+      .issue-layout { padding: 22px 10px 54px; }
+      .issue-properties { display: block; margin: 0 6px; }
+      .status-card-trigger { grid-template-columns: 18px 54px minmax(0, 1fr) 16px; }
+      .status-card-body {
+        display: block;
+        padding: 0 9px 9px 86px;
+      }
+      .status-card-actions {
+        flex-flow: row wrap;
+        justify-content: flex-start;
+        margin-top: 6px;
+      }
+      .status-card-actions button { max-width: 100%; }
+      .issue-title { font-size: 21px; line-height: 31px; }
+      .current-stage-panel {
+        grid-template-columns: minmax(0, 1fr);
+        margin-right: 8px;
+        margin-left: 8px;
+      }
+      .stage-kicker, .current-stage-panel p, .stage-link { grid-column: 1; grid-row: auto; }
+      .stage-link { justify-self: start; }
+      .delivery-card, .activity-section { margin-right: 8px; margin-left: 8px; }
+      .delivery-checks { grid-template-columns: 1fr; }
+      .status-popover {
+        position: fixed;
+        top: auto;
+        right: 8px;
+        bottom: 8px;
+        left: 8px;
+        width: auto;
+        max-height: calc(100vh - 70px);
+        border-radius: 12px;
+      }
+      .status-list { max-height: calc(100vh - 225px); }
+      .mobile-backdrop.visible { display: block; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="prototype-bar">
+    <div class="prototype-copy">
+      <span class="prototype-badge">设计原型</span>
+      <strong>任务状态流程 · v0.1</strong>
+      <span>允许跨阶段跳转；操作只影响当前演示，不会写入 Taskboard。</span>
+    </div>
+    <div class="prototype-actions">
+      <label>
+        <select id="scenarioSelect" aria-label="演示场景">
+          <option value="delivery">交付验收</option>
+          <option value="reviewing">需求审核中</option>
+          <option value="waiting">等待你补充</option>
+          <option value="development">开发执行</option>
+          <option value="retrospective">待复盘</option>
+          <option value="blocked">执行受阻</option>
+          <option value="done">完成</option>
+        </select>
+      </label>
+      <button id="themeToggle" type="button">深色模式</button>
+      <button id="resetDemo" type="button">重置</button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="app-nav" aria-label="主导航">
+      <div class="workspace-brand"><span class="workspace-mark">D</span><span>dashi-taskboard</span></div>
+      <div class="nav-section-label">工作区</div>
+      <button class="nav-item active" type="button"><span class="nav-icon">▥</span><span>议题</span></button>
+      <button class="nav-item" type="button"><span class="nav-icon">◇</span><span>待我介入</span></button>
+      <button class="nav-item" type="button"><span class="nav-icon">⌁</span><span>AI 对话</span></button>
+      <div class="nav-section-label">项目</div>
+      <button class="nav-item" type="button"><span class="nav-icon">●</span><span>产品体验</span></button>
+      <button class="nav-item" type="button"><span class="nav-icon">○</span><span>自动化</span></button>
+      <div class="nav-spacer"></div>
+      <div class="prototype-note">
+        点击右侧“状态”卡打开流程。选择任意节点后，底部会先解释影响，再确认切换。
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="workspace-header-left">
+          <button class="back-button" type="button" aria-label="返回">←</button>
+          <span class="workspace-title"><strong>DASHITASKBOA-23</strong> · 任务详情</span>
+        </div>
+        <div class="workspace-header-right">
+          <span class="header-pill">本地 Taskboard</span>
+          <button class="header-icon-button" type="button" aria-label="复制链接">⌁</button>
+          <button class="header-icon-button" type="button" aria-label="更多操作">•••</button>
+        </div>
+      </header>
+
+      <div class="issue-scroll">
+        <div class="issue-layout">
+          <div class="issue-main">
+            <article class="issue-editor">
+              <div class="issue-reference">产品体验 / DASHITASKBOA-23</div>
+              <h1 class="issue-title">让任务状态更像流程，而不是一组孤立选项</h1>
+              <p class="issue-description">
+                当前属性区只能看到状态名称，用户不清楚任务实际处于需求审核、开发执行还是交付验收，也无法预判跨阶段操作会触发什么。
+              </p>
+              <div class="label-row">
+                <span class="label">产品体验</span>
+                <span class="label">状态流程</span>
+                <span class="label">交互优化</span>
+              </div>
+            </article>
+
+            <section class="current-stage-panel" aria-label="当前阶段">
+              <span class="stage-kicker">当前阶段</span>
+              <div>
+                <strong id="mainStageTitle">交付验收</strong>
+                <span id="mainStageOwner">当前负责人：你</span>
+              </div>
+              <p id="mainStageDescription">开发结果已提交，请接受交付或给出修改意见。</p>
+              <button class="stage-link" id="mainStageLink" type="button">打开交付对话 →</button>
+            </section>
+
+            <section class="delivery-card" id="deliveryCard">
+              <header>
+                <strong>开发结果待验收</strong>
+                <span>Codex Agent · 8 分钟前</span>
+              </header>
+              <p>已完成状态入口重构方案、交互规则和响应式策略。当前等待你确认设计方向，或提出需要继续修改的部分。</p>
+              <div class="delivery-checks">
+                <div class="delivery-check"><b>✓</b>状态映射已核对</div>
+                <div class="delivery-check"><b>✓</b>跨阶段路径已覆盖</div>
+                <div class="delivery-check"><b>✓</b>移动端策略已定义</div>
+              </div>
+            </section>
+
+            <section class="activity-section">
+              <header class="activity-heading">
+                <h2>经历日志</h2>
+                <span id="activityCount">4 条</span>
+              </header>
+              <div class="timeline" id="timeline">
+                <div class="timeline-entry done">
+                  <span class="timeline-marker">✓</span>
+                  <div class="timeline-copy">
+                    <strong>需求审核通过</strong>
+                    <p>Sol X-High 确认范围与验收条件完整。</p>
+                    <button type="button">打开需求审核对话 →</button>
+                  </div>
+                </div>
+                <div class="timeline-entry done">
+                  <span class="timeline-marker">✓</span>
+                  <div class="timeline-copy">
+                    <strong>开发执行完成</strong>
+                    <p>Codex Agent 完成交互原型和验证。</p>
+                    <button type="button">打开开发对话 →</button>
+                  </div>
+                </div>
+                <div class="timeline-entry current">
+                  <span class="timeline-marker">●</span>
+                  <div class="timeline-copy">
+                    <strong>等待交付验收</strong>
+                    <p>当前负责人是你；接受交付或提交修改意见。</p>
+                  </div>
+                </div>
+              </div>
+
+              <form class="comment-composer" id="commentComposer">
+                <textarea id="commentInput" placeholder="留下评论或修改意见…"></textarea>
+                <div class="comment-actions">
+                  <button class="button" type="button" id="plainComment">仅发布评论</button>
+                  <button class="button primary" type="button" id="resumeAction">提交修改并继续开发</button>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <aside class="issue-properties" aria-label="属性">
+            <h2>属性</h2>
+
+            <div class="status-property" id="statusProperty">
+              <section class="status-card" id="statusCard">
+                <button class="status-card-trigger" id="statusTrigger" type="button" aria-haspopup="dialog" aria-expanded="false">
+                  <span class="status-glyph" id="statusGlyph" aria-hidden="true"></span>
+                  <span class="property-label">状态</span>
+                  <span class="property-value" id="statusValue">交付验收</span>
+                  <span class="status-chevron" aria-hidden="true">⌄</span>
+                </button>
+                <div class="status-card-body">
+                  <div class="status-card-copy">
+                    <strong id="statusOwner">当前负责人：你</strong>
+                    <span id="statusHint">等待确认开发结果</span>
+                  </div>
+                  <div class="status-card-actions" id="statusActions">
+                    <button type="button" id="secondaryStageAction">提交修改</button>
+                    <button class="primary" type="button" id="primaryStageAction">接受交付</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="status-popover" id="statusPopover" role="dialog" aria-label="切换任务阶段">
+                <header class="status-popover-header">
+                  <strong>切换阶段</strong>
+                  <span>允许跨阶段</span>
+                </header>
+                <div class="status-list" id="statusList"></div>
+                <footer class="status-impact" id="statusImpact">
+                  <div class="status-impact-copy">
+                    <strong id="impactTitle"></strong>
+                    <span id="impactDescription"></span>
+                  </div>
+                  <div class="status-impact-actions">
+                    <button type="button" id="cancelSelection">取消</button>
+                    <button class="confirm" type="button" id="confirmSelection">确认切换</button>
+                  </div>
+                </footer>
+              </section>
+            </div>
+
+            <div class="property-row">
+              <span class="property-icon">▥</span>
+              <span class="property-label">优先级</span>
+              <span class="property-value">高</span>
+            </div>
+            <div class="property-row">
+              <span class="property-icon">◉</span>
+              <span class="property-label">负责人</span>
+              <span class="property-value">Codex Agent</span>
+            </div>
+            <div class="property-row">
+              <span class="property-icon">◇</span>
+              <span class="property-label">标签</span>
+              <span class="property-value">产品体验、状态流程</span>
+            </div>
+            <div class="property-row">
+              <span class="property-icon">⌘</span>
+              <span class="property-label">工作流</span>
+              <span class="property-value">任务审核与开发</span>
+            </div>
+            <div class="property-row">
+              <span class="property-icon">⑂</span>
+              <span class="property-label">开发上下文</span>
+              <span class="property-value">codex/status-flow</span>
+            </div>
+            <div class="property-row">
+              <span class="property-icon">□</span>
+              <span class="property-label">截止日期</span>
+              <span class="property-value">未设置</span>
+            </div>
+
+            <div class="property-section-divider"></div>
+            <p class="properties-note">
+              状态卡展示用户真实经历的阶段；弹层中的节点仍映射现有合法状态，不新增数据库枚举。
+            </p>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="mobile-backdrop" id="mobileBackdrop"></div>
+  <div class="toast" id="toast" role="status"><span class="toast-icon">✓</span><span id="toastText"></span></div>
+
+  <script>
+    var stages = [
+      {
+        key: "backlog",
+        title: "积压事项",
+        description: "暂不进入执行流程",
+        impact: "任务会回到需求池，不会启动需求审核或开发。",
+        type: "main",
+        tone: "backlog"
+      },
+      {
+        key: "todo",
+        title: "待开发",
+        description: "进入后启动 Sol 需求审核",
+        impact: "任务会进入待开发，并触发 Sol 对需求完整性进行只读审核。",
+        type: "main",
+        tone: "todo"
+      },
+      {
+        key: "in_progress",
+        title: "开发执行",
+        description: "表示 Agent 正在实现",
+        impact: "任务会标记为开发执行中；不会自动创建新的交付结果。",
+        type: "main",
+        tone: "progress"
+      },
+      {
+        key: "in_review",
+        title: "交付验收",
+        description: "等待用户确认开发结果",
+        impact: "任务会进入交付验收，等待接受交付或提交修改意见。",
+        type: "main",
+        tone: "review"
+      },
+      {
+        key: "pending_retrospective",
+        title: "待复盘",
+        description: "交付已接受，等待复盘",
+        impact: "任务会记录为已交付待复盘，仍未进入最终完成。",
+        type: "main",
+        tone: "retrospective"
+      },
+      {
+        key: "done",
+        title: "完成",
+        description: "任务正式结束",
+        impact: "任务会直接标记完成；后续仍可通过流程重新打开。",
+        type: "main",
+        tone: "done"
+      },
+      {
+        key: "blocked",
+        title: "待解决",
+        description: "标记当前存在阻塞",
+        impact: "任务会进入待解决；如果没有 readiness 或执行信息，只能显示通用阻塞说明。",
+        type: "exception",
+        tone: "blocked"
+      },
+      {
+        key: "canceled",
+        title: "已取消",
+        description: "终止当前任务",
+        impact: "任务会终止，但不会归档；之后仍可跨阶段重新打开。",
+        type: "exception",
+        tone: "canceled"
+      }
+    ];
+
+    var experienceByStatus = {
+      backlog: {
+        title: "积压事项",
+        owner: "当前负责人：你",
+        description: "任务尚未进入执行流程。",
+        hint: "暂不进入执行",
+        primary: "进入待开发",
+        primaryAction: "open-menu",
+        secondary: null
+      },
+      todo: {
+        title: "需求审核中",
+        owner: "当前负责人：Sol 5.6",
+        description: "Sol 正在核对目标、范围和验收条件。",
+        hint: "Sol 正在只读审核",
+        primary: "查看审核进度",
+        primaryAction: "open-thread",
+        secondary: null
+      },
+      in_progress: {
+        title: "开发执行",
+        owner: "当前负责人：Codex Agent",
+        description: "Agent 正在实现与验证；普通评论不会中断执行。",
+        hint: "Agent 正在实现",
+        primary: "打开开发对话",
+        primaryAction: "open-thread",
+        secondary: null
+      },
+      in_review: {
+        title: "交付验收",
+        owner: "当前负责人：你",
+        description: "开发结果已提交，请接受交付或给出修改意见。",
+        hint: "等待确认开发结果",
+        primary: "接受交付",
+        primaryAction: "accept",
+        secondary: "提交修改"
+      },
+      pending_retrospective: {
+        title: "待复盘",
+        owner: "当前负责人：你",
+        description: "交付已经接受，等待完成复盘。",
+        hint: "交付已接受",
+        primary: "完成复盘",
+        primaryAction: "complete",
+        secondary: null
+      },
+      done: {
+        title: "完成",
+        owner: "当前负责人：你",
+        description: "任务已经正式结束。",
+        hint: "任务已结束",
+        primary: "重新打开",
+        primaryAction: "open-menu",
+        secondary: null
+      },
+      blocked: {
+        title: "待解决",
+        owner: "当前负责人：你",
+        description: "开发执行遇到阻塞，需要查看原因并决定下一阶段。",
+        hint: "存在待处理阻塞",
+        primary: "查看阻塞原因",
+        primaryAction: "open-thread",
+        secondary: "切换阶段"
+      },
+      canceled: {
+        title: "已取消",
+        owner: "当前负责人：你",
+        description: "任务已经终止，但仍可重新进入任意阶段。",
+        hint: "任务已终止",
+        primary: "重新打开",
+        primaryAction: "open-menu",
+        secondary: null
+      }
+    };
+
+    var scenarios = {
+      delivery: { status: "in_review" },
+      reviewing: {
+        status: "todo",
+        override: {
+          title: "需求审核中",
+          owner: "当前负责人：Sol 5.6",
+          description: "Sol 正在核对任务是否具备开发条件。",
+          hint: "第 2 轮只读审核",
+          primary: "查看审核进度",
+          primaryAction: "open-thread",
+          secondary: null
+        }
+      },
+      waiting: {
+        status: "blocked",
+        override: {
+          title: "等待你补充",
+          owner: "当前负责人：你",
+          description: "需求审核提出了两个待确认问题；补充后继续原审核。",
+          hint: "需求审核等待输入",
+          primary: "补充并继续",
+          primaryAction: "focus-comment",
+          secondary: "查看审核问题"
+        }
+      },
+      development: { status: "in_progress" },
+      retrospective: { status: "pending_retrospective" },
+      blocked: { status: "blocked" },
+      done: { status: "done" }
+    };
+
+    var currentStatus = "in_review";
+    var currentExperience = experienceByStatus.in_review;
+    var selectedStatus = null;
+    var toastTimer = null;
+    var customActivityCount = 0;
+
+    var root = document.documentElement;
+    var statusCard = document.getElementById("statusCard");
+    var statusTrigger = document.getElementById("statusTrigger");
+    var statusPopover = document.getElementById("statusPopover");
+    var statusList = document.getElementById("statusList");
+    var statusImpact = document.getElementById("statusImpact");
+    var mobileBackdrop = document.getElementById("mobileBackdrop");
+    var scenarioSelect = document.getElementById("scenarioSelect");
+
+    function stageByKey(key) {
+      return stages.find(function (stage) { return stage.key === key; });
+    }
+
+    function experienceFor(status, override) {
+      return override || experienceByStatus[status] || experienceByStatus.backlog;
+    }
+
+    function statusColor(tone) {
+      return "var(--status-" + tone + ")";
+    }
+
+    function renderStatusList() {
+      var mainStages = stages.filter(function (stage) { return stage.type === "main"; });
+      var exceptionStages = stages.filter(function (stage) { return stage.type === "exception"; });
+      var html = '<div class="status-group-label">主流程</div>';
+
+      mainStages.forEach(function (stage, index) {
+        html += statusOptionHtml(stage, index === mainStages.length - 1);
+      });
+      html += '<div class="status-divider"></div><div class="status-group-label">异常与终止</div>';
+      exceptionStages.forEach(function (stage) {
+        html += statusOptionHtml(stage, true);
+      });
+      statusList.innerHTML = html;
+
+      Array.prototype.forEach.call(statusList.querySelectorAll(".status-option"), function (button) {
+        button.addEventListener("click", function () {
+          selectStatus(button.getAttribute("data-key"));
+        });
+      });
+    }
+
+    function statusOptionHtml(stage, lastMain) {
+      var classes = ["status-option", stage.type];
+      if (lastMain) classes.push("last-main");
+      if (stage.key === currentStatus) classes.push("current");
+      if (stage.key === selectedStatus) classes.push("selected");
+      var check = stage.key === selectedStatus ? "✓" : "";
+      return '<button type="button" class="' + classes.join(" ") + '" data-key="' + stage.key + '">' +
+        '<span class="status-option-node" aria-hidden="true"></span>' +
+        '<span class="status-option-copy"><span class="status-option-title">' + stage.title + '</span><small>' + stage.description + '</small></span>' +
+        '<span class="status-option-check">' + check + '</span></button>';
+    }
+
+    function selectStatus(key) {
+      selectedStatus = key;
+      var stage = stageByKey(key);
+      var current = stageByKey(currentStatus);
+      document.getElementById("impactTitle").textContent = "从“" + current.title + "”切换到“" + stage.title + "”";
+      document.getElementById("impactDescription").textContent = stage.impact;
+      document.getElementById("confirmSelection").textContent = key === currentStatus ? "保持当前阶段" : "确认切换";
+      statusImpact.classList.add("visible");
+      renderStatusList();
+    }
+
+    function setPopover(open) {
+      statusPopover.classList.toggle("open", open);
+      statusCard.classList.toggle("open", open);
+      statusTrigger.setAttribute("aria-expanded", String(open));
+      mobileBackdrop.classList.toggle("visible", open && window.innerWidth <= 620);
+      if (!open) {
+        selectedStatus = null;
+        statusImpact.classList.remove("visible");
+        renderStatusList();
+      }
+    }
+
+    function renderExperience() {
+      var stage = stageByKey(currentStatus);
+      document.getElementById("statusValue").textContent = currentExperience.title;
+      document.getElementById("statusOwner").textContent = currentExperience.owner;
+      document.getElementById("statusHint").textContent = currentExperience.hint;
+      document.getElementById("statusGlyph").style.color = statusColor(stage.tone);
+      document.getElementById("mainStageTitle").textContent = currentExperience.title;
+      document.getElementById("mainStageOwner").textContent = currentExperience.owner;
+      document.getElementById("mainStageDescription").textContent = currentExperience.description;
+
+      var primary = document.getElementById("primaryStageAction");
+      var secondary = document.getElementById("secondaryStageAction");
+      primary.textContent = currentExperience.primary;
+      primary.setAttribute("data-action", currentExperience.primaryAction);
+      secondary.hidden = !currentExperience.secondary;
+      secondary.textContent = currentExperience.secondary || "";
+
+      var link = document.getElementById("mainStageLink");
+      link.textContent = currentExperience.primaryAction === "open-thread"
+        ? "打开关联对话 →"
+        : currentExperience.primaryAction === "focus-comment"
+          ? "前往补充信息 →"
+          : "查看阶段操作 →";
+
+      document.getElementById("deliveryCard").hidden = currentStatus !== "in_review";
+      renderStatusList();
+    }
+
+    function addActivity(title, description) {
+      var timeline = document.getElementById("timeline");
+      var entry = document.createElement("div");
+      entry.className = "timeline-entry current";
+      entry.innerHTML = '<span class="timeline-marker">●</span><div class="timeline-copy"><strong>' +
+        title + '</strong><p>' + description + '</p></div>';
+      Array.prototype.forEach.call(timeline.querySelectorAll(".timeline-entry.current"), function (item) {
+        item.classList.remove("current");
+        item.classList.add("done");
+        item.querySelector(".timeline-marker").textContent = "✓";
+      });
+      timeline.appendChild(entry);
+      customActivityCount += 1;
+      document.getElementById("activityCount").textContent = (4 + customActivityCount) + " 条";
+    }
+
+    function showToast(message) {
+      document.getElementById("toastText").textContent = message;
+      document.getElementById("toast").classList.add("visible");
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(function () {
+        document.getElementById("toast").classList.remove("visible");
+      }, 2400);
+    }
+
+    function applyStatus(status, label) {
+      currentStatus = status;
+      currentExperience = experienceByStatus[status];
+      selectedStatus = null;
+      renderExperience();
+      setPopover(false);
+      scenarioSelect.value = "";
+      addActivity("阶段已切换为“" + currentExperience.title + "”", label || stageByKey(status).impact);
+      showToast("已切换到“" + currentExperience.title + "”");
+    }
+
+    function focusComment() {
+      var composer = document.getElementById("commentComposer");
+      composer.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(function () { document.getElementById("commentInput").focus(); }, 260);
+      showToast("请在评论区补充信息后继续当前阶段");
+    }
+
+    function handlePrimaryAction() {
+      var action = document.getElementById("primaryStageAction").getAttribute("data-action");
+      if (action === "accept") {
+        applyStatus("pending_retrospective", "你接受了交付，任务进入待复盘。");
+        return;
+      }
+      if (action === "complete") {
+        applyStatus("done", "复盘已完成，任务正式结束。");
+        return;
+      }
+      if (action === "focus-comment") {
+        focusComment();
+        return;
+      }
+      if (action === "open-thread") {
+        showToast("演示：已打开当前阶段关联对话");
+        return;
+      }
+      setPopover(true);
+    }
+
+    statusTrigger.addEventListener("click", function () {
+      setPopover(!statusPopover.classList.contains("open"));
+    });
+
+    document.getElementById("cancelSelection").addEventListener("click", function () {
+      selectedStatus = null;
+      statusImpact.classList.remove("visible");
+      renderStatusList();
+    });
+
+    document.getElementById("confirmSelection").addEventListener("click", function () {
+      if (!selectedStatus || selectedStatus === currentStatus) {
+        setPopover(false);
+        return;
+      }
+      var selected = selectedStatus;
+      applyStatus(selected, stageByKey(selected).impact);
+    });
+
+    document.getElementById("primaryStageAction").addEventListener("click", handlePrimaryAction);
+    document.getElementById("secondaryStageAction").addEventListener("click", function () {
+      if (currentStatus === "blocked") {
+        setPopover(true);
+      } else {
+        focusComment();
+      }
+    });
+    document.getElementById("mainStageLink").addEventListener("click", handlePrimaryAction);
+
+    document.getElementById("plainComment").addEventListener("click", function () {
+      var input = document.getElementById("commentInput");
+      if (!input.value.trim()) {
+        input.focus();
+        showToast("请先填写评论");
+        return;
+      }
+      addActivity("你发布了普通评论", "评论已保存，没有改变任务阶段。");
+      input.value = "";
+      showToast("评论已发布 · 阶段保持不变");
+    });
+
+    document.getElementById("resumeAction").addEventListener("click", function () {
+      var input = document.getElementById("commentInput");
+      if (!input.value.trim()) {
+        input.focus();
+        showToast("请先填写修改意见");
+        return;
+      }
+      applyStatus("in_progress", "修改意见已提交，任务回到开发执行。");
+      input.value = "";
+    });
+
+    document.addEventListener("pointerdown", function (event) {
+      if (!document.getElementById("statusProperty").contains(event.target)) setPopover(false);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") setPopover(false);
+    });
+    mobileBackdrop.addEventListener("click", function () { setPopover(false); });
+
+    scenarioSelect.addEventListener("change", function () {
+      var scenario = scenarios[scenarioSelect.value];
+      if (!scenario) return;
+      currentStatus = scenario.status;
+      currentExperience = experienceFor(currentStatus, scenario.override);
+      customActivityCount = 0;
+      renderExperience();
+      setPopover(false);
+      showToast("已切换演示场景");
+    });
+
+    document.getElementById("themeToggle").addEventListener("click", function () {
+      var dark = root.getAttribute("data-theme") === "dark";
+      root.setAttribute("data-theme", dark ? "light" : "dark");
+      document.getElementById("themeToggle").textContent = dark ? "深色模式" : "浅色模式";
+    });
+
+    document.getElementById("resetDemo").addEventListener("click", function () {
+      currentStatus = "in_review";
+      currentExperience = experienceByStatus.in_review;
+      customActivityCount = 0;
+      scenarioSelect.value = "delivery";
+      document.getElementById("activityCount").textContent = "4 条";
+      renderExperience();
+      setPopover(false);
+      showToast("演示已重置");
+    });
+
+    var previewParams = new URLSearchParams(window.location.search);
+    var previewScenario = previewParams.get("scenario");
+    if (previewScenario && scenarios[previewScenario]) {
+      currentStatus = scenarios[previewScenario].status;
+      currentExperience = experienceFor(currentStatus, scenarios[previewScenario].override);
+      scenarioSelect.value = previewScenario;
+    }
+    if (previewParams.get("theme") === "dark") {
+      root.setAttribute("data-theme", "dark");
+      document.getElementById("themeToggle").textContent = "浅色模式";
+    }
+    renderExperience();
+    if (previewParams.get("open") === "1") setPopover(true);
+  </script>
+</body>
+</html>

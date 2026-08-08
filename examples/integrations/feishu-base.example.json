@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "mode": "disabled",
+  "appToken": null,
+  "tableIds": {
+    "productIdeas": "tbl_example_product_ideas",
+    "requirements": "tbl_example_requirements"
+  },
+  "projectMapping": {
+    "productIdeas": "example-project",
+    "requirements": "example-project"
+  },
+  "fallbackProjectId": "inbox-unclassified",
+  "threadId": "example-codex-thread-id",
+  "timezone": "Asia/Shanghai",
+  "hermesEndpoint": null,
+  "excludedScopes": [
+    "account_profiles",
+    "payments_billing",
+    "prompt_content_and_generation_parameters",
+    "competitor_details_and_research"
+  ]
+}

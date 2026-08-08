@@ -16,6 +16,8 @@ npm start
 
 Open <http://127.0.0.1:47823>. The SQLite database is stored at `.data/taskboard.sqlite`.
 
+Tasks keep an internal UUID for database relationships and expose a short project identifier for people, such as `DT-12` or `VF-8`. Project prefixes contain 2-6 uppercase letters or numbers. Historical identifiers remain searchable aliases after a prefix change, and `#12` finds task number 12 inside the currently selected project set.
+
 For development with live frontend reload:
 
 ```bash
@@ -53,7 +55,7 @@ ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
   ~/.codex/skills/manage-taskboard
 ```
 
-The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
+The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; after the user explicitly confirms acceptance, it moves the issue to `pending_retrospective`, and uses `done` only after the retrospective is completed or explicitly waived.
 
 ## Embed in Codex
 
@@ -76,7 +78,7 @@ npm run codex:inject -- --port 9231 --open
 
 Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Taskboard sidebar entry. If port `9231` is occupied, use another port in both commands.
 
-### Alternative: restart Codex with the standalone launcher
+### Development alternative: restart Codex with the standalone launcher
 
 Quit every running Codex window, then run:
 
@@ -95,6 +97,18 @@ npm run codex:inject -- --port 9229 --open
 ```
 
 This command also stays resident so the injected tab can restart Taskboard after a service exit. Stop it with `Ctrl-C`.
+
+### Recommended macOS entry
+
+Install the single Finder entry and the independent login services once:
+
+```bash
+npm run codex:install
+```
+
+After installation, open `~/Applications/Codex + Taskboard.app`. It starts the official Codex app with loopback CDP and restores the Taskboard sidebar entry without asking for a repository path or a terminal command. The Taskboard service LaunchAgent owns the server and fixed `.data` directory independently; the Codex LaunchAgent runs the same app once at login and deliberately has no `KeepAlive`, so closing Codex does not trigger a restart loop.
+
+The official Codex app does not expose a supported native plugin injection API. Opening the ordinary `ChatGPT.app` entry therefore cannot mount Taskboard; the launcher records this diagnostic and shows one unobtrusive notification directing the user to `Codex + Taskboard.app`. The notification is not retried in a loop.
 
 The script adds a Taskboard entry to the Codex sidebar and renders the iframe across Codex's complete main workspace, including the contextual titlebar area so Taskboard's own header does not leave an empty strip. That full rectangular header is placed above Electron's draggable layer and marked `no-drag`; because the native contextual actions are suppressed while Taskboard is active, its own actions use their normal edge padding without an artificial right-side gap. The native sidebar stays mounted, while the previous page selection and contextual header are temporarily suppressed; choosing another Codex page restores them.
 
@@ -122,6 +136,14 @@ For two trusted collaborators, the taskboard can run on Cloudflare with Worker S
 Each device keeps its own project checkout mapping and continues to use a local companion for Codex, Git/worktree, Skill, and MCP capabilities. Cloud mode never falls back to or double-writes the local SQLite database.
 
 See [Cloud collaboration](docs/cloud-collaboration.md) for owner deployment, existing GitHub installation setup, password rotation, local path mapping, and the one-time local-data migration flow.
+
+## Product workflow reference
+
+- [Documentation index](docs/README.md)
+- [AI intervention and trigger events](docs/ai-intervention-triggers.md)
+- [Task status reference](docs/task-status-reference.md)
+
+The AI trigger reference records every current entry point that can start planner or worker runs, handoff coordination, automatic development, or recovery, including the user-selectable model defaults. The status reference explains what each board state means and which state changes do or do not start AI.
 
 ## Verify
 

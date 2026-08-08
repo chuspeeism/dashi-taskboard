@@ -3,8 +3,9 @@ export const TASK_STATUSES = [
   "todo",
   "in_progress",
   "in_review",
-  "blocked",
+  "pending_retrospective",
   "done",
+  "blocked",
   "canceled",
 ];
 export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];

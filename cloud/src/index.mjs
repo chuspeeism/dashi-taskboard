@@ -1,4 +1,10 @@
 import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mjs";
+import { computeTaskIntervention } from "../../server/task-intervention.mjs";
+import {
+  deriveTaskPrefix,
+  normalizeTaskPrefix,
+  uniqueTaskPrefix,
+} from "../../shared/task-identifiers.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
@@ -8,20 +14,22 @@ const TASK_STATUSES = [
   "todo",
   "in_progress",
   "in_review",
-  "blocked",
+  "pending_retrospective",
   "done",
+  "blocked",
   "canceled",
 ];
 const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];
 const INLINE_ATTACHMENT_TYPES = new Set([
+  "application/json",
   "application/pdf",
   "image/avif",
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
-  "text/plain",
 ]);
+const ATTACHMENT_PREVIEW_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:";
 
 class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -289,13 +297,20 @@ function validateProjectId(value) {
   return id;
 }
 
-function projectPrefix(projectId) {
-  const prefix = projectId.toUpperCase().replace(/[^A-Z0-9]+/g, "");
-  return (prefix || "TASK").slice(0, 12);
-}
-
 function now() {
   return new Date().toISOString();
+}
+
+function effectiveTaskStatus(row) {
+  return row.status === "done" && row.retrospective_status === "pending"
+    ? "pending_retrospective"
+    : row.status;
+}
+
+function storedTaskStatus(status) {
+  return status === "pending_retrospective"
+    ? { status: "done", retrospectiveStatus: "pending" }
+    : { status, retrospectiveStatus: null };
 }
 
 function uuid() {
@@ -465,6 +480,7 @@ function projectFromRow(row) {
   return {
     id: row.id,
     name: row.name,
+    taskPrefix: row.task_prefix,
     workspacePath: null,
     issueCount: Number(row.issue_count ?? 0),
     createdAt: row.created_at,
@@ -490,10 +506,11 @@ function taskFromRow(row) {
   return {
     id: row.id,
     identifier: row.identifier,
+    previousIdentifiers: [],
     projectId: row.project_id,
     title: row.title,
     description: row.description,
-    status: row.status,
+    status: effectiveTaskStatus(row),
     priority: row.priority,
     labels: JSON.parse(row.labels),
     sortOrder: row.sort_order,
@@ -514,6 +531,9 @@ function taskFromRow(row) {
     recurrence: row.recurrence_interval && row.recurrence_unit
       ? { interval: row.recurrence_interval, unit: row.recurrence_unit }
       : null,
+    reworkRound: row.rework_round ?? null,
+    readinessReview: null,
+    deliveredAt: row.delivered_at ?? null,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -527,7 +547,7 @@ function taskRelationSummaryFromRow(row) {
     identifier: row.identifier,
     projectId: row.project_id,
     title: row.title,
-    status: row.status,
+    status: effectiveTaskStatus(row),
     priority: row.priority,
     assignee: {
       type: row.assignee_type,
@@ -545,6 +565,16 @@ function commentFromRow(row, attachments = []) {
     taskId: row.task_id,
     body: row.body,
     threadId: row.thread_id,
+    aiThreadId: row.ai_thread_id ?? null,
+    intent: row.intent ?? "comment",
+    action: row.action ?? (
+      row.intent === "discussion"
+        ? "discussion"
+        : row.intent === "resume"
+          ? row.ai_thread_id ? "development" : "review"
+          : "comment"
+    ),
+    reworkRound: row.rework_round ?? null,
     authorType: row.author_type,
     authorId: row.author_id,
     authorName: row.author_name,
@@ -589,8 +619,11 @@ async function requireProject(env, id) {
 
 async function taskRow(env, id) {
   return env.DB.prepare(
-    "SELECT * FROM tasks WHERE id = ? OR identifier = ?",
-  ).bind(id, id).first();
+    `SELECT tasks.* FROM tasks
+     LEFT JOIN task_identifier_aliases aliases ON aliases.task_id = tasks.id
+     WHERE tasks.id = ? OR tasks.identifier = ? OR aliases.identifier = ?
+     LIMIT 1`,
+  ).bind(id, id, id).first();
 }
 
 async function requireTaskRow(env, id) {
@@ -626,7 +659,7 @@ async function hydrateComment(env, row) {
 
 async function hydrateTask(env, row) {
   const task = taskFromRow(row);
-  const [parent, subIssues, blockedBy, blocks, related] = await Promise.all([
+  const [parent, subIssues, blockedBy, blocks, related, aliases] = await Promise.all([
     env.DB.prepare(`
       SELECT tasks.*
       FROM task_relations
@@ -672,7 +705,12 @@ async function hydrateTask(env, row) {
         )
       ORDER BY tasks.sort_order, tasks.created_at, tasks.id
     `).bind(task.id, task.id, task.id)),
+    all(env.DB.prepare(`
+      SELECT identifier FROM task_identifier_aliases
+      WHERE task_id = ? ORDER BY created_at, identifier
+    `).bind(task.id)),
   ]);
+  task.previousIdentifiers = aliases.map((alias) => alias.identifier);
   task.relations = {
     parent: parent ? taskRelationSummaryFromRow(parent) : null,
     subIssues: subIssues.map(taskRelationSummaryFromRow),
@@ -680,6 +718,33 @@ async function hydrateTask(env, row) {
     blocks: blocks.map(taskRelationSummaryFromRow),
     related: related.map(taskRelationSummaryFromRow),
   };
+  const [comments, manualOverrides] = await Promise.all([
+    all(env.DB.prepare(`
+      SELECT id, author_type, created_at, updated_at
+      FROM comments
+      WHERE task_id = ?
+      ORDER BY created_at, id
+    `).bind(task.id)),
+    all(env.DB.prepare(`
+      SELECT view, mode, updated_at
+      FROM task_intervention_overrides
+      WHERE task_id = ?
+    `).bind(task.id)),
+  ]);
+  task.intervention = computeTaskIntervention({
+    task,
+    comments: comments.map((comment) => ({
+      id: comment.id,
+      authorType: comment.author_type,
+      createdAt: comment.created_at,
+      updatedAt: comment.updated_at,
+    })),
+    manualOverrides: manualOverrides.map((override) => ({
+      view: override.view,
+      mode: override.mode,
+      updatedAt: override.updated_at,
+    })),
+  });
   return task;
 }
 
@@ -690,7 +755,7 @@ async function getTask(env, id) {
 
 function parseProjectCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
+  assertAllowedKeys(body, new Set(["id", "name", "taskPrefix", "workspacePath"]));
   const name = stringField(body.name, "name", { required: true, maxLength: 120 });
   const id = validateProjectId(body.id ?? slugify(name));
   if (body.workspacePath !== undefined && body.workspacePath !== null) {
@@ -702,7 +767,21 @@ function parseProjectCreate(body) {
       throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
     }
   }
-  return { id, name };
+  const taskPrefix = body.taskPrefix === undefined ? undefined : normalizeTaskPrefix(body.taskPrefix);
+  if (body.taskPrefix !== undefined && !taskPrefix) {
+    throw new ApiError(400, "INVALID_TASK_PREFIX", "'taskPrefix' must contain 2-6 uppercase letters or numbers and start with a letter");
+  }
+  return { id, name, taskPrefix };
+}
+
+function parseProjectTaskPrefix(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["taskPrefix"]));
+  const taskPrefix = normalizeTaskPrefix(body.taskPrefix);
+  if (!taskPrefix) {
+    throw new ApiError(400, "INVALID_TASK_PREFIX", "'taskPrefix' must contain 2-6 uppercase letters or numbers and start with a letter");
+  }
+  return taskPrefix;
 }
 
 function parseTaskCreate(body) {
@@ -807,18 +886,49 @@ function parseVersionMutation(body) {
   };
 }
 
+function parseTaskInterventionOverride(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "view", "mode"]));
+  if (!["resolve", "follow_up", "comment"].includes(body.view)) {
+    throw new ApiError(400, "INVALID_INTERVENTION_VIEW", "'view' must be resolve, follow_up, or comment");
+  }
+  if (!["auto", "include", "exclude"].includes(body.mode)) {
+    throw new ApiError(400, "INVALID_INTERVENTION_MODE", "'mode' must be auto, include, or exclude");
+  }
+  return {
+    version: parseVersion(body.version),
+    view: body.view,
+    mode: body.mode,
+  };
+}
+
 function parseCommentCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["body", "threadId"]));
+  assertAllowedKeys(body, new Set(["body", "threadId", "aiThreadId", "intent", "action"]));
+  const intent = body.intent ?? "comment";
+  if (!["comment", "resume", "discussion"].includes(intent)) {
+    throw new ApiError(400, "INVALID_FIELD", "'intent' must be comment, resume, or discussion");
+  }
+  const action = body.action ?? (
+    intent === "discussion" ? "discussion" : intent === "resume" ? "review" : "comment"
+  );
+  if (!["comment", "review", "development", "discussion"].includes(action)) {
+    throw new ApiError(400, "INVALID_FIELD", "'action' must be comment, review, development, or discussion");
+  }
   return {
     body: stringField(body.body ?? "", "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    aiThreadId: body.aiThreadId === undefined
+      ? undefined
+      : stringField(body.aiThreadId, "aiThreadId", { required: true, maxLength: 256 }),
+    intent,
+    action,
   };
 }
 
 function parseCommentPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "body", "threadId"]));
+  assertAllowedKeys(body, new Set(["version", "body", "threadId", "aiThreadId"]));
   if (body.body === undefined) {
     throw new ApiError(400, "INVALID_FIELD", "'body' is required");
   }
@@ -826,6 +936,9 @@ function parseCommentPatch(body) {
     version: parseVersion(body.version),
     body: stringField(body.body, "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    aiThreadId: body.aiThreadId === undefined
+      ? undefined
+      : stringField(body.aiThreadId, "aiThreadId", { required: true, maxLength: 256 }),
   };
 }
 
@@ -978,6 +1091,7 @@ async function listProjects(env) {
     SELECT
       projects.id,
       projects.name,
+      projects.task_prefix,
       projects.workspace_path,
       projects.created_at,
       projects.updated_at,
@@ -989,6 +1103,7 @@ async function listProjects(env) {
     GROUP BY
       projects.id,
       projects.name,
+      projects.task_prefix,
       projects.workspace_path,
       projects.created_at,
       projects.updated_at
@@ -1002,6 +1117,7 @@ async function getProject(env, id) {
     SELECT
       projects.id,
       projects.name,
+      projects.task_prefix,
       projects.workspace_path,
       projects.created_at,
       projects.updated_at,
@@ -1014,6 +1130,7 @@ async function getProject(env, id) {
     GROUP BY
       projects.id,
       projects.name,
+      projects.task_prefix,
       projects.workspace_path,
       projects.created_at,
       projects.updated_at
@@ -1023,12 +1140,19 @@ async function getProject(env, id) {
 
 async function createProject(env, input) {
   const timestamp = now();
+  const reservedRows = await all(env.DB.prepare("SELECT task_prefix FROM projects"));
+  const reserved = new Set(reservedRows.map((row) => row.task_prefix));
+  const requestedPrefix = input.taskPrefix === undefined ? null : normalizeTaskPrefix(input.taskPrefix);
+  if (requestedPrefix && reserved.has(requestedPrefix)) {
+    throw new ApiError(409, "TASK_PREFIX_EXISTS", `Task prefix '${requestedPrefix}' already exists`);
+  }
+  const taskPrefix = requestedPrefix ?? uniqueTaskPrefix(deriveTaskPrefix(input), reserved);
   try {
     await env.DB.prepare(`
       INSERT INTO projects (
-        id, name, workspace_path, next_task_number, created_at, updated_at
-      ) VALUES (?, ?, NULL, 1, ?, ?)
-    `).bind(input.id, input.name, timestamp, timestamp).run();
+        id, name, task_prefix, workspace_path, next_task_number, created_at, updated_at
+      ) VALUES (?, ?, ?, NULL, 1, ?, ?)
+    `).bind(input.id, input.name, taskPrefix, timestamp, timestamp).run();
   } catch (error) {
     if (String(error.message).includes("UNIQUE constraint failed")) {
       throw new ApiError(409, "PROJECT_EXISTS", `Project '${input.id}' already exists`);
@@ -1036,6 +1160,41 @@ async function createProject(env, input) {
     throw error;
   }
   return getProject(env, input.id);
+}
+
+async function updateProjectTaskPrefix(env, projectId, taskPrefix) {
+  const project = await getProject(env, projectId);
+  if (!project) throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+  const conflict = await env.DB.prepare(`
+    SELECT id FROM projects WHERE task_prefix = ? AND id <> ?
+  `).bind(taskPrefix, projectId).first();
+  if (conflict) throw new ApiError(409, "TASK_PREFIX_EXISTS", `Task prefix '${taskPrefix}' already exists`);
+
+  const tasks = await all(env.DB.prepare(`
+    SELECT id, identifier FROM tasks WHERE project_id = ? ORDER BY created_at, id
+  `).bind(projectId));
+  const timestamp = now();
+  const statements = [];
+  tasks.forEach((task, index) => {
+    const identifier = `${taskPrefix}-${index + 1}`;
+    if (task.identifier !== identifier) {
+      statements.push(env.DB.prepare(`
+        INSERT INTO task_identifier_aliases (identifier, task_id, created_at)
+        VALUES (?, ?, ?) ON CONFLICT(identifier) DO NOTHING
+      `).bind(task.identifier, task.id, timestamp));
+    }
+    statements.push(env.DB.prepare("UPDATE tasks SET identifier = ? WHERE id = ?")
+      .bind(`MIGRATION-${task.id}`, task.id));
+  });
+  tasks.forEach((task, index) => {
+    statements.push(env.DB.prepare("UPDATE tasks SET identifier = ? WHERE id = ?")
+      .bind(`${taskPrefix}-${index + 1}`, task.id));
+  });
+  statements.push(env.DB.prepare(`
+    UPDATE projects SET task_prefix = ?, next_task_number = ?, updated_at = ? WHERE id = ?
+  `).bind(taskPrefix, tasks.length + 1, timestamp, projectId));
+  await env.DB.batch(statements);
+  return getProject(env, projectId);
 }
 
 async function listTasks(env, filters) {
@@ -1046,8 +1205,14 @@ async function listTasks(env, filters) {
     values.push(filters.projectId);
   }
   if (filters.status) {
+    const stored = storedTaskStatus(filters.status);
     where.push("status = ?");
-    values.push(filters.status);
+    values.push(stored.status);
+    if (filters.status === "pending_retrospective") {
+      where.push("retrospective_status = 'pending'");
+    } else if (filters.status === "done") {
+      where.push("retrospective_status IS NULL");
+    }
   }
   if (filters.archived === "false") {
     where.push("archived_at IS NULL");
@@ -1064,9 +1229,9 @@ async function listTasks(env, filters) {
           WHEN 'todo' THEN 2
           WHEN 'in_progress' THEN 3
           WHEN 'in_review' THEN 4
-          WHEN 'blocked' THEN 5
-          WHEN 'done' THEN 6
-          WHEN 'canceled' THEN 7
+          WHEN 'done' THEN CASE WHEN retrospective_status = 'pending' THEN 5 ELSE 6 END
+          WHEN 'blocked' THEN 7
+          WHEN 'canceled' THEN 8
         END,
         sort_order,
         created_at,
@@ -1078,13 +1243,16 @@ async function listTasks(env, filters) {
 
 async function createTask(env, input, actor) {
   await requireProject(env, input.projectId);
+  const stored = storedTaskStatus(input.status);
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {
     const row = await env.DB.prepare(`
       SELECT COALESCE(MAX(sort_order), 0) AS maximum
       FROM tasks
-      WHERE project_id = ? AND status = ? AND archived_at IS NULL
-    `).bind(input.projectId, input.status).first();
+      WHERE project_id = ? AND status = ?
+        AND COALESCE(retrospective_status, '') = COALESCE(?, '')
+        AND archived_at IS NULL
+    `).bind(input.projectId, stored.status, stored.retrospectiveStatus).first();
     sortOrder = row.maximum + 1000;
   }
   const id = uuid();
@@ -1098,23 +1266,22 @@ async function createTask(env, input, actor) {
         assignee_type, assignee_id, assignee_name, assignee_avatar_url,
         workflow_id, development_context_type, development_branch,
         due_date, recurrence_interval, recurrence_unit,
-        archived_at, version, created_at, updated_at
+        retrospective_status, delivered_at, archived_at, version, created_at, updated_at
       )
       SELECT
         ?,
-        ? || '-' || CAST(next_task_number AS TEXT),
+        projects.task_prefix || '-' || CAST(next_task_number AS TEXT),
         projects.id,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         NULL, 1, ?, ?
       FROM projects
       WHERE projects.id = ?
     `).bind(
       id,
-      projectPrefix(input.projectId),
       input.title,
       input.description,
-      input.status,
+      stored.status,
       input.priority,
       JSON.stringify(input.labels),
       sortOrder,
@@ -1133,6 +1300,8 @@ async function createTask(env, input, actor) {
       input.dueDate,
       input.recurrence?.interval ?? null,
       input.recurrence?.unit ?? null,
+      stored.retrospectiveStatus,
+      input.status === "pending_retrospective" ? timestamp : null,
       timestamp,
       timestamp,
       input.projectId,
@@ -1169,6 +1338,7 @@ async function updateTask(env, id, input, actor) {
 
   const assignments = [];
   const values = [];
+  const timestamp = now();
   const columns = {
     title: "title",
     description: "description",
@@ -1179,7 +1349,18 @@ async function updateTask(env, id, input, actor) {
     dueDate: "due_date",
   };
   for (const [key, value] of Object.entries(input.changes)) {
-    if (key === "developmentContext") {
+    if (key === "status") {
+      const stored = storedTaskStatus(value);
+      assignments.push("status = ?", "retrospective_status = ?");
+      values.push(stored.status, stored.retrospectiveStatus);
+      if (currentTask.status !== value && value === "pending_retrospective") {
+        assignments.push("delivered_at = ?");
+        values.push(timestamp);
+      }
+      if (["pending_retrospective", "done", "canceled"].includes(value)) {
+        assignments.push("rework_round = NULL");
+      }
+    } else if (key === "developmentContext") {
       assignments.push("development_context_type = ?", "development_branch = ?");
       values.push(value?.type ?? null, value?.branch ?? null);
     } else if (key === "recurrence") {
@@ -1205,7 +1386,7 @@ async function updateTask(env, id, input, actor) {
     values.push(input.threadId);
   }
   assignments.push("version = version + 1", "updated_at = ?");
-  values.push(now(), current.id, input.version);
+  values.push(timestamp, current.id, input.version);
   const result = await env.DB.prepare(`
     UPDATE tasks
     SET ${assignments.join(", ")}
@@ -1229,29 +1410,44 @@ async function moveTask(env, id, input) {
   if (current.archived_at !== null) {
     throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
   }
+  const stored = storedTaskStatus(input.status);
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {
     const row = await env.DB.prepare(`
       SELECT COALESCE(MAX(sort_order), 0) AS maximum
       FROM tasks
-      WHERE project_id = ? AND status = ? AND archived_at IS NULL AND id != ?
-    `).bind(current.project_id, input.status, current.id).first();
+      WHERE project_id = ? AND status = ?
+        AND COALESCE(retrospective_status, '') = COALESCE(?, '')
+        AND archived_at IS NULL AND id != ?
+    `).bind(current.project_id, stored.status, stored.retrospectiveStatus, current.id).first();
     sortOrder = row.maximum + 1000;
   }
+  const timestamp = now();
+  const currentTask = taskFromRow(current);
   const result = await env.DB.prepare(`
     UPDATE tasks
     SET
       status = ?,
+      retrospective_status = ?,
+      delivered_at = ?,
+      rework_round = ?,
       sort_order = ?,
       thread_id = COALESCE(?, thread_id),
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
   `).bind(
-    input.status,
+    stored.status,
+    stored.retrospectiveStatus,
+    currentTask.status !== input.status && input.status === "pending_retrospective"
+      ? timestamp
+      : currentTask.deliveredAt,
+    ["pending_retrospective", "done", "canceled"].includes(input.status)
+      ? null
+      : currentTask.reworkRound,
     sortOrder,
     input.threadId ?? null,
-    now(),
+    timestamp,
     current.id,
     input.version,
   ).run();
@@ -1263,6 +1459,27 @@ async function moveTask(env, id, input) {
       "Task was changed by another client",
       { expectedVersion: input.version, actualVersion: latest.version },
     );
+  }
+  return getTask(env, current.id);
+}
+
+async function setTaskInterventionOverride(env, id, input) {
+  const current = await requireTaskRow(env, id);
+  assertTaskVersion(current, input.version);
+  if (current.archived_at !== null) {
+    throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks are read-only");
+  }
+  if (input.mode === "auto") {
+    await env.DB.prepare(`
+      DELETE FROM task_intervention_overrides
+      WHERE task_id = ? AND view = ?
+    `).bind(current.id, input.view).run();
+  } else {
+    await env.DB.prepare(`
+      INSERT INTO task_intervention_overrides (task_id, view, mode, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(task_id, view) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at
+    `).bind(current.id, input.view, input.mode, now()).run();
   }
   return getTask(env, current.id);
 }
@@ -1640,14 +1857,17 @@ async function createComment(env, taskId, input, actor) {
   const timestamp = now();
   await env.DB.prepare(`
     INSERT INTO comments (
-      id, task_id, body, thread_id, author_type, author_id, author_name,
-      author_avatar_url, version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      id, task_id, body, thread_id, ai_thread_id, intent, action,
+      author_type, author_id, author_name, author_avatar_url, version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
   `).bind(
     id,
     task.id,
     input.body,
     input.threadId ?? null,
+    input.aiThreadId ?? null,
+    input.intent ?? "comment",
+    input.action ?? "comment",
     actor.type,
     actor.id,
     actor.name,
@@ -1686,12 +1906,14 @@ async function updateComment(env, id, input) {
     SET
       body = ?,
       thread_id = COALESCE(?, thread_id),
+      ai_thread_id = COALESCE(?, ai_thread_id),
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
   `).bind(
     input.body,
     input.threadId ?? null,
+    input.aiThreadId ?? null,
     now(),
     current.id,
     input.version,
@@ -1834,7 +2056,8 @@ async function attachmentContent(env, id, request) {
     /['()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
-  const canOpenInline = INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+  const canOpenInline = INLINE_ATTACHMENT_TYPES.has(attachment.contentType)
+    || attachment.contentType.startsWith("text/");
   return new Response(request.method === "HEAD" ? null : object.body, {
     status: 200,
     headers: {
@@ -1843,7 +2066,7 @@ async function attachmentContent(env, id, request) {
         canOpenInline ? "inline" : "attachment"
       }; filename*=UTF-8''${encodedFilename}`,
       "content-length": String(attachment.size),
-      "content-security-policy": "sandbox; default-src 'none'",
+      "content-security-policy": ATTACHMENT_PREVIEW_CSP,
       "content-type": canOpenInline
         ? attachment.contentType
         : "application/octet-stream",
@@ -1937,6 +2160,20 @@ async function routeApi(request, env, actor, url) {
       });
     }
     methodNotAllowed(["GET", "POST"]);
+  }
+
+  const projectTaskPrefixMatch = pathname.match(/^\/api\/projects\/([^/]+)\/task-prefix$/);
+  if (projectTaskPrefixMatch) {
+    requireNoQuery(url, "Project task prefix route");
+    if (request.method !== "PUT") methodNotAllowed(["PUT"]);
+    const projectId = validateProjectId(decodePathPart(projectTaskPrefixMatch[1], "Project id"));
+    return json(200, {
+      project: await updateProjectTaskPrefix(
+        env,
+        projectId,
+        parseProjectTaskPrefix(await readJson(request)),
+      ),
+    });
   }
 
   const workflowMatch = pathname.match(
@@ -2096,6 +2333,20 @@ async function routeApi(request, env, actor, url) {
       decodePathPart(attachmentMatch[1], "Attachment id"),
     );
     return empty(204);
+  }
+
+  const taskInterventionMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/intervention$/);
+  if (taskInterventionMatch) {
+    requireNoQuery(url, "Task intervention routes");
+    if (request.method !== "POST") methodNotAllowed(["POST"]);
+    const taskId = decodePathPart(taskInterventionMatch[1], "Task id");
+    return json(200, {
+      task: await setTaskInterventionOverride(
+        env,
+        taskId,
+        parseTaskInterventionOverride(await readJson(request)),
+      ),
+    });
   }
 
   const taskMatch = pathname.match(

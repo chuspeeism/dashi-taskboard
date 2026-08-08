@@ -12,13 +12,20 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   type Task,
+  type TaskInterventionManualMode,
+  type TaskInterventionView,
   type TaskPriority,
   type TaskStatus,
 } from "../types";
+import {
+  TASK_INTERVENTION_VIEW_DETAILS,
+  TASK_INTERVENTION_VIEWS,
+  interventionManualLabel,
+} from "../taskIntervention";
 import { STATUS_DETAILS } from "./BoardColumn";
 import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
 
-type SubmenuName = "status" | "priority" | "labels" | "copy";
+type SubmenuName = "status" | "priority" | "labels" | "intervention" | "copy";
 
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
   none: "无优先级",
@@ -37,6 +44,12 @@ interface TaskContextMenuProps {
   onStatusChange: (task: Task, status: TaskStatus) => void;
   onPriorityChange: (task: Task, priority: TaskPriority) => void;
   onLabelsChange: (task: Task, labels: string[]) => void;
+  onInterventionOverride: (
+    task: Task,
+    view: TaskInterventionView,
+    mode: TaskInterventionManualMode | "auto",
+  ) => void;
+  onReassign: (task: Task) => void;
   onDuplicate: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
   onOpenInThread: (task: Task) => void;
@@ -108,6 +121,8 @@ export function TaskContextMenu({
   onStatusChange,
   onPriorityChange,
   onLabelsChange,
+  onInterventionOverride,
+  onReassign,
   onDuplicate,
   onCopy,
   onOpenInThread,
@@ -357,11 +372,44 @@ export function TaskContextMenu({
             </div>
           )}
         </MenuItem>
+
+        <MenuItem
+          label="待我介入"
+          icon={<LinearIcon name="hand" />}
+          shortcut="I"
+          submenu="intervention"
+          submenuOpen={submenu === "intervention"}
+          rootShortcut="i"
+          onPointerEnter={() => scheduleSubmenu("intervention")}
+          onClick={() => openSubmenu("intervention", true)}
+        >
+          {submenu === "intervention" && (
+            <div className="context-submenu intervention-submenu" role="menu" data-submenu-panel="intervention" style={{ "--submenu-shift": `${submenuShift}px` } as CSSProperties}>
+              {TASK_INTERVENTION_VIEWS.flatMap((view) => {
+                const currentMode = task.intervention?.manual?.[view];
+                return (["auto", "include", "exclude"] as const).map((mode) => (
+                  <MenuItem
+                    key={`${view}-${mode}`}
+                    label={`${TASK_INTERVENTION_VIEW_DETAILS[view].label}：${interventionManualLabel(mode)}`}
+                    checked={mode === "auto" ? !currentMode : currentMode === mode}
+                    onClick={() => closeThen(() => onInterventionOverride(task, view, mode))}
+                  />
+                ));
+              })}
+            </div>
+          )}
+        </MenuItem>
       </div>
 
       <div className="context-menu-divider" role="separator" />
 
       <div className="context-menu-group">
+        <MenuItem
+          label="切换项目…"
+          icon={<LinearIcon name="project" />}
+          onPointerEnter={closeSubmenu}
+          onClick={() => closeThen(() => onReassign(task))}
+        />
         <MenuItem
           label="编辑议题"
           icon={<LinearIcon name="write" />}

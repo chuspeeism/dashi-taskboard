@@ -9,7 +9,10 @@ import {
 import type {
   IssueRelationType,
   Task,
+  TaskExecutionOverview,
+  TaskExecutionOverviewChild,
   TaskRelationSummary,
+  TaskStatus,
 } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearIcon, LinearStatusIcon } from "./LinearIcon";
@@ -19,9 +22,39 @@ export interface RelationMutationResult {
   relatedTask: Task;
 }
 
+const EXECUTION_STATUS_ORDER: TaskStatus[] = [
+  "backlog",
+  "todo",
+  "in_progress",
+  "in_review",
+  "pending_retrospective",
+  "done",
+  "blocked",
+  "canceled",
+];
+
+const EXECUTION_STATUS_LABELS: Record<TaskStatus, string> = {
+  backlog: "积压",
+  todo: "待办",
+  in_progress: "进行中",
+  in_review: "审核中",
+  pending_retrospective: "待复盘",
+  done: "完成",
+  blocked: "阻塞",
+  canceled: "已取消",
+};
+
+const EXECUTION_ORCHESTRATION_LABELS = {
+  planning: "规划中",
+  planned: "已规划",
+  failed: "规划失败",
+  canceled: "已取消",
+} as const;
+
 interface RelationActions {
   task: Task;
   tasks: Task[];
+  disabled?: boolean;
   onOpenTask: (task: TaskRelationSummary) => void;
   onAddRelation: (
     task: Task,
@@ -179,7 +212,7 @@ function IssueRelationRow({
 }: {
   issue: TaskRelationSummary;
   onOpen: () => void;
-  onRemove: () => void;
+  onRemove?: () => void;
   removing: boolean;
   showAssignee?: boolean;
 }) {
@@ -191,7 +224,7 @@ function IssueRelationRow({
         <span className="issue-relation-title">{issue.title}</span>
         {showAssignee && <ActorAvatar actor={issue.assignee} className="issue-relation-assignee" />}
       </button>
-      <button
+      {onRemove && <button
         className="issue-relation-remove"
         type="button"
         aria-label={`移除 ${issue.identifier}`}
@@ -199,9 +232,139 @@ function IssueRelationRow({
         onClick={onRemove}
       >
         <LinearIcon name="close" />
-      </button>
+      </button>}
     </div>
   );
+}
+
+function executionSummary(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
+  return normalized ? normalized : null;
+}
+
+function ExecutionSubIssueRow({
+  child,
+  onOpen,
+  onOpenAiThread,
+  onOpenThread,
+  onRemove,
+  onRestore,
+  removing,
+  restoring,
+}: {
+  child: TaskExecutionOverviewChild;
+  onOpen: () => void;
+  onOpenAiThread: (threadId: string) => void;
+  onOpenThread: (threadId: string) => void;
+  onRemove?: () => void;
+  onRestore?: () => void;
+  removing: boolean;
+  restoring: boolean;
+}) {
+  const delivery = executionSummary(child.handoff?.delivery);
+  const blocker = executionSummary(child.handoff?.blocker);
+  const summary = delivery ?? blocker ?? executionSummary(child.handoff?.summary);
+  const latestComment = executionSummary(child.handoff?.latestComment?.body);
+  const statusLabel = EXECUTION_STATUS_LABELS[child.status];
+  const archived = child.archivedAt !== null;
+
+  return (
+    <article
+      className={`execution-sub-issue-row${child.status === "blocked" ? " is-blocked" : ""}${archived ? " is-archived" : ""}`}
+      aria-label={`${child.identifier} ${child.title}`}
+    >
+      <button className="execution-sub-issue-target" type="button" onClick={onOpen}>
+        <LinearStatusIcon status={child.status} />
+        <span className="issue-relation-id">{child.identifier}</span>
+        <span className="execution-sub-issue-title">{child.title}</span>
+      </button>
+      <div className="execution-sub-issue-meta">
+        <span className={`execution-status-badge${child.status === "blocked" ? " is-blocked" : ""}`}>
+          {statusLabel}
+        </span>
+        {archived && <span className="execution-archived-badge">已归档</span>}
+      </div>
+      <div className="execution-sub-issue-evidence">
+        <p className={summary ? "" : "is-empty"}>
+          <strong>{delivery ? "交付" : blocker ? "阻塞" : "摘要"}：</strong>
+          {summary ?? "暂无交付或 blocker 摘要"}
+        </p>
+        <p className={latestComment ? "" : "is-empty"}>
+          <strong>最新评论：</strong>
+          {latestComment ?? "暂无最新评论"}
+        </p>
+      </div>
+      <div className="execution-sub-issue-actions">
+        {child.aiThreadId && (
+          <button
+            className="execution-thread-button"
+            type="button"
+            aria-label={`在 Dashi AI 中打开 ${child.identifier}`}
+            onClick={() => onOpenAiThread(child.aiThreadId!)}
+          >
+            <LinearIcon name="conversation" />
+            Dashi AI
+          </button>
+        )}
+        {child.codexThreadId && (
+          <button
+            className="execution-thread-button"
+            type="button"
+            aria-label={`在 Codex 中打开 ${child.identifier}`}
+            onClick={() => onOpenThread(child.codexThreadId!)}
+          >
+            <LinearIcon name="conversation" />
+            Codex
+          </button>
+        )}
+        {onRemove && (
+          <button
+            className="issue-relation-remove execution-sub-issue-remove"
+            type="button"
+            aria-label={`移除 ${child.identifier}`}
+            disabled={removing}
+            onClick={onRemove}
+          >
+            <LinearIcon name="close" />
+          </button>
+        )}
+        {archived && onRestore && (
+          <button
+            className="execution-thread-button execution-restore-button"
+            type="button"
+            aria-label={`恢复 ${child.identifier}`}
+            disabled={restoring}
+            onClick={onRestore}
+          >
+            <LinearIcon name="recurrence" />
+            {restoring ? "恢复中…" : "恢复"}
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function relationSummaryForExecutionChild(
+  task: Task,
+  child: TaskExecutionOverviewChild,
+  existing: TaskRelationSummary | undefined,
+): TaskRelationSummary {
+  return existing ?? {
+    id: child.id,
+    identifier: child.identifier,
+    projectId: task.projectId,
+    title: child.title,
+    status: child.status,
+    priority: child.priority,
+    assignee: {
+      type: "agent",
+      id: "codex-agent",
+      name: "Codex Agent",
+      avatarUrl: null,
+    },
+    archivedAt: child.archivedAt,
+  };
 }
 
 export function IssueParentLink({
@@ -210,6 +373,7 @@ export function IssueParentLink({
   onOpenTask,
   onAddRelation,
   onRemoveRelation,
+  disabled = false,
 }: RelationActions) {
   const [saving, setSaving] = useState(false);
   const parent = task.relations.parent;
@@ -230,7 +394,7 @@ export function IssueParentLink({
             issue={parent}
             removing={saving}
             onOpen={() => onOpenTask(parent)}
-            onRemove={() => {
+            onRemove={disabled ? undefined : () => {
               setSaving(true);
               void onRemoveRelation(task, "parent", parent.id)
                 .catch(() => undefined)
@@ -242,7 +406,7 @@ export function IssueParentLink({
       <IssuePicker
         label={parent ? "更换父议题" : "设置父议题"}
         candidates={candidates}
-        disabled={saving}
+        disabled={disabled || saving}
         onSelect={async (candidate) => {
           setSaving(true);
           try {
@@ -262,11 +426,41 @@ export function IssueSubIssues({
   onOpenTask,
   onAddRelation,
   onRemoveRelation,
-}: RelationActions) {
+  executionOverview,
+  executionOverviewLoading = false,
+  executionOverviewError = null,
+  onOpenAiThread,
+  onOpenThread,
+  onRestoreArchivedTask,
+  disabled = false,
+}: RelationActions & {
+  executionOverview?: TaskExecutionOverview | null;
+  executionOverviewLoading?: boolean;
+  executionOverviewError?: string | null;
+  onOpenAiThread: (threadId: string) => void;
+  onOpenThread: (threadId: string) => void;
+  onRestoreArchivedTask?: (taskId: string, version: number) => Promise<void>;
+}) {
   const [savingId, setSavingId] = useState<string | null>(null);
   const subIssues = task.relations.subIssues;
-  const done = subIssues.filter((issue) => issue.status === "done").length;
+  const done = subIssues.filter(
+    (issue) => issue.status === "pending_retrospective" || issue.status === "done",
+  ).length;
   const directIds = new Set(subIssues.map((issue) => issue.id));
+  const overviewChildren = executionOverview?.children ?? null;
+  const usingExecutionOverview = executionOverview !== null && executionOverview !== undefined;
+  const displayedChildren = overviewChildren ?? [];
+  const activeChildren = displayedChildren.filter((child) => child.archivedAt === null);
+  const archivedChildren = displayedChildren.length - activeChildren.length;
+  const delivered = activeChildren.filter(
+    (child) => ["in_review", "pending_retrospective", "done"].includes(child.status),
+  ).length;
+  const statusDistribution = EXECUTION_STATUS_ORDER
+    .map((status) => ({
+      status,
+      count: activeChildren.filter((child) => child.status === status).length,
+    }))
+    .filter((entry) => entry.count > 0);
   const ancestors = new Set<string>([task.id]);
   let parent = task.relations.parent;
   const taskById = new Map(tasks.map((candidate) => [candidate.id, candidate]));
@@ -278,6 +472,7 @@ export function IssueSubIssues({
     candidate.archivedAt === null
     && !ancestors.has(candidate.id)
     && !directIds.has(candidate.id)
+    && !displayedChildren.some((child) => child.id === candidate.id)
   ));
   const progress = subIssues.length > 0 ? Math.round((done / subIssues.length) * 100) : 0;
 
@@ -286,7 +481,7 @@ export function IssueSubIssues({
       <header>
         <div>
           <h2 id="sub-issues-heading">子议题</h2>
-          {subIssues.length > 0 && (
+          {subIssues.length > 0 && !usingExecutionOverview && (
             <span className="sub-issue-summary">
               <span
                 className="sub-issue-progress"
@@ -296,11 +491,34 @@ export function IssueSubIssues({
               {done}/{subIssues.length}
             </span>
           )}
+          {usingExecutionOverview && (
+            <div className="execution-overview-summary" aria-label="子议题执行概览">
+              <span className="execution-delivery-count">已交付 {delivered}/{activeChildren.length}</span>
+              {executionOverview?.orchestration && (
+                <span className="execution-orchestration-state">
+                  编排 {EXECUTION_ORCHESTRATION_LABELS[executionOverview.orchestration.status]}
+                </span>
+              )}
+              <span className="execution-status-distribution" aria-label="子议题状态分布">
+                {statusDistribution.map(({ status, count }) => (
+                  <span
+                    className={`execution-status-count${status === "blocked" ? " is-blocked" : ""}`}
+                    key={status}
+                  >
+                    {EXECUTION_STATUS_LABELS[status]} {count}
+                  </span>
+                ))}
+                {archivedChildren > 0 && (
+                  <span className="execution-status-count is-archived">归档 {archivedChildren}</span>
+                )}
+              </span>
+            </div>
+          )}
         </div>
         <IssuePicker
           label="添加子议题"
           candidates={candidates}
-          disabled={savingId !== null}
+          disabled={disabled || savingId !== null}
           onSelect={async (candidate) => {
             setSavingId(candidate.id);
             try {
@@ -311,7 +529,49 @@ export function IssueSubIssues({
           }}
         />
       </header>
-      {subIssues.length > 0 && (
+      {executionOverviewLoading && !usingExecutionOverview && (
+        <p className="execution-overview-hint">正在读取执行概览…</p>
+      )}
+      {executionOverviewError && (
+        <p className="execution-overview-hint is-error" role="alert">{executionOverviewError}</p>
+      )}
+      {usingExecutionOverview && displayedChildren.length > 0 && (
+        <div className="issue-sub-issue-list execution-sub-issue-list">
+          {displayedChildren.map((child) => {
+            const directChild = taskById.get(child.id);
+            const relation = relationSummaryForExecutionChild(
+              task,
+              child,
+              subIssues.find((issue) => issue.id === child.id),
+            );
+            const canRemove = Boolean(!disabled && !child.archivedAt && directChild && directIds.has(child.id));
+            return (
+              <ExecutionSubIssueRow
+                child={child}
+                key={child.id}
+                removing={savingId === child.id}
+                restoring={savingId === child.id}
+                onOpen={() => onOpenTask(relation)}
+                onOpenAiThread={onOpenAiThread}
+                onOpenThread={onOpenThread}
+                onRemove={canRemove ? () => {
+                  setSavingId(child.id);
+                  void onRemoveRelation(directChild!, "parent", task.id)
+                    .catch(() => undefined)
+                    .finally(() => setSavingId(null));
+                } : undefined}
+                onRestore={child.archivedAt !== null && onRestoreArchivedTask && !disabled ? () => {
+                  setSavingId(child.id);
+                  void onRestoreArchivedTask(child.id, child.version)
+                    .catch(() => undefined)
+                    .finally(() => setSavingId(null));
+                } : undefined}
+              />
+            );
+          })}
+        </div>
+      )}
+      {!usingExecutionOverview && subIssues.length > 0 && (
         <div className="issue-sub-issue-list">
           {subIssues.map((issue) => {
             const child = taskById.get(issue.id);
@@ -322,7 +582,7 @@ export function IssueSubIssues({
                 showAssignee
                 removing={savingId === issue.id}
                 onOpen={() => onOpenTask(issue)}
-                onRemove={() => {
+                onRemove={disabled ? undefined : () => {
                   if (!child) return;
                   setSavingId(issue.id);
                   void onRemoveRelation(child, "parent", task.id)
@@ -350,6 +610,7 @@ export function IssueRelationSidebar({
   onOpenTask,
   onAddRelation,
   onRemoveRelation,
+  disabled = false,
 }: RelationActions) {
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
@@ -374,7 +635,7 @@ export function IssueRelationSidebar({
               <IssuePicker
                 label={`添加${group.label}`}
                 candidates={candidates}
-                disabled={savingKey !== null}
+                disabled={disabled || savingKey !== null}
                 onSelect={async (candidate) => {
                   const key = `${group.type}:${candidate.id}`;
                   setSavingKey(key);
@@ -392,7 +653,7 @@ export function IssueRelationSidebar({
                 key={issue.id}
                 removing={savingKey === `${group.type}:${issue.id}`}
                 onOpen={() => onOpenTask(issue)}
-                onRemove={() => {
+                onRemove={disabled ? undefined : () => {
                   const key = `${group.type}:${issue.id}`;
                   setSavingKey(key);
                   void onRemoveRelation(task, group.type, issue.id)

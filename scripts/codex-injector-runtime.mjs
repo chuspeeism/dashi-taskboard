@@ -1,6 +1,84 @@
 const HOST_REQUEST_ERROR = "自动认领配置暂时无法应用，请刷新后重试";
 const AUTOMATION_SCHEMA_DIAGNOSTIC = "AUTOMATION_SCHEMA_MISMATCH";
 
+export function waitForWebSocketOpen(socket, timeoutMs = 10_000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.removeEventListener("open", onOpen);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+    };
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const onOpen = () => finish(resolve);
+    const onError = () => finish(reject, new Error("CDP WebSocket connection failed"));
+    const onClose = () => finish(reject, new Error("CDP WebSocket closed before opening"));
+
+    socket.addEventListener("open", onOpen, { once: true });
+    socket.addEventListener("error", onError, { once: true });
+    socket.addEventListener("close", onClose, { once: true });
+    timeout = setTimeout(() => {
+      try {
+        socket.close();
+      } catch {}
+      finish(reject, new Error("Timed out opening CDP WebSocket"));
+    }, timeoutMs);
+  });
+}
+
+async function waitForStableCodexDocument(cdp, timeoutMs, pollIntervalMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastState = null;
+
+  while (Date.now() < deadline) {
+    const evaluation = await cdp.send("Runtime.evaluate", {
+      expression: "({ protocol: window.location.protocol, readyState: document.readyState })",
+      returnByValue: true,
+    });
+    lastState = evaluation.result?.value || null;
+    if (lastState?.protocol === "app:" && lastState.readyState === "complete") return;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const detail = `${lastState?.protocol || "unknown"}/${lastState?.readyState || "unknown"}`;
+  throw new Error(`Timed out waiting for the stable Codex document: ${detail}`);
+}
+
+export async function reloadPageAndWait(cdp, timeoutMs = 15_000, pollIntervalMs = 50) {
+  await waitForStableCodexDocument(cdp, timeoutMs, pollIntervalMs);
+  const loaded = cdp.waitFor("Page.loadEventFired", timeoutMs);
+  const reload = cdp.send("Page.reload");
+  await Promise.all([loaded, reload]);
+}
+
+export async function removeRegisteredPageScript(removeScript, identifier) {
+  if (!identifier) return false;
+  try {
+    await removeScript(identifier);
+    return true;
+  } catch (error) {
+    if (error.message === "Script not found") return false;
+    throw error;
+  }
+}
+
+export function shouldStopWatchingForMissingRenderer({
+  missingSince,
+  now = Date.now(),
+  graceMs = 10_000,
+  codexProcessExited = false,
+}) {
+  if (codexProcessExited) return true;
+  return Number.isFinite(missingSince) && now - missingSince >= graceMs;
+}
+
 function parseHostRequest(payload, parseAutomationRequest) {
   if (typeof payload !== "string" || payload.length > 4_096) {
     return { id: null, request: null, error: HOST_REQUEST_ERROR };
@@ -96,6 +174,7 @@ export async function reconcileInjectionRuntime({
   evaluateCurrentSource,
   publishRegistration,
   reopen,
+  forceOpen = false,
 }) {
   if (currentStatus.scriptIdentifier) {
     try {
@@ -106,8 +185,10 @@ export async function reconcileInjectionRuntime({
   await evaluateCurrentSource(source);
   await publishRegistration(scriptIdentifier);
   const replaced = currentStatus.sourceHash !== sourceHash;
-  const shouldRemainOpen = currentStatus.pageVisible === true;
-  if (replaced && shouldRemainOpen) await reopen();
+  const shouldRemainOpen = forceOpen || currentStatus.pageVisible === true;
+  if ((replaced && shouldRemainOpen) || (forceOpen && currentStatus.pageVisible !== true)) {
+    await reopen();
+  }
   return { replaced, scriptIdentifier, shouldRemainOpen };
 }
 

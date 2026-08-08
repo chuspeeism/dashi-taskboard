@@ -59,6 +59,7 @@
   let noDragRight = null;
   let status = null;
   let frameOrigin = "";
+  let frameRouteUrl = "";
   let frameReady = false;
   let frameReadyWaiters = new Set();
   let hostRequests = new Map();
@@ -98,6 +99,17 @@
     }
   }
 
+  function rememberFrameRoute(rawUrl) {
+    if (typeof rawUrl !== "string" || !rawUrl) return;
+    try {
+      const url = new URL(rawUrl);
+      const configuredUrl = resolveTaskboardUrl();
+      if (url.origin !== configuredUrl.origin) return;
+      url.searchParams.delete(FRAME_REFRESH_PARAM);
+      frameRouteUrl = url.href;
+    } catch (_) {}
+  }
+
   function isLocalTaskboardOrigin(origin) {
     try {
       const { protocol, hostname } = new URL(origin);
@@ -124,7 +136,7 @@
       }
       [${HOST_ATTRIBUTE}="true"] {
         position: relative !important;
-        z-index: 31 !important;
+        z-index: 41 !important;
         pointer-events: none !important;
       }
       [${HIDDEN_ATTRIBUTE}="true"] {
@@ -789,7 +801,12 @@
     if (!frame || event.source !== frame.contentWindow || event.origin !== frameOrigin) return;
     const message = event.data;
     if (!message || typeof message !== "object") return;
+    if (message.type === "taskboard:route") {
+      rememberFrameRoute(message.payload?.href);
+      return;
+    }
     if (message.type === "taskboard:ready") {
+      rememberFrameRoute(message.payload?.href);
       frameReady = true;
       frameReadyWaiters.forEach(({ resolve, timer }) => {
         window.clearTimeout(timer);
@@ -798,6 +815,10 @@
       frameReadyWaiters.clear();
       if (active) showFrame();
       postHostContext();
+      return;
+    }
+    if (message.type === "taskboard:reload-frame") {
+      reloadFrame();
       return;
     }
     if (message.type === "taskboard:drag-region") {
@@ -937,7 +958,7 @@
     });
   }
 
-  function loadTaskboardFrame(cacheBust = false) {
+  function loadTaskboardFrame(cacheBust = false, preferredUrl = "") {
     cancelFrameReadyWaiters(new Error("任务面板正在重新加载"));
     frame?.remove();
     frame = null;
@@ -946,7 +967,16 @@
     if (noDragLeft) noDragLeft.hidden = true;
     if (noDragRight) noDragRight.hidden = true;
 
-    const taskboardUrl = resolveTaskboardUrl();
+    const configuredUrl = resolveTaskboardUrl();
+    let taskboardUrl = configuredUrl;
+    if (preferredUrl) {
+      try {
+        const preferredTaskboardUrl = new URL(preferredUrl);
+        if (preferredTaskboardUrl.origin === configuredUrl.origin) {
+          taskboardUrl = preferredTaskboardUrl;
+        }
+      } catch (_) {}
+    }
     if (cacheBust) {
       taskboardUrl.searchParams.set(FRAME_REFRESH_PARAM, Date.now().toString(36));
     }
@@ -967,7 +997,7 @@
     if (!frame) return false;
     const generation = ++openGeneration;
     if (active) showLoading();
-    loadTaskboardFrame(true);
+    loadTaskboardFrame(true, frameRouteUrl);
     if (active) {
       void waitForFrameReady()
         .then(() => {
@@ -1257,6 +1287,9 @@
   const api = {
     version: VERSION,
     sourceHash: SOURCE_HASH,
+    get frameReady() {
+      return frameReady;
+    },
     refresh,
     reloadFrame,
     open: openTaskboard,

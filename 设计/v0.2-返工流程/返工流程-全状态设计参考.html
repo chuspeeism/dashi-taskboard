@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>返工流程 v0.2 · 全状态设计参考</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Inter Variable", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #f6f6f7; --surface: #fff; --surface-2: #f4f4f5; --text: #1b1b1b; --text-2: #606064; --text-3: #96969b;
+      --border: #e1e1e1; --accent: #5e6ad2; --accent-soft: rgba(94,106,210,.11); --warning: #a96d00; --warning-soft: #fff6db;
+      --success: #2d9854; --success-soft: #eaf8ef; --danger: #db4449; --danger-soft: #fff0f0; --shadow: 0 10px 30px rgba(0,0,0,.08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; min-width: 320px; color: var(--text); background: var(--bg); font-size: 12px; line-height: 1.55; }
+    a { color: inherit; text-decoration: none; }
+    code { padding: 1px 5px; border-radius: 4px; color: var(--accent); background: var(--accent-soft); }
+    .page-header { padding: 42px clamp(20px, 6vw, 84px) 32px; color: white; background: #202126; }
+    .page-header .eyebrow { color: #aeb3ff; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .page-header h1 { margin: 8px 0 6px; font-size: clamp(25px, 4vw, 38px); letter-spacing: -.03em; }
+    .page-header p { max-width: 720px; margin: 0; color: #c6c7cd; font-size: 13px; }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 18px; }
+    .meta-row span { padding: 3px 8px; border: 1px solid #3b3d45; border-radius: 999px; color: #dfe0e6; }
+    .toc { position: sticky; top: 0; z-index: 10; display: flex; gap: 6px; overflow-x: auto; padding: 9px clamp(16px, 5vw, 72px); border-bottom: 1px solid var(--border); background: rgba(255,255,255,.92); backdrop-filter: blur(14px); }
+    .toc a { flex: 0 0 auto; padding: 6px 9px; border-radius: 6px; color: var(--text-2); }
+    .toc a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 72px; }
+    .section { margin-top: 18px; padding: clamp(18px, 3vw, 28px); border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 5px rgba(0,0,0,.025); }
+    .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+    .section-head h2 { margin: 0 0 4px; font-size: 18px; }
+    .section-head p { margin: 0; color: var(--text-2); }
+    .section-tag { flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .flow-node { position: relative; min-height: 92px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .flow-node:not(:last-child)::after { content: "→"; position: absolute; z-index: 2; top: 32px; right: -10px; color: var(--text-3); }
+    .flow-node b { display: block; margin-bottom: 4px; }
+    .flow-node span { color: var(--text-2); }
+    .flow-node em { display: inline-block; margin-top: 9px; padding: 2px 6px; border-radius: 999px; color: var(--warning); background: var(--warning-soft); font-style: normal; }
+    .branch { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--danger); color: var(--text-2); background: var(--danger-soft); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+    .state { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .state > header { display: flex; justify-content: space-between; gap: 10px; padding: 11px 13px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+    .state > header b { font-size: 12px; }
+    .state-code { color: var(--text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .preview { min-height: 140px; display: grid; place-items: center; padding: 16px; }
+    .annotation { padding: 10px 13px; border-top: 1px solid var(--border); color: var(--text-2); }
+    .mini-card { width: min(100%, 360px); padding: 13px; border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 3px 9px rgba(0,0,0,.05); }
+    .mini-top { display: flex; justify-content: space-between; gap: 8px; color: var(--text-3); }
+    .mini-card h3 { margin: 9px 0; font-size: 12px; }
+    .mini-bottom { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 999px; color: var(--warning); background: var(--warning-soft); font-weight: 750; }
+    .status-chip { padding: 2px 7px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); }
+    .sheet { width: min(100%, 430px); border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border)); border-radius: 9px; }
+    .sheet header { display: flex; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .sheet-body { padding: 11px 12px; color: var(--text-2); }
+    .sheet-body ul { margin: 6px 0 0; padding-left: 18px; }
+    .ai-result { width: min(100%, 430px); padding: 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 9px; }
+    .ai-result p { margin: 5px 0 10px; color: var(--text-2); }
+    .ai-actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .button { min-height: 29px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); font-weight: 600; }
+    .button.primary { color: white; border-color: var(--accent); background: var(--accent); }
+    .spinner { width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .skeleton { width: min(100%, 420px); display: grid; gap: 8px; }
+    .skeleton i { display: block; height: 12px; border-radius: 4px; background: linear-gradient(90deg, var(--surface-2), #eeeef0, var(--surface-2)); background-size: 220% 100%; animation: shimmer 1.3s infinite; }
+    .skeleton i:nth-child(2) { width: 76%; } .skeleton i:nth-child(3) { width: 58%; }
+    @keyframes shimmer { to { background-position: -220% 0; } }
+    .empty { max-width: 370px; text-align: center; color: var(--text-2); }
+    .empty-mark { width: 38px; height: 38px; display: grid; place-items: center; margin: 0 auto 9px; border-radius: 50%; color: var(--text-3); background: var(--surface-2); font-size: 18px; }
+    .message { width: min(100%, 430px); padding: 12px; border-radius: 9px; }
+    .message b { display: block; margin-bottom: 3px; }
+    .message.error { color: var(--danger); background: var(--danger-soft); }
+    .message.warning { color: var(--warning); background: var(--warning-soft); }
+    .message.partial { color: var(--accent); background: var(--accent-soft); }
+    .toast-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+    .toast { display: flex; align-items: flex-start; gap: 9px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); }
+    .toast-mark { width: 18px; height: 18px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: white; font-weight: 800; }
+    .toast.success .toast-mark { background: var(--success); } .toast.error .toast-mark { background: var(--danger); } .toast.warning .toast-mark { background: var(--warning); } .toast.info .toast-mark { background: var(--accent); }
+    .toast strong { display: block; } .toast span { color: var(--text-2); }
+    .rule-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .rule-list li { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+    .rule-list li:last-child { border-bottom: 0; }
+    .long-text { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .round-stack { display: flex; flex-wrap: wrap; gap: 5px; }
+    .round-stack span { padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-2); }
+    .round-stack span.current { color: var(--warning); border-color: color-mix(in srgb,var(--warning) 45%,var(--border)); background: var(--warning-soft); }
+    .mobile-frame { width: 280px; max-width: 100%; padding: 10px; border: 7px solid #25262b; border-radius: 24px; background: var(--surface); }
+    .mobile-frame .mini-card { box-shadow: none; }
+    .dark-frame { width: min(100%, 430px); padding: 16px; border-radius: 10px; color: #eeeef0; background: #222225; }
+    .dark-frame .mini-card { border-color: rgba(255,255,255,.09); background: #29292c; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; min-width: 900px; border-collapse: collapse; }
+    th, td { padding: 10px 11px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { position: sticky; top: 47px; background: var(--surface-2); color: var(--text-2); }
+    td:first-child { font-weight: 700; }
+    footer { padding: 28px; text-align: center; color: var(--text-3); }
+    @media (max-width: 760px) { .grid, .toast-grid { grid-template-columns: 1fr; } .flow { grid-template-columns: 1fr; } .flow-node:not(:last-child)::after { content: "↓"; top: auto; right: 50%; bottom: -12px; } .rule-list li { grid-template-columns: 1fr; gap: 2px; } }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="eyebrow">Taskboard · Design Reference</div>
+    <h1>返工流程 · 全状态设计参考</h1>
+    <p>方案 A：交付验收发现问题后，先生成返工单并回到待开发；Sol 审核本轮返工范围，通过后才进入开发中。</p>
+    <div class="meta-row"><span>版本 v0.2</span><span>2026-08-07</span><span>现有 Taskboard 任务详情</span><span>不新增状态枚举</span></div>
+  </header>
+  <nav class="toc">
+    <a href="#flow">主流程</a><a href="#normal">正常态</a><a href="#system">系统状态</a><a href="#toast">Toast</a><a href="#edge">边界</a><a href="#rules">行为规则</a>
+  </nav>
+  <main>
+    <section class="section" id="flow">
+      <div class="section-head"><div><h2>唯一主流程</h2><p>返工是带轮次的业务上下文，不是新的任务状态。</p></div><span class="section-tag">APPROVED A</span></div>
+      <div class="flow">
+        <div class="flow-node"><b>1. 交付验收</b><span>用户意见或 AI 复核结论形成返工汇总。</span><em>in_review</em></div>
+        <div class="flow-node"><b>2. 返工审核</b><span>创建第 N 轮返工单，回到待开发并启动 Sol。</span><em>todo + rework</em></div>
+        <div class="flow-node"><b>3. 开发执行</b><span>只有 Sol 返回 ready 后才启动 Luna。</span><em>in_progress + rework</em></div>
+        <div class="flow-node"><b>4. 再次验收</b><span>保留返工标识，接受后归入经历记录。</span><em>in_review + rework</em></div>
+      </div>
+      <div class="branch"><b>信息不足分支：</b>返工审核 → 待解决 → 用户补充 → 继续同一轮返工审核；补充不会创建新的返工轮次。</div>
+    </section>
+
+    <section class="section" id="normal">
+      <div class="section-head"><div><h2>正常业务状态</h2><p>卡片小标识保持一致，状态文案负责说明当前阶段。</p></div><span class="section-tag">NORMAL</span></div>
+      <div class="grid">
+        <article class="state"><header><b>交付验收 · 尚未返工</b><span class="state-code">in_review</span></header><div class="preview"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>Codex Agent</span></div><h3>审核反馈返工前先重新确认范围，再启动开发</h3><div class="mini-bottom"><span class="status-chip">交付验收</span></div></div></div><div class="annotation">无返工标识；用户可以接受交付、填写修改意见或发起 Sol 交付复核。</div></article>
+        <article class="state"><header><b>AI 建议返工</b><span class="state-code">review_result</span></header><div class="preview"><div class="ai-result"><b>Sol 发现 2 个阻塞问题</b><p>反馈只生成建议，不自动改变状态。</p><div class="ai-actions"><button class="button">仅保留反馈</button><button class="button primary">采纳并发起返工</button></div></div></div><div class="annotation">普通 Agent 评论不能隐式触发；只有结构化复核结果上的明确动作可以发起返工。</div></article>
+        <article class="state"><header><b>返工审核中</b><span class="state-code">todo + running</span></header><div class="preview"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>Sol 5.6</span></div><h3>审核反馈返工前先重新确认范围，再启动开发</h3><div class="mini-bottom"><span class="badge">↩ 返工 #2</span><span class="status-chip">返工审核中</span></div></div></div><div class="annotation">状态是待开发；当前负责人显示 Sol。返工标识提示这不是第一次开发。</div></article>
+        <article class="state"><header><b>返工范围待补充</b><span class="state-code">blocked + awaiting_input</span></header><div class="preview"><div class="sheet"><header><b>↩ 第 2 轮返工单</b><span>等待补充</span></header><div class="sheet-body">Q1：错误态下是否保留用户已经填写的返工草稿？<ul><li>请补充期望行为，再点击“补充并重新审核”。</li></ul></div></div></div><div class="annotation">进入待解决，但返工轮次不变；补充内容追加到当前返工单。</div></article>
+        <article class="state"><header><b>返工开发中</b><span class="state-code">in_progress + rework</span></header><div class="preview"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>Luna · 运行中</span></div><h3>审核反馈返工前先重新确认范围，再启动开发</h3><div class="mini-bottom"><span class="badge">↩ 返工 #2</span><span class="status-chip">开发中</span></div></div></div><div class="annotation">Sol 已冻结本轮范围并返回 ready；Luna 只能按已审核返工单执行。</div></article>
+        <article class="state"><header><b>返工结果待验收</b><span class="state-code">in_review + rework</span></header><div class="preview"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>等待你</span></div><h3>审核反馈返工前先重新确认范围，再启动开发</h3><div class="mini-bottom"><span class="badge">↩ 返工 #2</span><span class="status-chip">交付验收</span></div></div></div><div class="annotation">接受交付后，卡片上的返工标识消失；轮次、来源和结论保留在经历记录。</div></article>
+      </div>
+    </section>
+
+    <section class="section" id="system">
+      <div class="section-head"><div><h2>加载、空态与失败状态</h2><p>状态写入和 AI 启动是不同结果，反馈必须分别准确呈现。</p></div><span class="section-tag">SYSTEM</span></div>
+      <div class="grid">
+        <article class="state"><header><b>加载态</b><span class="state-code">LOADING</span></header><div class="preview"><div class="skeleton"><i></i><i></i><i></i><div class="spinner"></div></div></div><div class="annotation">读取返工单和 readiness 时禁用返工动作；现有任务内容仍可阅读。</div></article>
+        <article class="state"><header><b>空态</b><span class="state-code">EMPTY</span></header><div class="preview"><div class="empty"><div class="empty-mark">↩</div><b>还没有返工记录</b><p>首次提交修改意见后，这里会显示返工范围、来源和审核轮次。</p></div></div><div class="annotation">正常的首次交付验收不显示空卡占位；只有用户主动查看“返工记录”时展示。</div></article>
+        <article class="state"><header><b>搜索无结果</b><span class="state-code">NO_MATCH</span></header><div class="preview"><div class="empty"><div class="empty-mark">⌕</div><b>没有匹配“移动端按钮”的返工记录</b><p>清除搜索可查看全部 6 轮返工记录。</p><button class="button">清除搜索</button></div></div><div class="annotation">数据存在，只是当前筛选无匹配；不可误写成“没有返工记录”。</div></article>
+        <article class="state"><header><b>创建返工单失败</b><span class="state-code">CREATE_FAILED</span></header><div class="preview"><div class="message error"><b>返工没有发起</b><span>任务仍保持“交付验收”，评论草稿和附件已保留。请稍后重试。</span></div></div><div class="annotation">原子操作整体失败：不创建半份返工单、不改状态、不启动 Sol。</div></article>
+        <article class="state"><header><b>版本冲突</b><span class="state-code">VERSION_CONFLICT</span></header><div class="preview"><div class="message warning"><b>任务刚刚发生变化</b><span>已刷新最新状态。返工草稿仍在，请重新确认后提交。</span></div></div><div class="annotation">不得自动重放旧请求；避免另一位操作人已接受交付后仍被旧动作拉回待开发。</div></article>
+        <article class="state"><header><b>Sol 启动失败</b><span class="state-code">READINESS_FAILED</span></header><div class="preview"><div class="message error"><b>返工单已保存，但审核未启动</b><span>任务已进入待解决，错误和重试入口记录在第 2 轮返工单中。</span></div></div><div class="annotation">此时业务写入已成功，不能回滚成“未发起”；必须回读并显示真实状态。</div></article>
+        <article class="state"><header><b>部分可用</b><span class="state-code">PARTIAL</span></header><div class="preview"><div class="message partial"><b>返工状态可用，AI 对话暂不可用</b><span>仍显示返工单、轮次和任务状态；只禁用“打开审核对话”。</span></div></div><div class="annotation">对话加载失败不应让整个任务详情进入错误页。</div></article>
+        <article class="state"><header><b>归档只读</b><span class="state-code">ARCHIVED</span></header><div class="preview"><div class="message warning"><b>此任务已归档</b><span>返工历史可查看，但不能发起、补充或重新审核。</span></div></div><div class="annotation">所有写动作禁用；恢复任务本身不会自动恢复返工或启动 AI。</div></article>
+      </div>
+    </section>
+
+    <section class="section" id="toast">
+      <div class="section-head"><div><h2>Toast 汇总</h2><p>右下角显示；成功 2.4 秒，警告 4 秒，错误保持 8 秒并提供可恢复入口；同时最多 3 条。</p></div><span class="section-tag">FEEDBACK</span></div>
+      <div class="toast-grid">
+        <div class="toast success"><span class="toast-mark">✓</span><div><strong>已发起第 2 轮返工审核</strong><span>任务已回到待开发，Sol 正在审核。</span></div></div>
+        <div class="toast success"><span class="toast-mark">✓</span><div><strong>返工审核已通过</strong><span>任务已进入开发中，Luna 已启动。</span></div></div>
+        <div class="toast info"><span class="toast-mark">i</span><div><strong>评论已发布</strong><span>任务状态未改变，也没有触发 AI。</span></div></div>
+        <div class="toast warning"><span class="toast-mark">!</span><div><strong>还需要补充信息</strong><span>任务已进入待解决，仍属于第 2 轮返工。</span></div></div>
+        <div class="toast error"><span class="toast-mark">×</span><div><strong>返工没有发起</strong><span>草稿已保留，任务仍在交付验收。</span></div></div>
+        <div class="toast error"><span class="toast-mark">×</span><div><strong>返工审核启动失败</strong><span>任务已进入待解决，可查看错误并重试。</span></div></div>
+      </div>
+    </section>
+
+    <section class="section" id="edge">
+      <div class="section-head"><div><h2>边界与响应式</h2><p>标识要小，但不能靠颜色单独传达语义。</p></div><span class="section-tag">EDGE</span></div>
+      <div class="grid">
+        <article class="state"><header><b>超长标题</b><span class="state-code">ELLIPSIS</span></header><div class="preview"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>Codex</span></div><h3 class="long-text" title="当交付重新审核同时包含用户修改意见、AI 复核结论以及多份附件时仍需先形成稳定返工范围">当交付重新审核同时包含用户修改意见、AI 复核结论以及多份附件时仍需先形成稳定返工范围</h3><div class="mini-bottom"><span class="badge">↩ 返工 #12</span></div></div></div><div class="annotation">标题省略并保留原生 title；轮次超过两位数仍不挤压负责人头像。</div></article>
+        <article class="state"><header><b>大量返工轮次</b><span class="state-code">MANY_ROUNDS</span></header><div class="preview"><div class="round-stack"><span>#1 已接受</span><span>#2 已接受</span><span>#3 已接受</span><span>#4 已接受</span><span>#5 已接受</span><span class="current">#6 当前</span></div></div><div class="annotation">默认只展开当前轮，历史按时间倒序折叠；不把全部返工单平铺在任务正文。</div></article>
+        <article class="state"><header><b>移动端</b><span class="state-code">320px+</span></header><div class="preview"><div class="mobile-frame"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>Sol</span></div><h3>返工意见先审核再开发</h3><div class="mini-bottom"><span class="badge">↩ 返工 #2</span></div></div><p>返工单、评论框和主按钮单列排列。</p><button class="button primary" style="width:100%">补充并重新审核</button></div></div><div class="annotation">主按钮占满宽度；阶段轨道可横向滚动，不压缩成不可读的小字。</div></article>
+        <article class="state"><header><b>深色主题</b><span class="state-code">DARK</span></header><div class="preview"><div class="dark-frame"><div class="mini-card"><div class="mini-top"><span>DASHITASKBOA-28</span><span>Luna</span></div><h3>返工意见先审核再开发</h3><div class="mini-bottom"><span class="badge">↩ 返工 #2</span><span class="status-chip">开发中</span></div></div></div></div><div class="annotation">复用应用主题变量；返工标识用文字和图标，不只依赖琥珀色。</div></article>
+      </div>
+      <ul class="rule-list" style="margin-top:16px">
+        <li><b>AI 与用户意见合并</b><span>一次提交可以引用多条评论，但最终冻结为一个返工汇总；来源列表保留可追溯性。</span></li>
+        <li><b>附件上传中</b><span>返工按钮保持禁用，直到正文和附件都得到确定结果；不得先发起审核再补附件。</span></li>
+        <li><b>评论被编辑</b><span>已冻结的返工单不随原评论静默变化；编辑后需要显式更新返工单并重新审核。</span></li>
+        <li><b>重复点击</b><span>使用幂等键返回同一轮返工结果，不创建第 N+1 轮，也不并行启动多个 Sol。</span></li>
+        <li><b>验收后再返工</b><span>若仍在交付验收，创建下一轮；进入待复盘或完成后，需先明确重新打开任务，不能仅靠旧评论复活开发。</span></li>
+      </ul>
+    </section>
+
+    <section class="section" id="rules">
+      <div class="section-head"><div><h2>交互行为规则表</h2><p>同一服务端“发起返工”命令统一承接用户和 AI 两种来源。</p></div><span class="section-tag">HANDOFF</span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>触发</th><th>用户操作</th><th>系统行为</th><th>反馈</th></tr></thead>
+        <tbody>
+          <tr><td>用户发现问题</td><td>填写意见，点击“提交返工并重新审核”</td><td>校验任务仍为 <code>in_review</code>；原子创建返工单、写评论、移动到 <code>todo</code> 并触发 Sol readiness。</td><td>显示“已发起第 N 轮返工审核”；卡片出现返工标识。</td></tr>
+          <tr><td>AI 交付复核发现问题</td><td>点击“采纳意见并发起返工”</td><td>以结构化 AI 结论生成返工单；使用与用户入口相同的服务端命令。</td><td>标记来源为 Sol 复核，不自动跳过用户动作。</td></tr>
+          <tr><td>仅记录意见</td><td>点击“仅发布”或“仅保留反馈”</td><td>只保存评论或 AI 结论；不创建返工单、不改状态、不触发 AI。</td><td>提示“任务状态未改变”。</td></tr>
+          <tr><td>返工审核运行</td><td>查看任务</td><td>读取当前返工单、readiness 轮次、Sol thread/run。</td><td>显示“返工审核中”、Sol 负责人和对话入口。</td></tr>
+          <tr><td>Sol 返回 needs_confirmation</td><td>无</td><td>保存 Q 编号问题，将任务移到 <code>blocked</code>，保留当前返工轮次。</td><td>显示“返工范围待补充”和明确问题。</td></tr>
+          <tr><td>用户补充</td><td>点击“补充并重新审核”</td><td>更新当前返工单输入，继续同一轮 Sol 审核。</td><td>显示“补充已提交，Sol 正在重新审核”。</td></tr>
+          <tr><td>Sol 返回 ready</td><td>无</td><td>冻结本轮返工范围，移动到 <code>in_progress</code>，创建或恢复 Luna 开发对话。</td><td>显示“返工审核已通过，已进入开发中”。</td></tr>
+          <tr><td>Luna 完成返工</td><td>无</td><td>写入交付说明并移动到 <code>in_review</code>；返工单状态改为等待验收。</td><td>显示“第 N 轮返工结果待验收”。</td></tr>
+          <tr><td>用户接受交付</td><td>点击“接受交付”</td><td>结束当前返工轮次，进入待复盘；卡片隐藏返工标识，经历记录保留。</td><td>显示“已接受第 N 轮返工交付”。</td></tr>
+          <tr><td>仍有问题</td><td>再次提交返工</td><td>创建第 N+1 轮返工单，旧轮次不可变并保留历史。</td><td>卡片标识更新为最新轮次。</td></tr>
+          <tr><td>版本冲突</td><td>提交时任务已变化</td><td>拒绝旧版本写入并回读最新任务；保留草稿，不自动重放。</td><td>提示重新确认最新状态。</td></tr>
+          <tr><td>创建命令失败</td><td>提交返工</td><td>事务回滚；不改状态、不创建不完整返工单、不启动 Sol。</td><td>错误 Toast，草稿与附件保留。</td></tr>
+          <tr><td>Sol 启动失败</td><td>创建返工单后启动失败</td><td>持久化失败原因，任务进入待解决；不盲目重试或直接启动 Luna。</td><td>显示失败原因和明确重试入口。</td></tr>
+          <tr><td>已归档任务</td><td>查看返工历史</td><td>允许只读加载历史；所有写动作和 AI 触发禁用。</td><td>显示归档只读说明。</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+  <footer>返工流程 v0.2 · 设计探索产物 · 2026-08-07</footer>
+</body>
+</html>

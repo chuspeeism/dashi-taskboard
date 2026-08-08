@@ -293,18 +293,49 @@ test("an explicit --thread-id overrides CODEX_THREAD_ID on issue writes", async 
   assert.equal(result.stdout.task.threadId, "thread-9");
 });
 
-test("issue restore uses the mutation thread and optimistic version", async () => {
-  let requestBody;
-  const result = await run(
-    ["issue", "restore", "TASK-1", "--if-version", "5"],
+test("issue archive and restore send mutation attribution and the optimistic version", async () => {
+  const calls = [];
+  const explicit = await run(
+    ["issue", "archive", "TASK-1", "--thread-id", "explicit-thread", "--if-version", "5"],
     async (url, init) => {
-      assert.equal(url.pathname, "/api/tasks/TASK-1/restore");
-      requestBody = JSON.parse(init.body);
-      return response({ task: { id: "TASK-1", threadId: "thread-current", version: 6 } });
+      calls.push({ url, init });
+      return response({ task: { id: "TASK-1", version: 6 } });
     },
+    { env: { CODEX_THREAD_ID: "env-thread" } },
   );
-  assert.equal(result.exitCode, 0);
-  assert.deepEqual(requestBody, { threadId: "thread-current", version: 5 });
+  assert.equal(explicit.exitCode, 0);
+
+  const fromEnvironment = await run(
+    ["issue", "restore", "TASK-1", "--if-version", "6"],
+    async (url, init) => {
+      calls.push({ url, init });
+      return response({ task: { id: "TASK-1", version: 7 } });
+    },
+    { env: { CODEX_THREAD_ID: "env-thread" } },
+  );
+  assert.equal(fromEnvironment.exitCode, 0);
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url.pathname, "/api/tasks/TASK-1/archive");
+  assert.equal(calls[1].url.pathname, "/api/tasks/TASK-1/restore");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { threadId: "explicit-thread", version: 5 });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { threadId: "env-thread", version: 6 });
+});
+
+test("issue archive and restore preserve attribution in stale CAS requests", async () => {
+  const calls = [];
+  for (const [action, version] of [["archive", 5], ["restore", 6]]) {
+    const result = await run(
+      ["issue", action, "TASK-1", "--thread-id", "operator-thread", "--if-version", String(version)],
+      async (url, init) => {
+        calls.push({ url, init });
+        return response({ error: { code: "VERSION_CONFLICT", message: "Task changed" } }, 409);
+      },
+    );
+    assert.equal(result.exitCode, 5);
+  }
+  assert.deepEqual(JSON.parse(calls[0].init.body), { threadId: "operator-thread", version: 5 });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { threadId: "operator-thread", version: 6 });
 });
 
 test("issue relation add and remove use typed relation endpoints", async () => {
@@ -474,6 +505,16 @@ test("issue and comment writes require Codex conversation attribution", async ()
   );
   assert.equal(commentResult.exitCode, 2);
   assert.match(commentResult.stderr.error.message, /--thread-id or CODEX_THREAD_ID/);
+
+  for (const action of ["archive", "restore"]) {
+    const result = await run(
+      ["issue", action, "TASK-1", "--if-version", "1"],
+      async () => assert.fail("fetch should not be called"),
+      { env: {} },
+    );
+    assert.equal(result.exitCode, 2);
+    assert.match(result.stderr.error.message, /--thread-id or CODEX_THREAD_ID/);
+  }
 });
 
 test("manual linked-thread options and commands are no longer accepted", async () => {
@@ -493,12 +534,17 @@ test("manual linked-thread options and commands are no longer accepted", async (
 });
 
 test("API conflicts produce stable JSON on stderr and exit code 5", async () => {
+  let requestBody;
   const result = await run(
     ["issue", "archive", "TASK-1", "--if-version", "1"],
-    async () => response({ error: { code: "VERSION_CONFLICT", message: "Task changed" } }, 409),
+    async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return response({ error: { code: "VERSION_CONFLICT", message: "Task changed" } }, 409);
+    },
   );
 
   assert.equal(result.exitCode, 5);
+  assert.deepEqual(requestBody, { threadId: "thread-current", version: 1 });
   assert.deepEqual(result.stderr, {
     schemaVersion: 2,
     error: { code: "VERSION_CONFLICT", message: "Task changed" },

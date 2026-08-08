@@ -7,9 +7,12 @@
 ```bash
 taskctl context current [--cwd PATH] [--json]
 taskctl project list [--json]
-taskctl project create --name NAME [--id ID] [--workspace-path PATH] [--json]
+taskctl project create --name NAME [--id ID] [--prefix CODE] [--workspace-path PATH] [--json]
+taskctl project prefix PROJECT_ID --prefix CODE [--json]
 taskctl project map PROJECT_ID --workspace-path PATH [--json]
 ```
+
+`CODE` is a stable 2-6 character project prefix such as `DT` or `VAULT`. Changing it renumbers that project's existing issues in creation order. Old identifiers remain valid aliases, while UUIDs, comments, attachments, relations, and AI thread bindings stay unchanged.
 
 Use `--workspace-path` to associate a project with a local repository. `context current` chooses the most specific project whose workspace contains the current directory, then falls back to the `local` project.
 
@@ -38,6 +41,8 @@ taskctl issue list [--project PROJECT_ID] [--status STATUS] [--json]
 taskctl issue get ID [--json]
 ```
 
+`ID` may be the current short identifier, a previous identifier retained as an alias, or the internal UUID.
+
 ## Create issues
 
 ```bash
@@ -57,7 +62,7 @@ taskctl issue create \
   [--json]
 ```
 
-Statuses are `backlog`, `todo`, `in_progress`, `in_review`, `blocked`, `done`, and `canceled`. Priorities are `none`, `urgent`, `high`, `medium`, and `low`.
+Statuses are `backlog`, `todo`, `in_progress`, `in_review`, `pending_retrospective`, `done`, `blocked`, and `canceled`. Priorities are `none`, `urgent`, `high`, `medium`, and `low`.
 
 Issues created through `taskctl` are assigned to Codex Agent by default. Other CLI writes preserve the existing assignee.
 
@@ -86,7 +91,9 @@ taskctl issue archive ID [--thread-id ID] [--if-version N] [--json]
 taskctl issue restore ID [--thread-id ID] [--if-version N] [--json]
 ```
 
-Use `issue move` to set `in_progress` before implementation and `in_review` after implementation and self-verification. Codex must not move work directly from `in_progress` to `done`; use `done` only after the user explicitly confirms acceptance or explicitly asks to mark the issue complete. Use `blocked` when work cannot continue and `canceled` when it will not continue. On a version conflict, fetch the issue again and reconcile before retrying.
+Use `issue move` to set `in_progress` before implementation and `in_review` after implementation and self-verification. After the user explicitly confirms acceptance or shipment, move the issue to `pending_retrospective`; use `done` only after the retrospective is completed or explicitly waived. Use `blocked` when work cannot continue and `canceled` when it will not continue. On a version conflict, fetch the issue again and reconcile before retrying.
+
+Before moving to `in_review`, the preceding delivery comment must be directly usable as an acceptance guide. Include the acceptance scope, prerequisites, and numbered steps. Each step must state where to start, what to do, the expected result, and the pass condition. Also include completed automated checks, unverified items, remaining risks, and the exact evidence to return when a step fails.
 
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` is the Codex conversation that most recently created or changed the issue itself. Recurrence requires a due date.
 
@@ -134,7 +141,15 @@ taskctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
 
-## Download inline images
+## Upload delivery files and download inline images
+
+Create the delivery comment first, then upload each real output file to that comment:
+
+```bash
+taskctl attachment upload COMMENT_ID --file PATH [--json]
+```
+
+The command copies the file into Taskboard attachment storage and returns the attachment JSON. Markdown, text, JSON, PDF, supported images, and sandboxed HTML can be opened from the delivery file cards. Upload each file separately; do not use a temporary absolute path as the only delivery reference.
 
 Issue descriptions and comments may contain inline images at exact positions in their Markdown:
 

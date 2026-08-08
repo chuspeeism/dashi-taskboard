@@ -14,6 +14,7 @@
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
     "codex:refresh": "node scripts/codex-injector.mjs --refresh",
+    "codex:install": "node scripts/macos-launcher.mjs --install --load",
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch server/index.mjs --dev",
     "dev:web": "vite --config web/vite.config.ts",
@@ -45,6 +46,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "miniflare": "^4.20260722.0",
+    "react-test-renderer": "^19.2.7",
+    "tsx": "^4.20.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "wrangler": "^4.114.0"

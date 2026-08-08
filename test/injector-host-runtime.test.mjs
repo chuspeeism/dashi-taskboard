@@ -5,7 +5,10 @@ import {
   findResidentInjectorPids,
   handleHostBindingPayload,
   reconcileInjectionRuntime,
+  reloadPageAndWait,
+  removeRegisteredPageScript,
   restartResidentInjector,
+  waitForWebSocketOpen,
 } from "../scripts/codex-injector-runtime.mjs";
 
 const currentAutomationRequest = {
@@ -22,6 +25,84 @@ const currentAutomationRequest = {
   model: "gpt-5.6-sol",
   reasoningEffort: "ultra",
 };
+
+test("a CDP WebSocket that never opens times out instead of hanging the injector", async () => {
+  const socket = new EventTarget();
+  let closed = false;
+  socket.close = () => {
+    closed = true;
+  };
+
+  await assert.rejects(waitForWebSocketOpen(socket, 5), /Timed out opening CDP WebSocket/);
+  assert.equal(closed, true);
+});
+
+test("an opened CDP WebSocket clears the connection timeout", async () => {
+  const socket = new EventTarget();
+  socket.close = () => assert.fail("an open socket must not be closed");
+  const opened = waitForWebSocketOpen(socket, 50);
+  socket.dispatchEvent(new Event("open"));
+  await opened;
+});
+
+test("renderer replacement observes both reload command and load event failures", async () => {
+  const cdp = {
+    waitFor: () => Promise.reject(new Error("renderer closed")),
+    send: () => Promise.reject(new Error("reload command failed")),
+  };
+
+  await assert.rejects(reloadPageAndWait(cdp), /renderer closed|reload command failed/);
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+test("cold launch reload waits for the stable Codex app document", async () => {
+  const calls = [];
+  const documentStates = [
+    { protocol: "data:", readyState: "complete" },
+    { protocol: "app:", readyState: "loading" },
+    { protocol: "app:", readyState: "complete" },
+  ];
+  const cdp = {
+    waitFor: async (method) => {
+      calls.push(method);
+    },
+    send: async (method) => {
+      calls.push(method);
+      if (method === "Runtime.evaluate") {
+        return { result: { value: documentStates.shift() } };
+      }
+      return {};
+    },
+  };
+
+  await reloadPageAndWait(cdp, 1_000, 0);
+
+  assert.deepEqual(calls, [
+    "Runtime.evaluate",
+    "Runtime.evaluate",
+    "Runtime.evaluate",
+    "Page.loadEventFired",
+    "Page.reload",
+  ]);
+});
+
+test("a stale page-script identifier does not block a fresh injector", async () => {
+  assert.equal(await removeRegisteredPageScript(
+    async () => {
+      throw new Error("Script not found");
+    },
+    "stale-registration",
+  ), false);
+  await assert.rejects(
+    removeRegisteredPageScript(
+      async () => {
+        throw new Error("CDP WebSocket closed");
+      },
+      "live-registration",
+    ),
+    /CDP WebSocket closed/,
+  );
+});
 
 test("a stale automation parser receives an immediate host error instead of timing out", async () => {
   const responses = [];
@@ -119,6 +200,36 @@ test("attach is idempotent for the same source hash and does not open a closed p
     ["register", "current-source"],
     ["evaluate", "current-source"],
     ["publish", "current-registration"],
+  ]);
+});
+
+test("attach honors an explicit open request for an existing closed runtime", async () => {
+  const calls = [];
+  const result = await reconcileInjectionRuntime({
+    currentStatus: {
+      version: "0.6.8",
+      sourceHash: "current-hash",
+      pageVisible: false,
+      scriptIdentifier: "old-registration",
+    },
+    source: "current-source",
+    sourceHash: "current-hash",
+    removeRegisteredSource: async (identifier) => calls.push(["remove", identifier]),
+    registerCurrentSource: async () => "current-registration",
+    evaluateCurrentSource: async () => {},
+    publishRegistration: async () => {},
+    reopen: async () => calls.push(["open"]),
+    forceOpen: true,
+  });
+
+  assert.deepEqual(result, {
+    replaced: false,
+    scriptIdentifier: "current-registration",
+    shouldRemainOpen: true,
+  });
+  assert.deepEqual(calls, [
+    ["remove", "old-registration"],
+    ["open"],
   ]);
 });
 

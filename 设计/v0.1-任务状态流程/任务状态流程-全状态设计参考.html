@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>任务状态流程 v0.1 · 全状态设计参考</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Inter Variable", "PingFang SC", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #f6f6f8;
+      --surface: #ffffff;
+      --surface-muted: #f3f3f4;
+      --surface-hover: #f6f6f7;
+      --text-primary: #1b1b1b;
+      --text-secondary: #5d5d5f;
+      --text-tertiary: #9e9ea1;
+      --border: #e1e1e1;
+      --border-strong: #d5d5d5;
+      --accent: #5e6ad2;
+      --accent-soft: rgba(94, 106, 210, .11);
+      --danger: #f34e52;
+      --danger-soft: #fff0f0;
+      --warning: #d79b00;
+      --warning-soft: #fff9df;
+      --success: #43a85b;
+      --success-soft: #edf9ef;
+      --purple: #a75ac4;
+      --purple-soft: #f7eefb;
+      --shadow: 0 12px 38px rgba(22, 22, 28, .08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { color: inherit; font: inherit; }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: var(--surface-muted);
+      color: var(--accent);
+      font-size: .92em;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .toc {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 26px 18px;
+      overflow: auto;
+      border-right: 1px solid var(--border);
+      background: #202126;
+      color: #f5f5f7;
+    }
+    .toc-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 24px;
+      padding: 0 6px;
+      font-weight: 700;
+    }
+    .toc-mark {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--accent);
+      font-size: 11px;
+      box-shadow: 0 7px 18px rgba(94, 106, 210, .34);
+    }
+    .toc-version {
+      display: block;
+      margin: -16px 7px 18px;
+      color: #7f818a;
+      font-size: 10px;
+    }
+    .toc a {
+      display: block;
+      margin: 2px 0;
+      padding: 8px 9px;
+      border-radius: 6px;
+      color: #aeb0b8;
+      font-size: 11px;
+    }
+    .toc a:hover { background: #2b2c32; color: white; }
+    .toc-note {
+      margin: 24px 4px 0;
+      padding: 11px;
+      border: 1px solid #3c3d44;
+      border-radius: 8px;
+      background: #28292f;
+      color: #9fa1aa;
+      font-size: 9px;
+      line-height: 1.7;
+    }
+
+    .content {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 54px 42px 110px;
+    }
+    .hero {
+      margin-bottom: 46px;
+      padding: 34px 36px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 15px;
+    }
+    .pill {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .pill.neutral { background: var(--surface-muted); color: var(--text-tertiary); }
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing: -.045em;
+      line-height: 1.15;
+    }
+    .hero p {
+      max-width: 760px;
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+    .hero-rules {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+      margin-top: 24px;
+    }
+    .hero-rule {
+      padding: 12px 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-muted);
+    }
+    .hero-rule strong { display: block; margin-bottom: 4px; font-size: 11px; }
+    .hero-rule span { color: var(--text-tertiary); font-size: 9px; }
+
+    .reference-section {
+      scroll-margin-top: 24px;
+      margin-top: 54px;
+    }
+    .section-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+    .section-kicker {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .section-heading h2 { margin: 0; font-size: 23px; letter-spacing: -.025em; }
+    .section-heading p {
+      max-width: 620px;
+      margin: 6px 0 0;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    .required {
+      flex: 0 0 auto;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--success-soft);
+      color: var(--success);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .state-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 13px;
+    }
+    .state-card {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--surface);
+      box-shadow: 0 2px 5px rgba(20, 20, 24, .025);
+    }
+    .state-card.full { grid-column: 1 / -1; }
+    .state-card > header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 13px 14px 11px;
+      border-bottom: 1px solid var(--border);
+    }
+    .state-card > header strong { display: block; font-size: 12px; }
+    .state-card > header span { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: 9px; }
+    .state-code {
+      flex: 0 0 auto;
+      padding: 3px 6px;
+      border-radius: 5px;
+      background: var(--surface-muted);
+      color: var(--text-tertiary);
+      font-size: 8px;
+    }
+    .state-preview { min-height: 120px; padding: 14px; background: color-mix(in srgb, var(--bg) 45%, var(--surface)); }
+    .state-annotation {
+      padding: 9px 14px 11px;
+      color: var(--text-secondary);
+      font-size: 9px;
+      line-height: 1.65;
+    }
+    .state-annotation b { color: var(--text-primary); }
+
+    .mini-stage-card {
+      width: min(320px, 100%);
+      margin: auto;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--tone, var(--accent)) 28%, var(--border));
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--tone-soft, var(--accent-soft)) 35%, var(--surface));
+    }
+    .mini-stage-top {
+      display: grid;
+      grid-template-columns: 18px 70px minmax(0, 1fr) 14px;
+      align-items: center;
+      min-height: 38px;
+      gap: 7px;
+      padding: 4px 8px;
+    }
+    .mini-stage-icon {
+      display: grid;
+      place-items: center;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid var(--tone, var(--accent));
+      border-radius: 50%;
+    }
+    .mini-stage-icon::after {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--tone, var(--accent));
+      content: "";
+    }
+    .mini-stage-label { color: var(--text-tertiary); font-size: 10px; }
+    .mini-stage-value {
+      overflow: hidden;
+      font-size: 11px;
+      font-weight: 560;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mini-stage-chevron { color: var(--text-tertiary); }
+    .mini-stage-body {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 9px 9px 103px;
+    }
+    .mini-stage-body div { min-width: 0; }
+    .mini-stage-body strong, .mini-stage-body span { display: block; }
+    .mini-stage-body strong { font-size: 9px; }
+    .mini-stage-body span {
+      overflow: hidden;
+      margin-top: 2px;
+      color: var(--text-tertiary);
+      font-size: 8px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mini-action {
+      flex: 0 0 auto;
+      min-height: 24px;
+      padding: 0 7px;
+      border: 1px solid var(--tone, var(--accent));
+      border-radius: 5px;
+      background: var(--tone, var(--accent));
+      color: white;
+      font-size: 8px;
+      font-weight: 650;
+    }
+
+    .tone-backlog { --tone: #9e9ea1; --tone-soft: rgba(158, 158, 161, .11); }
+    .tone-reviewing { --tone: #5e6ad2; --tone-soft: rgba(94, 106, 210, .11); }
+    .tone-waiting { --tone: #f34e52; --tone-soft: #fff0f0; }
+    .tone-ready { --tone: #5e6ad2; --tone-soft: rgba(94, 106, 210, .11); }
+    .tone-progress { --tone: #d9a500; --tone-soft: #fff9df; }
+    .tone-review { --tone: #43a85b; --tone-soft: #edf9ef; }
+    .tone-retro { --tone: #a75ac4; --tone-soft: #f7eefb; }
+    .tone-done { --tone: #5e6ad2; --tone-soft: rgba(94, 106, 210, .11); }
+    .tone-blocked { --tone: #f34e52; --tone-soft: #fff0f0; }
+    .tone-canceled { --tone: #85858b; --tone-soft: rgba(133, 133, 139, .11); }
+
+    .flow-preview {
+      width: min(330px, 100%);
+      margin: auto;
+      overflow: hidden;
+      border: 1px solid var(--border-strong);
+      border-radius: 9px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .flow-preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 40px;
+      padding: 8px 11px;
+      border-bottom: 1px solid var(--border);
+    }
+    .flow-preview-header strong { font-size: 10px; }
+    .flow-preview-header span {
+      padding: 3px 6px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 8px;
+      font-weight: 650;
+    }
+    .flow-options { padding: 6px; }
+    .flow-option {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      align-items: center;
+      min-height: 42px;
+      gap: 7px;
+      padding: 4px 7px;
+      border-radius: 6px;
+    }
+    .flow-option.selected { background: var(--accent-soft); }
+    .flow-node {
+      display: grid;
+      place-items: center;
+      width: 15px;
+      height: 15px;
+      border: 1.5px solid var(--text-tertiary);
+      border-radius: 50%;
+    }
+    .flow-option.selected .flow-node { border-color: var(--accent); }
+    .flow-option.selected .flow-node::after {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      content: "";
+    }
+    .flow-copy strong, .flow-copy span { display: block; }
+    .flow-copy strong { font-size: 9px; }
+    .flow-copy span { color: var(--text-tertiary); font-size: 8px; }
+    .flow-check { color: var(--accent); font-size: 10px; }
+    .flow-impact {
+      padding: 9px 11px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-muted);
+    }
+    .flow-impact strong, .flow-impact span { display: block; }
+    .flow-impact strong { font-size: 9px; }
+    .flow-impact span { margin-top: 2px; color: var(--text-tertiary); font-size: 8px; }
+    .flow-impact-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 8px; }
+    .flow-impact-actions button {
+      min-height: 25px;
+      padding: 0 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      font-size: 8px;
+    }
+    .flow-impact-actions .primary { border-color: var(--accent); background: var(--accent); color: white; }
+
+    .skeleton {
+      position: relative;
+      overflow: hidden;
+      border-radius: 5px;
+      background: var(--surface-muted);
+    }
+    .skeleton::after {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.75), transparent);
+      content: "";
+      transform: translateX(-100%);
+      animation: shimmer 1.4s infinite;
+    }
+    @keyframes shimmer { to { transform: translateX(100%); } }
+    .loading-card {
+      width: min(320px, 100%);
+      margin: auto;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .loading-row { display: grid; grid-template-columns: 16px 64px 1fr; gap: 8px; align-items: center; }
+    .loading-row .skeleton:nth-child(1) { width: 14px; height: 14px; border-radius: 50%; }
+    .loading-row .skeleton:nth-child(2) { width: 52px; height: 9px; }
+    .loading-row .skeleton:nth-child(3) { width: 90px; height: 11px; }
+    .loading-sub { width: 120px; height: 8px; margin: 9px 0 0 88px; }
+
+    .message-state {
+      width: min(330px, 100%);
+      margin: auto;
+      padding: 18px;
+      border: 1px dashed var(--border-strong);
+      border-radius: 9px;
+      background: var(--surface);
+      text-align: center;
+    }
+    .message-state-icon {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      margin: 0 auto 8px;
+      border-radius: 8px;
+      background: var(--surface-muted);
+      color: var(--text-tertiary);
+      font-weight: 700;
+    }
+    .message-state strong { display: block; font-size: 10px; }
+    .message-state p { margin: 4px 0 0; color: var(--text-tertiary); font-size: 8px; }
+    .message-state button {
+      min-height: 25px;
+      margin-top: 10px;
+      padding: 0 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      font-size: 8px;
+    }
+    .message-state.error { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: var(--danger-soft); }
+    .message-state.error .message-state-icon { background: var(--danger); color: white; }
+    .message-state.warning { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); background: var(--warning-soft); }
+    .message-state.warning .message-state-icon { background: var(--warning); color: white; }
+
+    .readonly-card { opacity: .56; filter: saturate(.7); }
+    .readonly-banner {
+      width: min(330px, 100%);
+      margin: 0 auto 8px;
+      padding: 7px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface-muted);
+      color: var(--text-tertiary);
+      font-size: 8px;
+    }
+
+    .na-state {
+      width: min(330px, 100%);
+      margin: auto;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: repeating-linear-gradient(-45deg, var(--surface), var(--surface) 8px, var(--surface-muted) 8px, var(--surface-muted) 9px);
+    }
+    .na-state strong { display: block; font-size: 10px; }
+    .na-state p { margin: 5px 0 0; color: var(--text-secondary); font-size: 8px; line-height: 1.65; }
+
+    .toast-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .toast-sample {
+      display: flex;
+      align-items: flex-start;
+      min-width: 0;
+      gap: 9px;
+      padding: 11px 12px;
+      border-radius: 8px;
+      background: #28282d;
+      color: white;
+      box-shadow: 0 8px 22px rgba(0,0,0,.13);
+    }
+    .toast-sample-icon {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--success);
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .toast-sample.warning .toast-sample-icon { background: var(--warning); }
+    .toast-sample.error .toast-sample-icon { background: var(--danger); }
+    .toast-sample.info .toast-sample-icon { background: var(--accent); }
+    .toast-sample strong { display: block; font-size: 9px; }
+    .toast-sample span { display: block; margin-top: 2px; color: #b9bac0; font-size: 8px; line-height: 1.45; }
+
+    .rule-list {
+      margin-top: 13px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+      list-style: none;
+    }
+    .rule-list li {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 14px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+    }
+    .rule-list li:first-child { border-top: 0; }
+    .rule-list strong { font-size: 9px; }
+    .rule-list span { color: var(--text-secondary); font-size: 9px; }
+
+    .edge-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .edge-card {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+    .edge-card h3 { margin: 0 0 5px; font-size: 11px; }
+    .edge-card > p { margin: 0 0 12px; color: var(--text-tertiary); font-size: 8px; }
+    .truncate-demo {
+      display: grid;
+      grid-template-columns: 18px 58px minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+      padding: 7px;
+      border-radius: 6px;
+      background: var(--surface-muted);
+      font-size: 8px;
+    }
+    .truncate-demo span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mobile-demo {
+      width: 190px;
+      margin: auto;
+      overflow: hidden;
+      border: 5px solid #24252a;
+      border-radius: 18px;
+      background: var(--bg);
+      box-shadow: 0 9px 25px rgba(0,0,0,.12);
+    }
+    .mobile-screen { height: 210px; padding: 12px 8px 0; background: var(--surface-muted); }
+    .mobile-sheet {
+      margin: 64px -8px 0;
+      padding: 10px 9px;
+      border-radius: 13px 13px 0 0;
+      background: var(--surface);
+      box-shadow: 0 -8px 24px rgba(0,0,0,.09);
+    }
+    .mobile-handle { width: 28px; height: 3px; margin: 0 auto 9px; border-radius: 999px; background: var(--border-strong); }
+    .mobile-row { display: flex; align-items: center; gap: 7px; min-height: 27px; font-size: 7px; }
+    .mobile-dot { width: 10px; height: 10px; border: 1px solid var(--accent); border-radius: 50%; }
+    .dark-demo {
+      padding: 12px;
+      border-radius: 8px;
+      background: #171719;
+      color: #eeeeef;
+    }
+    .dark-demo .mini-stage-card {
+      border-color: rgba(255,255,255,.13);
+      background: #222225;
+    }
+    .dark-demo .mini-stage-label,
+    .dark-demo .mini-stage-body span { color: #85858b; }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    table {
+      width: 100%;
+      min-width: 900px;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--border);
+      border-left: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+      font-size: 9px;
+      line-height: 1.6;
+    }
+    th:first-child, td:first-child { border-left: 0; }
+    tr:last-child td { border-bottom: 0; }
+    th {
+      background: var(--surface-muted);
+      color: var(--text-secondary);
+      font-weight: 650;
+    }
+    td { color: var(--text-secondary); }
+    td strong { color: var(--text-primary); }
+
+    .footer {
+      margin-top: 48px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      color: var(--text-tertiary);
+      font-size: 9px;
+    }
+
+    @media (max-width: 900px) {
+      .layout { display: block; }
+      .toc { position: static; width: 100%; height: auto; padding: 13px; }
+      .toc-brand { margin-bottom: 8px; }
+      .toc-version, .toc-note { display: none; }
+      .toc nav { display: flex; overflow: auto; }
+      .toc a { flex: 0 0 auto; white-space: nowrap; }
+      .content { padding: 34px 20px 80px; }
+      .hero-rules, .edge-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 680px) {
+      .content { padding-right: 12px; padding-left: 12px; }
+      .hero { padding: 24px 20px; }
+      .state-grid, .toast-grid { grid-template-columns: 1fr; }
+      .state-card.full { grid-column: auto; }
+      .section-heading { display: block; }
+      .required { display: inline-block; margin-top: 8px; }
+      .rule-list li { grid-template-columns: 1fr; gap: 4px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="toc">
+      <div class="toc-brand"><span class="toc-mark">T</span><span>任务状态流程</span></div>
+      <span class="toc-version">v0.1 · 2026-08-06</span>
+      <nav aria-label="目录">
+        <a href="#stage-mapping">01 · 阶段映射</a>
+        <a href="#normal-state">02 · 正常态</a>
+        <a href="#system-states">03 · 系统状态</a>
+        <a href="#feedback">04 · Toast 反馈</a>
+        <a href="#boundaries">05 · 边界与响应式</a>
+        <a href="#rules">06 · 交互行为规则</a>
+      </nav>
+      <div class="toc-note">
+        本文件是前端实现对照表。所有示例都复用现有 Taskboard 状态值，不新增持久化枚举。
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="hero">
+        <div class="hero-meta">
+          <span class="pill">全状态设计参考</span>
+          <span class="pill neutral">版本 v0.1</span>
+          <span class="pill neutral">2026-08-06</span>
+        </div>
+        <h1>任务状态流程</h1>
+        <p>
+          状态不再只是一个值：默认回答“现在在哪里、谁负责、下一步是什么”，展开后允许用户查看影响并跨阶段跳转。主流程、阻塞分支和终止状态必须保持可区分。
+        </p>
+        <div class="hero-rules">
+          <div class="hero-rule"><strong>允许跨阶段</strong><span>不隐藏任何合法目标状态</span></div>
+          <div class="hero-rule"><strong>先解释后提交</strong><span>目标副作用始终在确认区可见</span></div>
+          <div class="hero-rule"><strong>动态阶段名称</strong><span>同一数据状态按 readiness 上下文翻译</span></div>
+        </div>
+      </header>
+
+      <section class="reference-section" id="stage-mapping">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">01 · Stage mapping</span>
+            <h2>用户可见阶段映射</h2>
+            <p>阶段卡优先表达用户真实经历；弹层目标仍对应现有合法状态值。</p>
+          </div>
+          <span class="required">10 种上下文</span>
+        </div>
+
+        <div class="state-grid">
+          <article class="state-card">
+            <header><div><strong>积压事项</strong><span>尚未进入执行</span></div><code>backlog</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-backlog">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">积压事项</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>暂不进入执行</span></div><button class="mini-action">进入待开发</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>主按钮打开流程并预选“待开发”；确认后会触发需求审核。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>需求审核中</strong><span>readiness 正在运行</span></div><code>todo + running</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-reviewing">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">需求审核 · 第 2 轮</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：Sol 5.6</strong><span>正在进行只读审核</span></div><button class="mini-action">查看进度</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>“查看进度”打开 readiness 对话，不改变状态。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>等待你补充</strong><span>审核分支等待用户</span></div><code>blocked + awaiting_input</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-waiting">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">等待你补充</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>需求审核等待输入</span></div><button class="mini-action">去补充</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>主按钮滚动并聚焦现有评论区；不在属性栏复制评论输入框。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>待开发</strong><span>需求审核已通过</span></div><code>todo + ready</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-ready">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">待开发</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：Codex Agent</strong><span>审核已通过</span></div><button class="mini-action">开始开发</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>如果需要用户评论才能启动，按钮只聚焦评论区；不可绕过现有启动语义。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>开发执行</strong><span>Agent 正在实现</span></div><code>in_progress</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-progress">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">开发执行</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：Codex Agent</strong><span>正在实现与验证</span></div><button class="mini-action">打开对话</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>打开绑定的开发对话；普通评论不应伪装成中断或继续指令。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>交付验收</strong><span>开发结果等待确认</span></div><code>in_review</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-review">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">交付验收</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>等待确认开发结果</span></div><button class="mini-action">接受交付</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>接受交付进入“待复盘”；提交修改则聚焦评论区。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>待复盘</strong><span>交付已接受</span></div><code>pending_retrospective</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-retro">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">待复盘</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>等待完成复盘</span></div><button class="mini-action">完成复盘</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>文案：</b>禁止显示成“已完成待验收”；该阶段发生在交付验收之后。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>完成</strong><span>任务正式结束</span></div><code>done</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-done">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">完成</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>任务已结束</span></div><button class="mini-action">重新打开</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>重新打开只负责打开流程弹层，用户仍可选择任意目标阶段。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>待解决 · 通用阻塞</strong><span>缺少更具体的上下文</span></div><code>blocked</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-blocked">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">待解决</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>存在待处理阻塞</span></div><button class="mini-action">查看原因</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>降级：</b>readiness/intervention 都没有原因时不编造“等待谁”，只显示通用说明。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>已取消</strong><span>终止但没有归档</span></div><code>canceled</code></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-canceled">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">已取消</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>任务已终止</span></div><button class="mini-action">重新打开</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>操作：</b>允许跨阶段重新打开；取消不等于归档。</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="reference-section" id="normal-state">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">02 · Normal state</span>
+            <h2>正常操作链</h2>
+            <p>状态卡 → 打开流程 → 选择目标 → 阅读影响 → 确认切换。</p>
+          </div>
+          <span class="required">主路径</span>
+        </div>
+
+        <div class="state-grid">
+          <article class="state-card">
+            <header><div><strong>默认态</strong><span>属性区只显示当前阶段和推荐动作</span></div><span class="state-code">NORMAL</span></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-review">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">交付验收</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>等待确认开发结果</span></div><button class="mini-action">接受交付</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>规则：</b>整行可打开流程；主按钮只执行当前最合理动作。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>展开态</strong><span>主流程与异常状态分组</span></div><span class="state-code">OPEN</span></header>
+            <div class="state-preview">
+              <div class="flow-preview">
+                <div class="flow-preview-header"><strong>切换阶段</strong><span>允许跨阶段</span></div>
+                <div class="flow-options">
+                  <div class="flow-option"><span class="flow-node"></span><span class="flow-copy"><strong>开发执行</strong><span>表示 Agent 正在实现</span></span></div>
+                  <div class="flow-option selected"><span class="flow-node"></span><span class="flow-copy"><strong>交付验收</strong><span>等待用户确认开发结果</span></span><span class="flow-check">当前</span></div>
+                  <div class="flow-option"><span class="flow-node"></span><span class="flow-copy"><strong>待复盘</strong><span>交付已接受，等待复盘</span></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>规则：</b>当前阶段有“当前”标记；所有合法状态始终可达。</div>
+          </article>
+
+          <article class="state-card full">
+            <header><div><strong>目标已选择</strong><span>确认区解释跨阶段影响</span></div><span class="state-code">SELECTED</span></header>
+            <div class="state-preview">
+              <div class="flow-preview">
+                <div class="flow-preview-header"><strong>切换阶段</strong><span>允许跨阶段</span></div>
+                <div class="flow-options">
+                  <div class="flow-option selected"><span class="flow-node"></span><span class="flow-copy"><strong>待开发</strong><span>进入后启动 Sol 需求审核</span></span><span class="flow-check">✓</span></div>
+                </div>
+                <div class="flow-impact">
+                  <strong>从“交付验收”切换到“待开发”</strong>
+                  <span>任务会进入待开发，并触发 Sol 对需求完整性进行只读审核。</span>
+                  <div class="flow-impact-actions"><button>取消</button><button class="primary">确认切换</button></div>
+                </div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>规则：</b>选择不会立即写入；确认按钮才提交。选择当前阶段时按钮文案为“保持当前阶段”。</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="reference-section" id="system-states">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">03 · System states</span>
+            <h2>加载、空态、错误与部分可用</h2>
+            <p>这些状态必须进入实现验收，不能只完成正常态。</p>
+          </div>
+          <span class="required">8 种系统状态</span>
+        </div>
+
+        <div class="state-grid">
+          <article class="state-card">
+            <header><div><strong>加载态</strong><span>首次读取任务或刷新版本</span></div><span class="state-code">LOADING</span></header>
+            <div class="state-preview">
+              <div class="loading-card">
+                <div class="loading-row"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div>
+                <div class="skeleton loading-sub"></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>交互：</b>状态卡与节点全部禁用；保留固定高度，避免属性区跳动。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>保存中</strong><span>已提交目标阶段</span></div><span class="state-code">SAVING</span></header>
+            <div class="state-preview">
+              <div class="flow-preview">
+                <div class="flow-impact">
+                  <strong>正在切换到“待开发”…</strong>
+                  <span>请勿重复提交；完成后将刷新任务版本。</span>
+                  <div class="flow-impact-actions"><button disabled>取消</button><button class="primary" disabled>保存中…</button></div>
+                </div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>交互：</b>仅锁定当前状态控件；任务详情其他只读浏览不受影响。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>空态</strong><span>没有 readiness、intervention 或关联对话</span></div><span class="state-code">EMPTY_CONTEXT</span></header>
+            <div class="state-preview">
+              <div class="message-state">
+                <span class="message-state-icon">○</span>
+                <strong>暂无额外阶段上下文</strong>
+                <p>仍显示持久化状态，不推测负责人或阻塞原因。</p>
+                <button>打开完整流程</button>
+              </div>
+            </div>
+            <div class="state-annotation"><b>降级：</b>状态值仍可操作；负责人显示任务当前 assignee。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>搜索 / 筛选无结果</strong><span>V1 明确不适用</span></div><span class="state-code">N/A</span></header>
+            <div class="state-preview">
+              <div class="na-state">
+                <strong>本组件不提供状态搜索</strong>
+                <p>合法状态固定为 8 项，V1 直接完整展示；不要为了满足通用模式加入没有价值的搜索框和无结果页。</p>
+              </div>
+            </div>
+            <div class="state-annotation"><b>验收：</b>确认流程弹层没有搜索入口；这项以“不适用”完成覆盖。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>保存失败</strong><span>网络、服务或未知错误</span></div><span class="state-code">SAVE_FAILED</span></header>
+            <div class="state-preview">
+              <div class="message-state error">
+                <span class="message-state-icon">!</span>
+                <strong>阶段切换失败</strong>
+                <p>任务仍保持“交付验收”，目标“待开发”没有写入。</p>
+                <button>重试</button>
+              </div>
+            </div>
+            <div class="state-annotation"><b>规则：</b>恢复旧状态；保留用户选择，允许一次明确重试。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>版本冲突</strong><span>任务被其他入口修改</span></div><span class="state-code">VERSION_CONFLICT</span></header>
+            <div class="state-preview">
+              <div class="message-state warning">
+                <span class="message-state-icon">↻</span>
+                <strong>任务状态已在其他位置更新</strong>
+                <p>已读取最新状态“开发执行”，请重新确认目标阶段。</p>
+                <button>查看最新状态</button>
+              </div>
+            </div>
+            <div class="state-annotation"><b>规则：</b>自动回读最新任务；不自动重放旧选择。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>归档只读</strong><span>任务不可修改</span></div><span class="state-code">ARCHIVED</span></header>
+            <div class="state-preview">
+              <div class="readonly-banner">此议题已归档，恢复后才能切换阶段。</div>
+              <div class="readonly-card">
+                <div class="mini-stage-card tone-done">
+                  <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">完成</span><span class="mini-stage-chevron">⌄</span></div>
+                  <div class="mini-stage-body"><div><strong>只读</strong><span>阶段操作不可用</span></div><button class="mini-action" disabled>重新打开</button></div>
+                </div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>交互：</b>卡片不可打开；恢复任务是独立操作，不混入状态弹层。</div>
+          </article>
+
+          <article class="state-card">
+            <header><div><strong>部分可用</strong><span>状态可读，AI 上下文不可用</span></div><span class="state-code">PARTIAL</span></header>
+            <div class="state-preview">
+              <div class="mini-stage-card tone-reviewing">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">需求审核中</span><span class="mini-stage-chevron">⌄</span></div>
+                <div class="mini-stage-body"><div><strong>审核详情暂不可用</strong><span>状态切换仍可使用</span></div><button class="mini-action" disabled>对话不可用</button></div>
+              </div>
+            </div>
+            <div class="state-annotation"><b>规则：</b>不要把 AI 详情失败升级为整个状态控件不可用；禁用的只是关联对话动作。</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="reference-section" id="feedback">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">04 · Feedback</span>
+            <h2>Toast 汇总与反馈规则</h2>
+            <p>桌面端底部居中；移动端位于安全区上方。成功短、错误长，同时最多 3 条。</p>
+          </div>
+          <span class="required">反馈文案</span>
+        </div>
+
+        <div class="toast-grid">
+          <div class="toast-sample"><span class="toast-sample-icon">✓</span><div><strong>已切换到“开发执行”</strong><span>成功 · 2.4 秒后消失</span></div></div>
+          <div class="toast-sample"><span class="toast-sample-icon">✓</span><div><strong>已接受交付，任务进入“待复盘”</strong><span>成功 · 2.4 秒后消失</span></div></div>
+          <div class="toast-sample info"><span class="toast-sample-icon">i</span><div><strong>评论区已定位</strong><span>请补充信息后继续当前审核</span></div></div>
+          <div class="toast-sample info"><span class="toast-sample-icon">↗</span><div><strong>已打开当前阶段关联对话</strong><span>任务状态保持不变</span></div></div>
+          <div class="toast-sample warning"><span class="toast-sample-icon">↻</span><div><strong>任务已在其他位置更新</strong><span>已刷新，请重新选择目标阶段</span></div></div>
+          <div class="toast-sample warning"><span class="toast-sample-icon">!</span><div><strong>审核详情暂不可用</strong><span>状态切换仍可使用</span></div></div>
+          <div class="toast-sample error"><span class="toast-sample-icon">!</span><div><strong>阶段切换失败</strong><span>任务仍保持原阶段，可重试</span></div></div>
+          <div class="toast-sample error"><span class="toast-sample-icon">×</span><div><strong>已归档任务不可修改</strong><span>恢复任务后才能切换阶段</span></div></div>
+        </div>
+
+        <ul class="rule-list">
+          <li><strong>位置</strong><span>桌面端底部居中 24px；移动端距安全区上沿 12px。</span></li>
+          <li><strong>时长</strong><span>成功 2.4 秒；信息 3.2 秒；警告 4.5 秒；错误 6 秒或保留到用户关闭。</span></li>
+          <li><strong>数量</strong><span>同时最多 3 条；相同错误合并，不堆叠重复请求结果。</span></li>
+          <li><strong>内容</strong><span>必须同时说明结果和当前真实状态；不得只写“操作失败”。</span></li>
+          <li><strong>无障碍</strong><span>普通信息使用 <code>role=status</code>，错误使用 <code>role=alert</code>。</span></li>
+        </ul>
+      </section>
+
+      <section class="reference-section" id="boundaries">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">05 · Boundaries</span>
+            <h2>边界情况与响应式</h2>
+            <p>状态项数量固定，但阶段说明、阻塞原因和属性栏宽度存在边界。</p>
+          </div>
+          <span class="required">实现边界</span>
+        </div>
+
+        <div class="edge-grid">
+          <article class="edge-card">
+            <h3>长文本截断</h3>
+            <p>阶段名保持完整；原因和分支说明单行省略，悬停或聚焦可读取全文。</p>
+            <div class="truncate-demo"><span>!</span><span>状态</span><span>待解决 · 开发对话在恢复时读取工作区技能超时且无法确认执行结果</span></div>
+          </article>
+
+          <article class="edge-card">
+            <h3>移动端底部抽屉</h3>
+            <p>≤620px 时流程从锚定弹层切换为底部抽屉，内容内部滚动。</p>
+            <div class="mobile-demo">
+              <div class="mobile-screen">
+                <div class="mobile-sheet">
+                  <div class="mobile-handle"></div>
+                  <div class="mobile-row"><span class="mobile-dot"></span><strong>待开发</strong></div>
+                  <div class="mobile-row"><span class="mobile-dot"></span><strong>开发执行</strong></div>
+                  <div class="mobile-row"><span class="mobile-dot"></span><strong>交付验收</strong></div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="edge-card">
+            <h3>深色模式</h3>
+            <p>不硬编码白色背景，所有表面、边框和状态色复用当前主题变量。</p>
+            <div class="dark-demo">
+              <div class="mini-stage-card tone-review">
+                <div class="mini-stage-top"><span class="mini-stage-icon"></span><span class="mini-stage-label">状态</span><span class="mini-stage-value">交付验收</span><span>⌄</span></div>
+                <div class="mini-stage-body"><div><strong>当前负责人：你</strong><span>等待确认开发结果</span></div><button class="mini-action">接受交付</button></div>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <ul class="rule-list">
+          <li><strong>大量数据</strong><span>状态固定为 8 项，不做虚拟滚动；弹层最大高度受视口限制，内部滚动。</span></li>
+          <li><strong>窄属性栏</strong><span>1040px 以下属性栏约 260px，按钮可换成单列；状态值保持省略号。</span></li>
+          <li><strong>属性区改为两列</strong><span>760px 以下状态卡必须占满整行，不能被拆进某一列。</span></li>
+          <li><strong>触屏</strong><span>节点最小触控高度 44px；不依赖 hover 才能看到关键说明。</span></li>
+          <li><strong>键盘</strong><span>Enter/Space 打开；方向键移动节点；Enter 选择；Escape 关闭并恢复焦点。</span></li>
+          <li><strong>减少动效</strong><span>遵守 <code>prefers-reduced-motion</code>，关闭弹层缩放和 Toast 位移动画。</span></li>
+        </ul>
+      </section>
+
+      <section class="reference-section" id="rules">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">06 · Interaction rules</span>
+            <h2>交互行为规则表</h2>
+            <p>前端实现和验收应逐行核对，不从视觉稿反推业务行为。</p>
+          </div>
+          <span class="required">完整映射</span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>触发</th>
+                <th>用户操作</th>
+                <th>系统行为</th>
+                <th>反馈</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>任务加载完成</strong></td><td>进入任务详情</td><td>读取持久化状态、readiness、intervention、assignee 和关联对话；计算用户可见阶段。</td><td>显示阶段、负责人、说明和推荐动作。</td></tr>
+              <tr><td><strong>打开流程</strong></td><td>点击状态卡或按 Enter/Space</td><td>打开弹层，当前持久化状态标记为“当前”；不修改任务。</td><td>焦点进入当前节点；显示“允许跨阶段”。</td></tr>
+              <tr><td><strong>选择其他阶段</strong></td><td>点击任意合法节点</td><td>仅更新本地待确认目标，不写入服务端。</td><td>节点高亮；底部显示来源、目标和副作用。</td></tr>
+              <tr><td><strong>选择当前阶段</strong></td><td>点击当前节点</td><td>不产生状态变化。</td><td>确认按钮显示“保持当前阶段”。</td></tr>
+              <tr><td><strong>取消选择</strong></td><td>点击取消、弹层外部或 Escape</td><td>清除待确认目标，任务保持不变。</td><td>关闭确认区或整个弹层，焦点返回状态卡。</td></tr>
+              <tr><td><strong>确认普通跨阶段</strong></td><td>点击“确认切换”</td><td>使用当前 task version 提交状态更新；保存期间只锁定状态控件。</td><td>成功后关闭弹层、刷新阶段卡并追加经历日志。</td></tr>
+              <tr><td><strong>切换到待开发</strong></td><td>选择“待开发”并确认</td><td>提交 <code>todo</code>；现有 readiness 路径可能启动 Sol 需求审核。</td><td>切换前明确提示“进入后启动需求审核”。</td></tr>
+              <tr><td><strong>切换到待解决</strong></td><td>选择“待解决”并确认</td><td>提交 <code>blocked</code>；不伪造通用返回阶段。</td><td>有原因则显示具体原因，无原因显示通用“存在待处理阻塞”。</td></tr>
+              <tr><td><strong>切换到已取消</strong></td><td>选择“已取消”并确认</td><td>提交 <code>canceled</code>；任务不自动归档。</td><td>显示“已取消”，仍保留“重新打开”入口。</td></tr>
+              <tr><td><strong>接受交付</strong></td><td>在 <code>in_review</code> 点击“接受交付”</td><td>进入待复盘目标确认或按最终 PRD 直接提交 <code>pending_retrospective</code>。</td><td>成功提示“已接受交付，任务进入待复盘”。</td></tr>
+              <tr><td><strong>提交修改</strong></td><td>点击“提交修改”</td><td>滚动并聚焦现有评论输入区；不在属性栏创建第二份草稿。</td><td>Toast 提示“请填写修改意见后继续开发”。</td></tr>
+              <tr><td><strong>补充审核信息</strong></td><td>在 awaiting_input 点击“补充并继续”</td><td>聚焦评论区；用户发布带 resume intent 的评论后沿用现有复审路径。</td><td>按钮文案和评论动作保持一致。</td></tr>
+              <tr><td><strong>查看关联对话</strong></td><td>在审核中或开发中点击“打开对话”</td><td>打开已绑定的 AI 对话；不修改状态。</td><td>对话不可用时仅禁用该按钮，状态控件保持可用。</td></tr>
+              <tr><td><strong>保存成功</strong></td><td>等待请求返回</td><td>采用服务端返回的 task/version，重新计算可见阶段。</td><td>成功 Toast 2.4 秒，经历日志出现状态变化。</td></tr>
+              <tr><td><strong>保存失败</strong></td><td>请求返回一般错误</td><td>恢复原状态；保留待确认目标，禁止假装成功。</td><td>错误 Toast，并在确认区提供明确重试。</td></tr>
+              <tr><td><strong>版本冲突</strong></td><td>请求返回 <code>VERSION_CONFLICT</code></td><td>回读最新任务；不自动重放旧目标。</td><td>显示最新阶段，提示用户重新选择。</td></tr>
+              <tr><td><strong>任务已归档</strong></td><td>尝试打开或切换状态</td><td>不发送更新请求；状态卡和节点只读。</td><td>说明“恢复后才能切换阶段”。</td></tr>
+              <tr><td><strong>部分信息失败</strong></td><td>readiness 或对话读取失败</td><td>继续展示持久化状态和允许状态切换；只禁用依赖失败信息的动作。</td><td>显示“详情暂不可用”，不把整个组件变成错误页。</td></tr>
+              <tr><td><strong>移动端打开</strong></td><td>点击状态卡</td><td>使用底部抽屉和遮罩；锁定背景滚动，抽屉内容内部滚动。</td><td>关闭后焦点返回状态卡，Toast 位于安全区上方。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="footer">
+        任务状态流程 · v0.1 · 全状态设计参考 · 2026-08-06
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

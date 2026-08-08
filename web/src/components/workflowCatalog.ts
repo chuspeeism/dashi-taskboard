@@ -55,11 +55,12 @@ export const GIT_OPERATIONS = [
 
 export const ISSUE_STATUSES = [
   { value: "backlog", label: "积压事项" },
-  { value: "todo", label: "待办事项" },
+  { value: "todo", label: "待开发" },
   { value: "in_progress", label: "进行中" },
   { value: "in_review", label: "审核中" },
-  { value: "blocked", label: "已阻塞" },
+  { value: "pending_retrospective", label: "待复盘" },
   { value: "done", label: "完成" },
+  { value: "blocked", label: "待解决" },
   { value: "canceled", label: "已取消" },
 ] as const;
 

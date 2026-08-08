@@ -18,9 +18,32 @@ export const DEFAULT_API_URL = "http://127.0.0.1:47823";
 
 const BOOLEAN_OPTIONS = new Set(["json"]);
 
+const ATTACHMENT_CONTENT_TYPES = new Map([
+  [".avif", "image/avif"],
+  [".css", "text/css"],
+  [".csv", "text/csv"],
+  [".gif", "image/gif"],
+  [".htm", "text/html"],
+  [".html", "text/html"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".js", "text/javascript"],
+  [".json", "application/json"],
+  [".md", "text/markdown"],
+  [".mjs", "text/javascript"],
+  [".pdf", "application/pdf"],
+  [".png", "image/png"],
+  [".text", "text/plain"],
+  [".ts", "text/plain"],
+  [".tsx", "text/plain"],
+  [".txt", "text/plain"],
+  [".webp", "image/webp"],
+]);
+
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
-  ["project create", new Set(["id", "name", "workspace-path", "json"])],
+  ["project create", new Set(["id", "name", "prefix", "workspace-path", "json"])],
+  ["project prefix", new Set(["prefix", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
@@ -68,6 +91,7 @@ const COMMAND_OPTIONS = new Map([
     ]),
   ],
   ["issue move", new Set(["status", "thread-id", "if-version", "json"])],
+  ["issue reassign", new Set(["project", "thread-id", "if-version", "json"])],
   ["issue archive", new Set(["thread-id", "if-version", "json"])],
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
@@ -75,6 +99,7 @@ const COMMAND_OPTIONS = new Map([
   ["comment add", new Set(["body", "thread-id", "json"])],
   ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
   ["comment delete", new Set(["thread-id", "if-version", "json"])],
+  ["attachment upload", new Set(["file", "json"])],
   ["attachment download", new Set(["output", "json"])],
   ["context current", new Set(["cwd", "json"])],
 ]);
@@ -179,7 +204,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download, context current",
+      "Expected one of: project list/create/prefix/map, cloud login/status/logout, issue list/get/create/update/move/reassign/archive/restore/relation, comment list/add/update/delete, attachment upload/download, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -200,6 +225,7 @@ async function execute(parsed, overrides) {
       return api.request("POST", "/api/projects", {
         ...optionalField("id", parsed.options.id),
         name: requiredOption(parsed.options, "name"),
+        ...optionalField("taskPrefix", parsed.options.prefix),
         ...optionalField(
           "workspacePath",
           parsed.options["workspace-path"] === undefined
@@ -207,6 +233,13 @@ async function execute(parsed, overrides) {
             : resolveInputPath(parsed.options["workspace-path"], overrides),
         ),
       });
+    case "project prefix":
+      expectOperandCount(parsed, 1);
+      return api.request(
+        "PUT",
+        `/api/projects/${encodeURIComponent(parsed.operands[0])}/task-prefix`,
+        { taskPrefix: requiredOption(parsed.options, "prefix") },
+      );
     case "project map":
       expectOperandCount(parsed, 1);
       return api.request(
@@ -248,6 +281,9 @@ async function execute(parsed, overrides) {
     case "issue move":
       expectOperandCount(parsed, 1);
       return moveIssue(api, parsed.operands[0], parsed.options, overrides);
+    case "issue reassign":
+      expectOperandCount(parsed, 1);
+      return reassignIssue(api, parsed.operands[0], parsed.options, overrides);
     case "issue archive":
       expectOperandCount(parsed, 1);
       return archiveIssue(api, parsed.operands[0], parsed.options, overrides, "archive");
@@ -285,6 +321,9 @@ async function execute(parsed, overrides) {
         threadId: resolveThreadId(parsed.options, overrides),
         version: explicitVersion(parsed.options["if-version"]),
       });
+    case "attachment upload":
+      expectOperandCount(parsed, 1);
+      return uploadAttachment(api, parsed.operands[0], parsed.options, overrides);
     case "attachment download":
       expectOperandCount(parsed, 1);
       return downloadAttachment(api, parsed.operands[0], parsed.options, overrides);
@@ -380,7 +419,64 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
         size: Number(response.headers.get("content-length")) || bytes.byteLength,
       };
     },
+    async upload(pathname, bytes, { filename, contentType }) {
+      let response;
+      try {
+        response = await fetchImplementation(new URL(pathname, `${baseUrl}/`), {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": contentType,
+            "x-taskboard-client": "taskctl",
+            "x-taskboard-filename": encodeURIComponent(filename),
+          },
+          body: bytes,
+        });
+      } catch (error) {
+        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+          code: "SERVICE_UNAVAILABLE",
+          exitCode: 3,
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const payload = await readResponse(response);
+      if (!response.ok) {
+        const apiError = extractApiError(payload, response.status);
+        throw new TaskctlError(apiError.message, {
+          code: apiError.code,
+          exitCode: response.status === 409 ? 5 : 4,
+          details: apiError.details,
+        });
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
+          code: "INVALID_RESPONSE",
+          exitCode: 4,
+        });
+      }
+      return payload;
+    },
   };
+}
+
+async function uploadAttachment(api, commentId, options, overrides) {
+  const input = resolveInputPath(requiredOption(options, "file"), overrides);
+  const read = overrides.readFile ?? readFile;
+  let bytes;
+  try {
+    bytes = await read(input);
+  } catch (error) {
+    throw new TaskctlError(`Cannot read attachment file: ${input}`, {
+      code: "FILE_READ_FAILED",
+      exitCode: 2,
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const filename = path.basename(input);
+  const contentType = ATTACHMENT_CONTENT_TYPES.get(path.extname(filename).toLowerCase())
+    ?? "application/octet-stream";
+  return api.upload(`${commentPath(commentId)}/attachments`, bytes, { filename, contentType });
 }
 
 async function downloadAttachment(api, attachmentId, options, overrides) {
@@ -541,6 +637,15 @@ async function moveIssue(api, taskId, options, overrides) {
   const threadId = resolveThreadId(options, overrides);
   return api.request("POST", `${taskPath(taskId)}/move`, {
     status,
+    threadId,
+    version: await resolveVersion(api, taskId, options["if-version"]),
+  });
+}
+
+async function reassignIssue(api, taskId, options, overrides) {
+  const threadId = resolveThreadId(options, overrides);
+  return api.request("POST", `${taskPath(taskId)}/reassign`, {
+    projectId: requiredOption(options, "project"),
     threadId,
     version: await resolveVersion(api, taskId, options["if-version"]),
   });

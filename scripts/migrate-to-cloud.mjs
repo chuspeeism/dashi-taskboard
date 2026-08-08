@@ -20,15 +20,18 @@ const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
 const TABLE_ORDER = [
   "projects",
   "tasks",
+  "task_identifier_aliases",
   "comments",
   "task_relations",
   "attachments",
   "workflow_workspaces",
 ];
+const OPTIONAL_LOCAL_TABLES = new Set(["task_identifier_aliases"]);
 const LOCAL_WORKFLOW_PATH_FIELDS = new Set(["gitWorktreePath"]);
 const SORT_FIELDS = {
   projects: ["id"],
   tasks: ["project_id", "identifier", "id"],
+  task_identifier_aliases: ["task_id", "created_at", "identifier"],
   comments: ["task_id", "created_at", "id"],
   task_relations: ["source_task_id", "target_task_id", "relation_type"],
   attachments: ["task_id", "comment_id", "created_at", "id"],
@@ -87,6 +90,7 @@ function buildProjectCounts(tables) {
     counts[project.id] = {
       projects: 1,
       tasks: 0,
+      task_identifier_aliases: 0,
       comments: 0,
       attachments: 0,
       task_relations: 0,
@@ -106,6 +110,11 @@ function buildProjectCounts(tables) {
     const projectId = taskProjects.get(comment.task_id);
     if (!projectId) throw new Error(`Comment '${comment.id}' references unknown task '${comment.task_id}'`);
     counts[projectId].comments += 1;
+  }
+  for (const alias of tables.task_identifier_aliases) {
+    const projectId = taskProjects.get(alias.task_id);
+    if (!projectId) throw new Error(`Task identifier alias '${alias.identifier}' references unknown task '${alias.task_id}'`);
+    counts[projectId].task_identifier_aliases += 1;
   }
   for (const attachment of tables.attachments) {
     const projectId = taskProjects.get(attachment.task_id);
@@ -218,12 +227,13 @@ async function readSnapshot(databasePath) {
         `SQLite snapshot failed PRAGMA foreign_key_check (${foreignKeyViolations.length} violation(s))`,
       );
     }
-    const tables = Object.fromEntries(
-      TABLE_ORDER.map((table) => [
-        table,
-        sortRows(table, snapshot.prepare(`SELECT * FROM "${table}"`).all()),
-      ]),
-    );
+    const existingTables = new Set(snapshot.prepare(`
+      SELECT name FROM sqlite_schema WHERE type = 'table'
+    `).all().map((row) => row.name));
+    const tables = Object.fromEntries(TABLE_ORDER.map((table) => {
+      if (!existingTables.has(table) && OPTIONAL_LOCAL_TABLES.has(table)) return [table, []];
+      return [table, sortRows(table, snapshot.prepare(`SELECT * FROM "${table}"`).all())];
+    }));
     snapshot.close();
     snapshot = null;
     return tables;
@@ -346,17 +356,20 @@ export async function createCloudMigrationBundle({
 }
 
 const CLOUD_COLUMNS = {
-  projects: ["id", "name", "workspace_path", "next_task_number", "created_at", "updated_at"],
+  projects: ["id", "name", "task_prefix", "workspace_path", "next_task_number", "created_at", "updated_at"],
   tasks: [
     "id", "identifier", "project_id", "title", "description", "status", "priority", "labels",
     "sort_order", "thread_id", "creator_type", "creator_id", "creator_name",
     "creator_avatar_url", "assignee_type", "assignee_id", "assignee_name",
     "assignee_avatar_url", "workflow_id", "development_context_type", "development_branch",
-    "due_date", "recurrence_interval", "recurrence_unit", "archived_at", "version",
+    "due_date", "recurrence_interval", "recurrence_unit", "retrospective_status",
+    "delivered_at", "archived_at", "version",
     "created_at", "updated_at",
   ],
+  task_identifier_aliases: ["identifier", "task_id", "created_at"],
   comments: [
-    "id", "task_id", "body", "thread_id", "author_type", "author_id", "author_name",
+    "id", "task_id", "body", "thread_id", "ai_thread_id", "intent", "action",
+    "author_type", "author_id", "author_name",
     "author_avatar_url", "version", "created_at", "updated_at",
   ],
   task_relations: ["relation_type", "source_task_id", "target_task_id", "created_at"],
@@ -449,6 +462,8 @@ export function createCloudD1ImportSql(tables) {
 export const CLOUD_PROJECT_COUNTS_SQL = `
   SELECT p.id AS project_id, 1 AS projects,
     (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS tasks,
+    (SELECT COUNT(*) FROM task_identifier_aliases a JOIN tasks t ON t.id = a.task_id
+      WHERE t.project_id = p.id) AS task_identifier_aliases,
     (SELECT COUNT(*) FROM comments c JOIN tasks t ON t.id = c.task_id
       WHERE t.project_id = p.id) AS comments,
     (SELECT COUNT(*) FROM attachments a JOIN tasks t ON t.id = a.task_id

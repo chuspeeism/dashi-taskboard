@@ -24,6 +24,8 @@ const baseRequest = {
   projectName: "PPT Skill",
   workspacePath: "/Users/example/Documents/ppt-skill",
   skillPath: "/Users/example/taskboard/skills/manage-taskboard/SKILL.md",
+  enabledByUser: false,
+  quotaAware: false,
   intervalMinutes: 5,
   model: "gpt-5.5",
   reasoningEffort: "high",
@@ -42,12 +44,6 @@ test("the automation model catalog matches Codex and normalizes unsupported effo
       slug: "gpt-5.6-terra",
       defaultEffort: "medium",
       efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    },
-    {
-      label: "5.6 Luna",
-      slug: "gpt-5.6-luna",
-      defaultEffort: "medium",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
     },
     {
       label: "5.5",
@@ -78,11 +74,6 @@ test("the automation model catalog matches Codex and normalizes unsupported effo
   assert.deepEqual(withAutomationModel(current, "gpt-5.6-terra"), {
     ...current,
     model: "gpt-5.6-terra",
-  });
-  assert.deepEqual(withAutomationModel(current, "gpt-5.6-luna"), {
-    ...current,
-    model: "gpt-5.6-luna",
-    reasoningEffort: "medium",
   });
 });
 
@@ -149,8 +140,8 @@ test("the automation host request accepts only whitelisted project automation op
       }
     }
   }
-  assert.equal(isSupportedModelEffort("gpt-5.6-luna", "max"), true);
-  assert.equal(isSupportedModelEffort("gpt-5.6-luna", "ultra"), false);
+  assert.equal(isSupportedModelEffort("gpt-5.6-terra", "max"), true);
+  assert.equal(isSupportedModelEffort("gpt-5.6-terra", "ultra"), true);
   assert.equal(
     parseTaskboardAutomationHostRequest({ ...baseRequest, workspacePath: "relative/path" }),
     null,

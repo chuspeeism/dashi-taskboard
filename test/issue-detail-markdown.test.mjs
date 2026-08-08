@@ -51,6 +51,14 @@ test("issue detail markdown styles cover rich document elements", () => {
   }
 });
 
+test("in-review issue details surface the latest agent delivery result", () => {
+  assert.match(detailSource, /currentTask\.status === "in_review"/);
+  assert.match(detailSource, /className="issue-review-result"/);
+  assert.match(detailSource, /开发结果待验收/);
+  assert.match(detailSource, /<DescriptionDocument value=\{deliveryComment\.body\} \/>/);
+  assert.match(styles, /\.issue-review-result/);
+});
+
 test("the configured markdown renderer produces CommonMark and GFM elements", () => {
   const markdown = [
     "**粗体**和[链接](https://example.com)",

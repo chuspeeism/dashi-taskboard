@@ -1,9 +1,10 @@
 export const TASK_STATUSES = [
   "backlog",
   "todo",
+  "blocked",
   "in_progress",
   "in_review",
-  "blocked",
+  "pending_retrospective",
   "done",
   "canceled",
 ] as const;
@@ -11,7 +12,11 @@ export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"] as co
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+export type TaskInterventionView = "resolve" | "follow_up" | "comment";
+export type TaskInterventionManualMode = "include" | "exclude";
 export type ActorType = "user" | "agent";
+export type CommentIntent = "comment" | "resume" | "discussion";
+export type CommentAction = "comment" | "review" | "development" | "discussion";
 export type AssigneeTarget = "current-user" | "codex-agent";
 export type IssueRelationType = "parent" | "blocks" | "blocked_by" | "related";
 
@@ -54,8 +59,11 @@ export interface TaskboardCapabilities {
 }
 
 export type AiChatSandbox = "read-only" | "workspace-write" | "danger-full-access";
+export type AiChatRole = "planner" | "worker";
+export type AiChatServiceTier = string;
 export type AiChatThreadStatus = "idle" | "running" | "failed";
 export type AiChatRunStatus = "running" | "completed" | "failed" | "interrupted";
+export type AiChatRetryState = "pending" | "claimed" | "running" | "succeeded" | "exhausted" | "canceled";
 
 export interface AiChatModel {
   slug: string;
@@ -92,16 +100,34 @@ export interface AiChatOrigin {
   workspacePath: string;
   issueId?: string;
   issueIdentifier?: string;
+  issueTitle?: string;
 }
 
 export interface AiChatRun {
   id: string;
   threadId: string;
+  retryJobId?: string | null;
   status: AiChatRunStatus;
   exitCode?: number | null;
   error?: string | null;
+  errorCode?: string | null;
   startedAt?: string;
   finishedAt?: string | null;
+}
+
+export interface AiChatRetryJob {
+  id: string;
+  threadId: string;
+  sourceRunId: string;
+  retryRunId: string | null;
+  state: AiChatRetryState;
+  errorCode: string;
+  lastError: string;
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AiChatThread {
@@ -110,12 +136,17 @@ export interface AiChatThread {
   status: AiChatThreadStatus;
   origin: AiChatOrigin;
   codexThreadId: string | null;
+  role: AiChatRole;
   model: string;
   reasoningEffort: string;
+  serviceTier: AiChatServiceTier | null;
   sandbox: AiChatSandbox;
+  archivedAt: string | null;
+  version: number;
   createdAt: string;
   updatedAt: string;
   currentRun?: AiChatRun | null;
+  retryJob?: AiChatRetryJob | null;
 }
 
 export interface AiChatEvent {
@@ -167,6 +198,7 @@ export interface WorkflowWorkspaceRecord<T = unknown> {
 export interface Project {
   id: string;
   name: string;
+  taskPrefix: string;
   workspacePath: string | null;
   issueCount: number;
   createdAt: string;
@@ -195,6 +227,7 @@ export interface TaskRelations {
 export interface Task {
   id: string;
   identifier: string;
+  previousIdentifiers: string[];
   projectId: string;
   title: string;
   description: string;
@@ -212,11 +245,82 @@ export interface Task {
   developmentContext: DevelopmentContext | null;
   dueDate: string | null;
   recurrence: Recurrence | null;
+  reworkRound: number | null;
+  readinessReview: TaskReadinessReview | null;
+  intervention: TaskIntervention;
+  deliveredAt: string | null;
   archivedAt: string | null;
   relations: TaskRelations;
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaskReadinessReview {
+  taskId: string;
+  status: "running" | "awaiting_input" | "ready" | "failed";
+  aiThreadId: string | null;
+  codexThreadId: string | null;
+  aiThreadTitle: string | null;
+  aiModel: string | null;
+  aiReasoningEffort: string | null;
+  runId: string | null;
+  round: number;
+  sourceTaskVersion: number;
+  sourceUserCommentCount: number;
+  decision: {
+    decision: "ready" | "needs_confirmation";
+    summary: string;
+    confirmed: string[];
+    assumptions: string[];
+    questions: Array<{
+      id: string;
+      question: string;
+      why: string;
+      blocking: boolean;
+    }>;
+  } | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskInterventionTarget {
+  kind: "task" | "comment" | "readiness" | "execution";
+  taskId: string;
+  commentId?: string;
+  aiThreadId?: string | null;
+}
+
+export type TaskInterventionReasonCode =
+  | "awaiting_confirmation"
+  | "readiness_failed"
+  | "execution_failed"
+  | "awaiting_acceptance"
+  | "stalled"
+  | "manual_include";
+
+export interface TaskInterventionReason {
+  view: TaskInterventionView;
+  code: TaskInterventionReasonCode;
+  label: string;
+  action: string;
+  evidenceAt: string | null;
+  target: TaskInterventionTarget;
+}
+
+export interface TaskIntervention {
+  views: TaskInterventionView[];
+  reasons: TaskInterventionReason[];
+  primary: TaskInterventionReason | null;
+  progress: {
+    code: "reviewing" | "planning" | "executing" | "coordinating" | "retrying" | "conversing";
+    label: string;
+    action: string;
+    evidenceAt: string | null;
+  } | null;
+  lastActivityAt: string | null;
+  manual: Partial<Record<TaskInterventionView, TaskInterventionManualMode>>;
 }
 
 export interface Comment {
@@ -228,10 +332,66 @@ export interface Comment {
   authorName: string;
   authorAvatarUrl: string | null;
   threadId: string | null;
+  aiThreadId: string | null;
+  intent: CommentIntent;
+  action: CommentAction;
+  reworkRound: number | null;
   attachments: Attachment[];
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type TaskExecutionHandoffSourceKind = "run" | "task_status";
+export type TaskExecutionHandoffState =
+  | "pending"
+  | "processing"
+  | "attempt_pending"
+  | "resolved"
+  | "stopped"
+  | "failed"
+  | "obsolete";
+
+export interface TaskExecutionOverviewHandoff {
+  id: string;
+  queueSeq: number;
+  delivery: string | null;
+  blocker: string | null;
+  summary: string;
+  latestComment: Comment | null;
+  sourceKind: TaskExecutionHandoffSourceKind;
+  state: TaskExecutionHandoffState;
+}
+
+export interface TaskExecutionOverviewChild {
+  id: string;
+  identifier: string;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  archivedAt: string | null;
+  version: number;
+  handoff: TaskExecutionOverviewHandoff | null;
+  aiThreadId: string | null;
+  codexThreadId: string | null;
+}
+
+export interface TaskExecutionOverviewOrchestration {
+  parentId: string;
+  status: "planning" | "planned" | "failed" | "canceled";
+  plannerDispatchKey: string;
+  plannerThreadId: string | null;
+  plannerRunId: string | null;
+  plan: unknown[] | Record<string, unknown> | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskExecutionOverview {
+  parent: Pick<Task, "id" | "identifier" | "projectId" | "title" | "status" | "priority" | "archivedAt">;
+  orchestration: TaskExecutionOverviewOrchestration | null;
+  children: TaskExecutionOverviewChild[];
 }
 
 export interface Attachment {
@@ -271,6 +431,7 @@ export interface TaskDraft {
 export interface TaskEvent {
   type: string;
   projectId?: string;
+  previousProjectId?: string;
   taskId?: string;
   task?: Task;
   comment?: Comment;

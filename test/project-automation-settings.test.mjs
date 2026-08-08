@@ -11,6 +11,10 @@ const menuSource = await readFile(
   new URL("../web/src/components/ProjectAutomationMenu.tsx", import.meta.url),
   "utf8",
 );
+const injectorSource = await readFile(
+  new URL("../scripts/codex-injector.mjs", import.meta.url),
+  "utf8",
+);
 const iconSource = await readFile(
   new URL("../web/src/components/LinearIcon.tsx", import.meta.url),
   "utf8",
@@ -47,8 +51,8 @@ test("automation requests use the exact Codex host message contract", () => {
 });
 
 test("project mapping is based on exact ids and workspace paths, never project names", () => {
-  assert.match(appSource, /hostContext\?\.projects\?\.some\([\s\S]*?project\.id === selectedProject\.id/);
-  assert.match(appSource, /deviceWorkspacePaths\[project\.id\] === workspacePath/);
+  assert.match(appSource, /hostContext\?\.projects\?\.find\(\(project\) => project\.id === selectedProject\?\.id\)/);
+  assert.match(appSource, /deviceWorkspacePaths\[project\.id\] === selectedWorkspacePath/);
   assert.match(appSource, /请先在 Codex 中添加并映射该项目目录/);
   assert.doesNotMatch(appSource, /project\.name === selectedProject\.name/);
 });
@@ -58,10 +62,12 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.match(menuSource, /status === "ACTIVE" \? "play" : "pause"/);
   assert.doesNotMatch(menuSource, /statusStarted|statusTodo/);
   assert.match(menuSource, /aria-busy=\{pending/);
-  assert.match(menuSource, /自动认领/);
-  assert.match(menuSource, /无自动化/);
-  assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
-  assert.match(menuSource, /自动认领开关/);
+  assert.match(menuSource, /当前项目自动开发/);
+  assert.match(menuSource, /projectName: string/);
+  assert.match(menuSource, /\{projectName\} 自动开发/);
+  assert.match(menuSource, /仅影响「\{projectName\}」/);
+  assert.match(menuSource, /手动启动/);
+  assert.doesNotMatch(menuSource, /根据额度启用\/关闭/);
   assert.match(menuSource, /5, 10, 15, 30, 60/);
   assert.match(menuSource, /AUTOMATION_MODELS\.map/);
   assert.match(menuSource, /EFFORT_LABELS\[effort\]/);
@@ -71,6 +77,7 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.match(menuSource, /no-drag/);
   assert.doesNotMatch(menuSource, /event\.key === "Tab"/);
   assert.match(appSource, /<ProjectAutomationMenu/);
+  assert.match(appSource, /projectName=\{headerProjectName\}/);
   assert.match(appSource, /<ProjectAutomationMenu[\s\S]*?<button[\s\S]*?header-create-button/);
   assert.doesNotMatch(appSource, /toolbar-connection/);
   assert.match(appSource, /仅本地任务面板可用/);
@@ -96,9 +103,9 @@ test("automation play and pause retain Linear's 16px filled presentation", () =>
 });
 
 test("the automation menu reuses the Linear switch and keeps form focus chrome suppressed", () => {
-  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.status === "ACTIVE" \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.enabledByUser \? " is-on" : ""\}`\}/);
   assert.match(menuSource, /role="switch"/);
-  assert.match(menuSource, /aria-checked=\{draft\.status === "ACTIVE"\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.enabledByUser\}/);
   assert.doesNotMatch(menuSource, /type="checkbox"/);
   assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
   assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);
@@ -141,7 +148,7 @@ test("pending completion reconciles the optimistic draft to confirmed host state
   assert.match(menuSource, /const wasPendingRef = useRef\(pending\)/);
   assert.match(
     menuSource,
-    /if \(wasPendingRef\.current && !pending\) \{\s*setDraft\(\{ \.\.\.DEFAULT_OPTIONS, \.\.\.automation \}\);\s*\}/,
+    /if \(wasPendingRef\.current && !pending\) \{\s*setDraft\(\{ \.\.\.DEFAULT_OPTIONS, \.\.\.automation, quotaAware: false \}\);\s*\}/,
   );
   assert.match(menuSource, /wasPendingRef\.current = pending/);
   assert.match(menuSource, /disabled=\{disabled\}/);
@@ -149,10 +156,19 @@ test("pending completion reconciles the optimistic draft to confirmed host state
 
 test("opening settings and changing projects reconcile with the host list", () => {
   assert.match(appSource, /sendAutomationRequest\("list", options, stored\?\.automationId\)/);
-  assert.match(appSource, /items\.find\(\(item\) => item\.id === stored\?\.automationId\)/);
+  assert.match(appSource, /candidate\.id === \(stored\?\.automationId \?\? policy\?\.automationId\)/);
   assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
   assert.match(appSource, /status: item\.status/);
   assert.match(appSource, /automationId: undefined/);
-  assert.match(appSource, /options\.status === "PAUSED" && !stored\?\.automationId/);
+  assert.match(appSource, /enabledByUser: item\.status === "ACTIVE"/);
+  assert.match(appSource, /const operation = normalizedOptions\.enabledByUser \? "ensure-active" : "pause"/);
+  assert.doesNotMatch(
+    appSource.slice(
+      appSource.indexOf("const reconcileProjectAutomation"),
+      appSource.indexOf("const saveProjectAutomation"),
+    ),
+    /apply-policy/,
+  );
   assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
+  assert.doesNotMatch(injectorSource, /await restoreQuotaPolicies\(cdp\)/);
 });

@@ -16,7 +16,8 @@ import {
   isTaskStatus,
 } from "../shared/domain.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
-import { AiChatService } from "./ai-chat.mjs";
+import { normalizeTaskPrefix } from "../shared/task-identifiers.mjs";
+import { AiChatService, TASK_AI_STRATEGIES } from "./ai-chat.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
   CloudProxyError,
@@ -24,6 +25,9 @@ import {
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
 import { ApiError, TaskboardDatabase } from "./database.mjs";
+import { TaskCoordinator } from "./task-coordinator.mjs";
+import { TaskReadinessCoordinator } from "./task-readiness-coordinator.mjs";
+import { AiRetryCoordinator } from "./ai-retry-coordinator.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -33,14 +37,15 @@ const AI_CHAT_TURN_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_ATTACHMENT_LIMIT = 10;
 const AI_CHAT_SKILL_MARKER = "\uFFFC";
 const INLINE_ATTACHMENT_TYPES = new Set([
+  "application/json",
   "application/pdf",
   "image/avif",
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
-  "text/plain",
 ]);
+const ATTACHMENT_PREVIEW_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:";
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
 const CODEX_AGENT_ACTOR = {
@@ -468,7 +473,7 @@ function validateProjectId(value, { required = true } = {}) {
 
 function parseProjectCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
+  assertAllowedKeys(body, new Set(["id", "name", "taskPrefix", "workspacePath"]));
   const name = stringField(body.name, "name", { required: true, maxLength: 120 });
   const id = validateProjectId(body.id ?? slugify(name));
   if (!id) {
@@ -481,7 +486,21 @@ function parseProjectCreate(body) {
   if (workspacePath?.includes("\0")) {
     throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
   }
-  return { id, name, workspacePath };
+  const taskPrefix = body.taskPrefix === undefined ? undefined : normalizeTaskPrefix(body.taskPrefix);
+  if (body.taskPrefix !== undefined && !taskPrefix) {
+    throw new ApiError(400, "INVALID_TASK_PREFIX", "'taskPrefix' must contain 2-6 uppercase letters or numbers and start with a letter");
+  }
+  return { id, name, taskPrefix, workspacePath };
+}
+
+function parseProjectTaskPrefix(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["taskPrefix"]));
+  const taskPrefix = normalizeTaskPrefix(body.taskPrefix);
+  if (!taskPrefix) {
+    throw new ApiError(400, "INVALID_TASK_PREFIX", "'taskPrefix' must contain 2-6 uppercase letters or numbers and start with a letter");
+  }
+  return taskPrefix;
 }
 
 function parseThreadId(value) {
@@ -492,6 +511,19 @@ function parseThreadId(value) {
 function requestHeader(request, name) {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function idempotencyKeyFromRequest(request) {
+  const value = requestHeader(request, "idempotency-key");
+  if (value === undefined) return null;
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) {
+    throw new ApiError(
+      400,
+      "INVALID_IDEMPOTENCY_KEY",
+      "Idempotency-Key must contain between 1 and 256 characters",
+    );
+  }
+  return value;
 }
 
 function actorFromRequest(request) {
@@ -630,10 +662,57 @@ function parseMove(body) {
   };
 }
 
+function parseReassign(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "projectId", "threadId"]));
+  return {
+    version: parseVersion(body.version),
+    projectId: validateProjectId(body.projectId),
+    threadId: parseThreadId(body.threadId),
+  };
+}
+
 function parseArchive(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["version", "threadId"]));
   return { version: parseVersion(body.version), threadId: parseThreadId(body.threadId) };
+}
+
+function parseTaskArchive(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "threadId"]));
+  return {
+    version: parseVersion(body.version),
+    threadId: parseThreadId(body.threadId),
+  };
+}
+
+function parseTaskRework(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "commentId", "aiThreadId"]));
+  return {
+    version: parseVersion(body.version),
+    commentId: stringField(body.commentId, "commentId", { required: true, maxLength: 128 }),
+    aiThreadId: body.aiThreadId === undefined
+      ? undefined
+      : stringField(body.aiThreadId, "aiThreadId", { required: true, maxLength: 256 }),
+  };
+}
+
+function parseTaskInterventionOverride(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "view", "mode"]));
+  if (!["resolve", "follow_up", "comment"].includes(body.view)) {
+    throw new ApiError(400, "INVALID_INTERVENTION_VIEW", "'view' must be resolve, follow_up, or comment");
+  }
+  if (!["auto", "include", "exclude"].includes(body.mode)) {
+    throw new ApiError(400, "INVALID_INTERVENTION_MODE", "'mode' must be auto, include, or exclude");
+  }
+  return {
+    version: parseVersion(body.version),
+    view: body.view,
+    mode: body.mode,
+  };
 }
 
 function parseIssueRelationType(value) {
@@ -649,16 +728,31 @@ function parseIssueRelationType(value) {
 
 function parseCommentCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["body", "threadId"]));
+  assertAllowedKeys(body, new Set(["body", "threadId", "aiThreadId", "intent", "action"]));
+  const intent = body.intent ?? "comment";
+  if (!["comment", "resume", "discussion"].includes(intent)) {
+    throw new ApiError(400, "INVALID_FIELD", "'intent' must be comment, resume, or discussion");
+  }
+  const action = body.action ?? (
+    intent === "discussion" ? "discussion" : intent === "resume" ? "review" : "comment"
+  );
+  if (!["comment", "review", "development", "discussion"].includes(action)) {
+    throw new ApiError(400, "INVALID_FIELD", "'action' must be comment, review, development, or discussion");
+  }
   return {
     body: stringField(body.body ?? "", "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    aiThreadId: body.aiThreadId === undefined
+      ? undefined
+      : stringField(body.aiThreadId, "aiThreadId", { required: true, maxLength: 256 }),
+    intent,
+    action,
   };
 }
 
 function parseCommentPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "body", "threadId"]));
+  assertAllowedKeys(body, new Set(["version", "body", "threadId", "aiThreadId"]));
   if (body.body === undefined) {
     throw new ApiError(400, "INVALID_FIELD", "'body' is required");
   }
@@ -666,6 +760,9 @@ function parseCommentPatch(body) {
     version: parseVersion(body.version),
     body: stringField(body.body, "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    aiThreadId: body.aiThreadId === undefined
+      ? undefined
+      : stringField(body.aiThreadId, "aiThreadId", { required: true, maxLength: 256 }),
   };
 }
 
@@ -782,6 +879,25 @@ function parseAiSandbox(value) {
   return value;
 }
 
+function parseAiRole(value) {
+  if (value === undefined) return undefined;
+  if (value !== "planner" && value !== "worker") {
+    throw new ApiError(400, "INVALID_ROLE", "'role' must be planner or worker");
+  }
+  return value;
+}
+
+function parseAiServiceTier(value) {
+  const serviceTier = stringField(value, "serviceTier", { nullable: true, maxLength: 64 });
+  if (serviceTier === "") {
+    throw new ApiError(400, "INVALID_FIELD", "'serviceTier' cannot be empty");
+  }
+  if (serviceTier !== null && serviceTier !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(serviceTier)) {
+    throw new ApiError(400, "INVALID_FIELD", "'serviceTier' contains unsupported characters");
+  }
+  return serviceTier;
+}
+
 function parseAiSetting(value, name, maxLength) {
   const setting = stringField(value, name, { maxLength });
   if (setting === "") {
@@ -796,34 +912,49 @@ function parseAiThreadCreate(body) {
     "projectId",
     "issueId",
     "title",
+    "role",
     "model",
     "reasoningEffort",
+    "serviceTier",
     "sandbox",
   ]));
   return {
     projectId: validateProjectId(body.projectId),
     issueId: parseAiSetting(body.issueId, "issueId", 128),
     title: parseAiSetting(body.title, "title", 160),
+    role: parseAiRole(body.role),
     model: parseAiSetting(body.model, "model", 128),
     reasoningEffort: parseAiSetting(body.reasoningEffort, "reasoningEffort", 64),
+    serviceTier: parseAiServiceTier(body.serviceTier),
     sandbox: parseAiSandbox(body.sandbox),
   };
 }
 
 function parseAiThreadPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["title", "model", "reasoningEffort", "sandbox"]));
+  assertAllowedKeys(body, new Set(["title", "role", "model", "reasoningEffort", "serviceTier", "sandbox"]));
   const input = {};
   if (body.title !== undefined) input.title = parseAiSetting(body.title, "title", 160);
+  if (body.role !== undefined) input.role = parseAiRole(body.role);
   if (body.model !== undefined) input.model = parseAiSetting(body.model, "model", 128);
   if (body.reasoningEffort !== undefined) {
     input.reasoningEffort = parseAiSetting(body.reasoningEffort, "reasoningEffort", 64);
   }
+  if (body.serviceTier !== undefined) input.serviceTier = parseAiServiceTier(body.serviceTier);
   if (body.sandbox !== undefined) input.sandbox = parseAiSandbox(body.sandbox);
   if (Object.keys(input).length === 0) {
     throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one thread setting");
   }
   return input;
+}
+
+function parseAiThreadListFilter(searchParams) {
+  assertAllowedQuery(searchParams, new Set(["archived"]), "GET /api/local/ai/threads");
+  const archived = searchParams.get("archived") ?? "false";
+  if (!["false", "true", "all"].includes(archived)) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'archived' must be true, false, or all");
+  }
+  return archived;
 }
 
 function parseAiSkillIds(value) {
@@ -927,9 +1058,25 @@ function parseAiTurn(body) {
   };
 }
 
+function parseAiRetry(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["message", "skillIds", "sourceRunId"]));
+  return {
+    sourceRunId: stringField(body.sourceRunId, "sourceRunId", {
+      required: true,
+      maxLength: 128,
+    }),
+    input: parseAiTurn({
+      message: body.message,
+      skillIds: body.skillIds,
+    }),
+  };
+}
+
 class EventHub {
   constructor() {
     this.clients = new Set();
+    this.listeners = new Set();
     this.keepAlive = setInterval(() => {
       for (const response of this.clients) response.write(": keep-alive\n\n");
     }, 20_000);
@@ -948,6 +1095,11 @@ class EventHub {
     request.once("close", () => this.clients.delete(response));
   }
 
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   emit(type, value) {
     const event = {
       type,
@@ -957,6 +1109,11 @@ class EventHub {
       at: new Date().toISOString(),
     };
     const message = `event: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
+    for (const listener of this.listeners) {
+      try {
+        Promise.resolve(listener(event)).catch(() => {});
+      } catch {}
+    }
     for (const response of this.clients) response.write(message);
   }
 
@@ -964,6 +1121,7 @@ class EventHub {
     clearInterval(this.keepAlive);
     for (const response of this.clients) response.end();
     this.clients.clear();
+    this.listeners.clear();
   }
 }
 
@@ -1332,6 +1490,106 @@ export function createTaskboardServer(options = {}) {
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
   });
+  const taskCoordinator = new TaskCoordinator({
+    database,
+    aiChat,
+    emit: (type, value) => events.emit(type, value),
+  });
+  const taskReadinessCoordinator = new TaskReadinessCoordinator({
+    database,
+    aiChat,
+    emit: (type, value) => events.emit(type, value),
+    onReady: async (task) => {
+      if (task.assignee?.type !== "agent" || task.assignee.id !== CODEX_AGENT_ACTOR.id) return;
+      if (database.getTaskOrchestrationChildByTask(task.id)) return;
+      const isMainTask = task.labels.includes("主任务") && !task.relations.parent;
+      if (isMainTask) return;
+      try {
+        const strategy = TASK_AI_STRATEGIES.worker;
+        const thread = await aiChat.createThread({
+          projectId: task.projectId,
+          issueId: task.id,
+          title: task.identifier,
+          role: strategy.role,
+          model: strategy.model,
+          reasoningEffort: strategy.reasoningEffort,
+          serviceTier: strategy.serviceTier,
+          sandbox: strategy.sandbox,
+        });
+        if (thread.status === "running" || thread.currentRun?.status === "running") return;
+        await aiChat.startTurn(thread.id, {
+          message: "开始开发这个议题。先读取最新议题内容和全部评论并认领；完成实现与验证后，记录结果并移到审核中，不要直接标记完成。",
+        });
+      } catch (error) {
+        const message = String(error instanceof Error ? error.message : error ?? "Codex 未启动").slice(0, 65_536);
+        const current = database.getTask(task.id);
+        if (!current || current.archivedAt !== null) return;
+        const comment = database.createComment(current.id, {
+          body: `需求审核已通过，但开发对话启动失败：${message}`,
+          actor: CODEX_AGENT_ACTOR,
+        });
+        events.emit("comment.created", { comment, task: current });
+        if (current.status === "todo") {
+          const blocked = database.moveTask(current.id, current.version, "blocked");
+          events.emit("task.moved", { task: blocked, fromStatus: current.status, readinessReview: true });
+        }
+      }
+    },
+  });
+  const aiRetryCoordinator = new AiRetryCoordinator({ database, aiChat });
+  const unsubscribeTaskCoordinatorEvents = events.subscribe((event) => (
+    taskCoordinator.handleEvent(event.type, event)
+  ));
+  const unsubscribeTaskReadinessEvents = events.subscribe((event) => (
+    taskReadinessCoordinator.handleEvent(event.type, event)
+  ));
+  const unsubscribeAiThreadUpdates = aiChat.subscribeThreadUpdated(({ thread, dispatchKey }) => {
+    if (!dispatchKey) return;
+    const dispatch = database.getTaskDispatch(dispatchKey);
+    if (
+      !dispatch
+      || dispatch.role !== "worker"
+      || !["worker", "worker_attempt"].includes(dispatch.kind)
+    ) return;
+    const task = dispatch.taskId ? database.getTask(dispatch.taskId) : null;
+    if (
+      !task
+      || thread.origin.projectId !== task.projectId
+      || thread.origin.issueId !== task.id
+    ) return;
+    events.emit("task.execution.updated", {
+      projectId: task.projectId,
+      taskId: task.id,
+      parentId: dispatch.parentId,
+      aiThreadId: thread.id,
+      codexThreadId: thread.codexThreadId ?? null,
+    });
+  });
+  const unsubscribeDeliveryReviewRuns = aiChat.subscribeRunSettled((payload) => {
+    const thread = payload.thread;
+    if (
+      payload.run?.status !== "completed"
+      || thread?.role !== "planner"
+      || !thread.title.endsWith("· 交付重新审核")
+    ) return;
+    const requestComment = database.getReviewRequestCommentByAiThread(thread.id);
+    if (!requestComment) return;
+    const task = database.getTask(requestComment.taskId);
+    if (!task || task.archivedAt !== null || task.status !== "in_review") return;
+    const comments = database.listComments(task.id);
+    if (comments.some((comment) => (
+      comment.authorType === "agent" && comment.aiThreadId === thread.id
+    ))) return;
+    const review = typeof payload.assistantText === "string" ? payload.assistantText.trim() : "";
+    if (!review) return;
+    const comment = database.createComment(task.id, {
+      body: `## 交付重新审核\n\n${review}`,
+      threadId: thread.codexThreadId ?? undefined,
+      aiThreadId: thread.id,
+      actor: CODEX_AGENT_ACTOR,
+    });
+    events.emit("comment.created", { comment, task: database.getTask(task.id) });
+  });
   const aiEventResponses = new Set();
 
   const server = createServer(async (request, response) => {
@@ -1424,6 +1682,11 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "INVALID_FIELD", "'workspacePath' must be absolute");
         }
         await cloudConfig.setProjectWorkspace(projectId, workspacePath);
+        const projectMappingConfig = await cloudConfig.read();
+        if (!projectMappingConfig.remoteUrl) {
+          const project = database.updateProjectWorkspace(projectId, workspacePath);
+          events.emit("project.updated", { project });
+        }
         return sendJson(response, 200, { projectId, workspacePath });
       }
 
@@ -1452,16 +1715,44 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, await aiChat.getCatalog(projectId));
       }
 
+      const aiExecutionOverviewRoute = pathname.match(
+        /^\/api\/local\/ai\/tasks\/([^/]+)\/execution-overview$/,
+      );
+      if (aiExecutionOverviewRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/ai/tasks/:parentId/execution-overview");
+        const parentId = decodeRouteSegment(aiExecutionOverviewRoute[1], "Parent task id");
+        return sendJson(response, 200, {
+          overview: database.getTaskExecutionOverview(parentId),
+        });
+      }
+
       if (pathname === "/api/local/ai/threads") {
-        assertNoQuery(url.searchParams, "/api/local/ai/threads");
         if (request.method === "GET") {
-          return sendJson(response, 200, { threads: await aiChat.listThreads() });
+          return sendJson(response, 200, {
+            threads: await aiChat.listThreads(parseAiThreadListFilter(url.searchParams)),
+          });
         }
+        assertNoQuery(url.searchParams, "/api/local/ai/threads");
         if (request.method === "POST") {
           const thread = await aiChat.createThread(parseAiThreadCreate(await readJson(request)));
           return sendJson(response, 201, { thread });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const aiThreadLifecycleRoute = pathname.match(
+        /^\/api\/local\/ai\/threads\/([^/]+)\/(archive|restore)$/,
+      );
+      if (aiThreadLifecycleRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/ai/threads/:id/(archive|restore)");
+        const threadId = decodeRouteSegment(aiThreadLifecycleRoute[1], "Thread id");
+        const { version } = parseTaskArchive(await readJson(request));
+        const thread = aiThreadLifecycleRoute[2] === "archive"
+          ? await aiChat.archiveThread(threadId, version)
+          : await aiChat.restoreThread(threadId, version);
+        return sendJson(response, 200, { thread });
       }
 
       const aiThreadEventsRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/events$/);
@@ -1506,6 +1797,17 @@ export function createTaskboardServer(options = {}) {
             "AI chat turn body cannot exceed 25 MiB",
           )),
         );
+        return sendJson(response, 202, { run });
+      }
+
+      const aiThreadRetryRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/retry$/);
+      if (aiThreadRetryRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/ai/threads/:id/retry");
+        const threadId = decodeRouteSegment(aiThreadRetryRoute[1], "Thread id");
+        const retry = parseAiRetry(await readJson(request));
+        const run = await taskCoordinator.retryFailedThread(threadId, retry.sourceRunId)
+          ?? await aiChat.startTurn(threadId, retry.input);
         return sendJson(response, 202, { run });
       }
 
@@ -1601,6 +1903,19 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "POST"]);
       }
 
+      const projectTaskPrefixRoute = pathname.match(/^\/api\/projects\/([^/]+)\/task-prefix$/);
+      if (projectTaskPrefixRoute) {
+        if (request.method !== "PUT") return methodNotAllowed(response, ["PUT"]);
+        const projectId = decodeURIComponent(projectTaskPrefixRoute[1]);
+        validateProjectId(projectId);
+        const project = database.updateProjectTaskPrefix(
+          projectId,
+          parseProjectTaskPrefix(await readJson(request)),
+        );
+        events.emit("project.updated", { project });
+        return sendJson(response, 200, { project });
+      }
+
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);
       if (workflowWorkspaceRoute) {
         if ([...url.searchParams.keys()].length > 0) {
@@ -1684,13 +1999,16 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "POST") {
           const actor = actorFromRequest(request);
           const { assigneeTarget, ...input } = parseTaskCreate(await readJson(request));
-          const task = database.createTask({
-            ...input,
-            actor,
-            assignee: resolveAssignee(assigneeTarget, actor),
-          });
-          events.emit("task.created", { task });
-          return sendJson(response, 201, { task });
+          const result = database.createTaskIdempotently(
+            {
+              ...input,
+              actor,
+              assignee: resolveAssignee(assigneeTarget, actor),
+            },
+            idempotencyKeyFromRequest(request),
+          );
+          if (result.created) events.emit("task.created", { task: result.task });
+          return sendJson(response, result.created ? 201 : 200, { task: result.task });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
       }
@@ -1802,7 +2120,13 @@ export function createTaskboardServer(options = {}) {
         }
         if (request.method === "PATCH") {
           const patch = parseCommentPatch(await readJson(request));
-          const comment = database.updateComment(id, patch.version, patch.body, patch.threadId);
+          const comment = database.updateComment(
+            id,
+            patch.version,
+            patch.body,
+            patch.threadId,
+            patch.aiThreadId,
+          );
           const task = database.getTask(comment.taskId);
           events.emit("comment.updated", { comment, task });
           return sendJson(response, 200, { comment });
@@ -1926,12 +2250,13 @@ export function createTaskboardServer(options = {}) {
         const encodedFilename = encodeURIComponent(attachment.filename).replace(/['()*]/g, (character) => (
           `%${character.charCodeAt(0).toString(16).toUpperCase()}`
         ));
-        const canOpenInline = INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+        const canOpenInline = INLINE_ATTACHMENT_TYPES.has(attachment.contentType)
+          || attachment.contentType.startsWith("text/");
         response.writeHead(200, {
           "cache-control": "private, no-store",
           "content-disposition": `${canOpenInline ? "inline" : "attachment"}; filename*=UTF-8''${encodedFilename}`,
           "content-length": body.length,
-          "content-security-policy": "sandbox; default-src 'none'",
+          "content-security-policy": ATTACHMENT_PREVIEW_CSP,
           "content-type": canOpenInline ? attachment.contentType : "application/octet-stream",
         });
         response.end(request.method === "HEAD" ? undefined : body);
@@ -1955,18 +2280,43 @@ export function createTaskboardServer(options = {}) {
         if (request.method !== "DELETE") return methodNotAllowed(response, ["DELETE"]);
         const attachment = database.getAttachment(id);
         if (!attachment) throw new ApiError(404, "ATTACHMENT_NOT_FOUND", `Attachment '${id}' does not exist`);
+        const task = database.getTask(attachment.taskId);
+        if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${attachment.taskId}' does not exist`);
+        if (task.archivedAt !== null) {
+          throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks are read-only");
+        }
+        const deletedAttachment = database.deleteAttachment(id);
         try {
-          await unlink(path.join(resolved.attachmentsDirectory, attachment.id));
+          await unlink(path.join(resolved.attachmentsDirectory, deletedAttachment.id));
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
-        database.deleteAttachment(id);
-        const task = database.getTask(attachment.taskId);
-        events.emit("attachment.deleted", { attachment, task });
+        events.emit("attachment.deleted", { attachment: deletedAttachment, task });
         return sendEmpty(response, 204);
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move))?$/);
+      const taskInterventionRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/intervention$/);
+      if (taskInterventionRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let id;
+        try {
+          id = decodeURIComponent(taskInterventionRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if (id.length === 0 || id.length > 128) {
+          throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Task intervention routes do not accept query parameters");
+        }
+        const input = parseTaskInterventionOverride(await readJson(request));
+        const task = database.setTaskInterventionOverride(id, input.version, input.view, input.mode);
+        events.emit("task.intervention.updated", { task });
+        return sendJson(response, 200, { task });
+      }
+
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|reassign|rework))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -1992,23 +2342,52 @@ export function createTaskboardServer(options = {}) {
             changes.assignee = resolveAssignee(assigneeTarget, actorFromRequest(request));
           }
           const task = database.updateTask(id, version, changes, threadId);
-          events.emit("task.updated", { task });
+          events.emit("task.updated", { task, changedFields: Object.keys(changes) });
           return sendJson(response, 200, { task });
         }
         if (action === "move" && request.method === "POST") {
           const move = parseMove(await readJson(request));
+          const previousTask = database.getTask(id);
           const task = database.moveTask(id, move.version, move.status, move.sortOrder, move.threadId);
-          events.emit("task.moved", { task });
+          events.emit("task.moved", { task, fromStatus: previousTask?.status ?? null });
           return sendJson(response, 200, { task });
         }
+        if (action === "reassign" && request.method === "POST") {
+          const reassign = parseReassign(await readJson(request));
+          const previousProjectId = database.getTask(id)?.projectId;
+          const task = database.reassignTask(
+            id,
+            reassign.version,
+            reassign.projectId,
+            reassign.threadId,
+          );
+          events.emit("task.reassigned", { task, previousProjectId });
+          return sendJson(response, 200, { task });
+        }
+        if (action === "rework" && request.method === "POST") {
+          const input = parseTaskRework(await readJson(request));
+          const result = database.startTaskRework(
+            id,
+            input.version,
+            input.commentId,
+            input.aiThreadId,
+          );
+          events.emit("comment.updated", { comment: result.comment, task: result.task });
+          events.emit("task.moved", {
+            task: result.task,
+            fromStatus: "in_review",
+            rework: true,
+          });
+          return sendJson(response, 200, result);
+        }
         if (action === "archive" && request.method === "POST") {
-          const { version, threadId } = parseArchive(await readJson(request));
+          const { version, threadId } = parseTaskArchive(await readJson(request));
           const task = database.archiveTask(id, version, threadId);
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "restore" && request.method === "POST") {
-          const { version, threadId } = parseArchive(await readJson(request));
+          const { version, threadId } = parseTaskArchive(await readJson(request));
           const task = database.restoreTask(id, version, threadId);
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
@@ -2046,6 +2425,9 @@ export function createTaskboardServer(options = {}) {
   let listening = false;
   return {
     database,
+    taskCoordinator,
+    taskReadinessCoordinator,
+    aiRetryCoordinator,
     aiChat,
     server,
     options: resolved,
@@ -2067,6 +2449,10 @@ export function createTaskboardServer(options = {}) {
         server.listen(port, host);
       });
       listening = true;
+      database.recoverAbandonedAiChatRuns();
+      await aiRetryCoordinator.start();
+      await taskReadinessCoordinator.reconcile({ startup: true });
+      await taskCoordinator.reconcile({ startup: true });
       return server.address();
     },
     async close() {
@@ -2075,6 +2461,13 @@ export function createTaskboardServer(options = {}) {
             server.close((error) => error ? reject(error) : resolve());
           })
         : Promise.resolve();
+      unsubscribeDeliveryReviewRuns();
+      unsubscribeAiThreadUpdates();
+      unsubscribeTaskReadinessEvents();
+      unsubscribeTaskCoordinatorEvents();
+      await aiRetryCoordinator.close();
+      await taskReadinessCoordinator.close();
+      await taskCoordinator.close();
       events.close();
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();

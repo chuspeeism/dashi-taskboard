@@ -16,11 +16,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   createAiChatThread,
-  deleteAiChatThread,
+  archiveAiChatThread,
   getAiChatCatalog,
   getAiChatThread,
   interruptAiChatRun,
   listAiChatThreads,
+  retryAiChatTurn,
+  restoreAiChatThread,
   startAiChatTurn,
   subscribeAiChatThread,
   updateAiChatThread,
@@ -38,6 +40,7 @@ import {
   parseAiChatComposerFragment,
   patchAiChatSnapshot,
   reasoningEffortForModel,
+  settingsForNewAiThread,
 } from "../aiChatState";
 import type {
   AiChatCatalog,
@@ -45,7 +48,10 @@ import type {
   AiChatAttachmentInput,
   AiChatModel,
   AiChatRun,
+  AiChatRetryJob,
+  AiChatRole,
   AiChatSandbox,
+  AiChatServiceTier,
   AiChatSkill,
   AiChatThread,
   AiChatThreadSnapshot,
@@ -54,11 +60,15 @@ import { LinearIcon, type LinearIconName } from "./LinearIcon";
 
 interface AiChatProps {
   available: boolean;
+  allowLocalArchiveRestore: boolean;
   projectId: string | null;
   issueId: string | null;
+  preferredThreadId?: string | null;
+  issueRole?: AiChatRole | null;
+  onOpenTask: (task: { projectId: string; identifier: string }) => void;
 }
 
-type MenuName = "model" | "model-list" | "effort-list" | "sandbox" | null;
+type MenuName = "model" | "model-list" | "effort-list" | "service-tier-list" | "sandbox" | null;
 type PendingDangerInput = {
   message: string;
   skillIds: string[];
@@ -111,6 +121,25 @@ const PANEL_MIN_HEIGHT = 360;
 const PANEL_DEFAULT_GEOMETRY: PanelGeometry = {
   width: 420,
   height: 700,
+};
+const TASK_ROLE_DEFAULT_SETTINGS: Record<AiChatRole, {
+  model: string;
+  reasoningEffort: string;
+  serviceTier: AiChatServiceTier | null;
+  sandbox: AiChatSandbox;
+}> = {
+  planner: {
+    model: "gpt-5.6-sol",
+    reasoningEffort: "max",
+    serviceTier: null,
+    sandbox: "read-only",
+  },
+  worker: {
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
+    serviceTier: "priority",
+    sandbox: "workspace-write",
+  },
 };
 const SKILL_MARKER = AI_CHAT_SKILL_MARKER;
 const SKILL_LINK_PREFIX = "#ai-chat-skill-";
@@ -185,10 +214,20 @@ const EFFORT_LABELS: Record<string, string> = {
   low: "低",
   medium: "中",
   high: "高",
-  xhigh: "极高",
+  xhigh: "超高",
   max: "最高",
-  ultra: "极高",
+  ultra: "极致",
 };
+
+function serviceTierDisplayName(
+  serviceTier: AiChatServiceTier | null,
+  model?: AiChatModel | null,
+): string {
+  if (serviceTier === null) return "标准";
+  if (serviceTier === "priority") return "Fast";
+  return model?.serviceTiers.find((tier) => tier.id === serviceTier)?.name
+    ?? serviceTier;
+}
 
 function modelDisplayName(value: string): string {
   return value.replace(/^GPT-/i, "").replaceAll("-", " ");
@@ -602,6 +641,13 @@ function dateLabel(value: string): string {
   }).format(date);
 }
 
+function retryLabel(job: AiChatRetryJob): string {
+  if (job.state === "running") return `自动重试 ${job.attemptCount}/${job.maxAttempts}`;
+  if (job.state === "exhausted") return `待人工处理 · 已重试 ${job.attemptCount}/${job.maxAttempts}`;
+  const next = job.nextAttemptAt ? dateLabel(job.nextAttemptAt) : "即将执行";
+  return `待重试 · ${next}`;
+}
+
 type ThinkingActivityDetail =
   | { kind: "lines"; summary: string; value: string[] }
   | { kind: "pre"; summary: string; value: string };
@@ -943,9 +989,18 @@ function OptionMenu({
   );
 }
 
-export function AiChat({ available, projectId, issueId }: AiChatProps) {
+export function AiChat({
+  available,
+  allowLocalArchiveRestore,
+  projectId,
+  issueId,
+  preferredThreadId,
+  issueRole,
+  onOpenTask,
+}: AiChatProps) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<"running" | "completed" | "retry" | "archived">("running");
   const [menu, setMenu] = useState<MenuName>(null);
   const [threads, setThreads] = useState<AiChatThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
@@ -968,8 +1023,10 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   const [unread, setUnread] = useState(false);
   const [draftModel, setDraftModel] = useState("");
   const [draftEffort, setDraftEffort] = useState("");
+  const [draftServiceTier, setDraftServiceTier] = useState<AiChatServiceTier | null>(null);
   const [draftSandbox, setDraftSandbox] = useState<AiChatSandbox>("workspace-write");
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [panelGeometry, setPanelGeometry] = useState<PanelGeometry | null>(
@@ -990,6 +1047,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   const snapshotRequestRef = useRef(0);
   const snapshotLoadingRequestRef = useRef(0);
   const observedRunStatusesRef = useRef(new Map<string, AiChatRun["status"]>());
+  const runningThreadIdsRef = useRef(new Set<string>());
   const dangerConfirmOpen = pendingDangerInput !== null;
 
   const selectThread = useCallback((threadId: string | null) => {
@@ -1143,6 +1201,17 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
     if (completedWhileClosed) setUnread(true);
   }, []);
 
+  const observeThreadSummaries = useCallback((nextThreads: AiChatThread[]) => {
+    const nextRunningIds = new Set(
+      nextThreads.filter((thread) => thread.status === "running").map((thread) => thread.id),
+    );
+    if (
+      !panelOpenRef.current
+      && Array.from(runningThreadIdsRef.current).some((threadId) => !nextRunningIds.has(threadId))
+    ) setUnread(true);
+    runningThreadIdsRef.current = nextRunningIds;
+  }, []);
+
   const loadSnapshot = useCallback(async (threadId: string, quiet = false) => {
     const requestId = ++snapshotRequestRef.current;
     if (!quiet) {
@@ -1173,21 +1242,27 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   );
   useEffect(() => () => selectedHintRefreshQueue.clear(), [selectedHintRefreshQueue]);
 
-  const loadThreads = useCallback(async () => {
+  const loadThreads = useCallback(async (preferredThreadId?: string, quiet = false) => {
     try {
-      const next = await listAiChatThreads();
+      const next = await listAiChatThreads({ archived: "all" });
+      observeThreadSummaries(next);
       setThreads(next);
       setSelectedThreadId((current) => {
-        const selected = current && next.some((thread) => thread.id === current)
-          ? current
-          : next[0]?.id ?? null;
+        const selected = preferredThreadId
+          && next.some((thread) => thread.id === preferredThreadId)
+          ? preferredThreadId
+          : current && next.some((thread) => thread.id === current)
+            ? current
+            : next[0]?.id ?? null;
         selectedThreadRef.current = selected;
         return selected;
       });
+      return next;
     } catch (nextError) {
-      setError(messageFor(nextError));
+      if (!quiet) setError(messageFor(nextError));
+      return null;
     }
-  }, []);
+  }, [observeThreadSummaries]);
 
   useEffect(() => {
     if (!available) {
@@ -1198,8 +1273,29 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   }, [available, loadThreads]);
 
   useEffect(() => {
+    if (!available) return;
+    const handleStartedThread = (event: Event) => {
+      const threadId = (event as CustomEvent<{ threadId?: string }>).detail?.threadId;
+      if (threadId) void loadThreads(threadId);
+    };
+    const handleOpenThread = (event: Event) => {
+      const threadId = (event as CustomEvent<{ threadId?: string }>).detail?.threadId;
+      if (!threadId) return;
+      setPanelOpen(true);
+      setHistoryOpen(false);
+      void loadThreads(threadId);
+    };
+    window.addEventListener("taskboard:ai-thread-started", handleStartedThread);
+    window.addEventListener("taskboard:ai-thread-open", handleOpenThread);
+    return () => {
+      window.removeEventListener("taskboard:ai-thread-started", handleStartedThread);
+      window.removeEventListener("taskboard:ai-thread-open", handleOpenThread);
+    };
+  }, [available, loadThreads]);
+
+  useEffect(() => {
     setSnapshot(null);
-    if (!selectedThreadId) return;
+    if (!panelOpen || !selectedThreadId) return;
     let initialPending = true;
     let refreshQueued = false;
     let disposed = false;
@@ -1220,39 +1316,53 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       disposed = true;
       unsubscribe();
     };
-  }, [loadSnapshot, selectedHintRefreshQueue, selectedThreadId]);
+  }, [loadSnapshot, panelOpen, selectedHintRefreshQueue, selectedThreadId]);
 
   const backgroundRunningThreadIds = threads
-    .filter((thread) => thread.status === "running" && thread.id !== selectedThreadId)
+    .filter((thread) => (
+      thread.status === "running" && (!panelOpen || thread.id !== selectedThreadId)
+    ))
     .map((thread) => thread.id);
   useEffect(() => {
     if (!available || backgroundRunningThreadIds.length === 0) return;
-    const refresh = async (threadId: string) => {
-      try {
-        const next = await getAiChatThread(threadId);
-        replaceThread(next.thread);
-        observeRunTransitions(next.runs);
-      } catch {
-        // The selected thread surfaces request errors; background history refresh stays quiet.
-      }
+    let refreshTimer: number | undefined;
+    const refresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void loadThreads(undefined, true), 120);
     };
-    const refreshQueue = createAiSnapshotRefreshQueue(refresh);
     const unsubscribers = backgroundRunningThreadIds.map((threadId) => (
-      subscribeAiChatThread(threadId, () => void refreshQueue.request(threadId))
+      subscribeAiChatThread(threadId, refresh)
     ));
     return () => {
-      refreshQueue.clear();
+      window.clearTimeout(refreshTimer);
       for (const unsubscribe of unsubscribers) unsubscribe();
     };
   }, [
     available,
     backgroundRunningThreadIds.join(","),
-    observeRunTransitions,
-    replaceThread,
-    selectedThreadId,
+    loadThreads,
   ]);
 
   const selectedThreadSummary = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+  const visibleThreads = threads.filter((thread) => {
+    if (historyFilter === "archived") return thread.archivedAt !== null;
+    if (historyFilter === "retry") {
+      return thread.archivedAt === null && (Boolean(thread.retryJob) || thread.status === "failed");
+    }
+    if (historyFilter === "running") {
+      return thread.archivedAt === null && !thread.retryJob && thread.status === "running";
+    }
+    return thread.archivedAt === null && !thread.retryJob && thread.status === "idle";
+  });
+  const retryThreadCount = threads.filter((thread) => (
+    thread.archivedAt === null && (Boolean(thread.retryJob) || thread.status === "failed")
+  )).length;
+  const runningThreadCount = threads.filter((thread) => (
+    thread.archivedAt === null && !thread.retryJob && thread.status === "running"
+  )).length;
+  const completedThreadCount = threads.filter((thread) => (
+    thread.archivedAt === null && !thread.retryJob && thread.status === "idle"
+  )).length;
   const catalogProjectId = snapshot?.thread.origin.projectId
     ?? selectedThreadSummary?.origin.projectId
     ?? draftOrigin?.projectId
@@ -1265,6 +1375,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       setCatalogError(null);
       return;
     }
+    if (!panelOpen) return;
     const controller = new AbortController();
     setCatalog(null);
     setCatalogLoadedProjectId(null);
@@ -1286,11 +1397,12 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       },
     );
     return () => controller.abort();
-  }, [available, catalogProjectId]);
+  }, [available, catalogProjectId, panelOpen]);
 
   const restoreDraftSettings = useCallback((thread: AiChatThread) => {
     setDraftModel(thread.model);
     setDraftEffort(thread.reasoningEffort);
+    setDraftServiceTier(thread.serviceTier);
     setDraftSandbox(thread.sandbox);
   }, []);
 
@@ -1358,29 +1470,52 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   const currentRun = snapshot?.thread.currentRun
     ?? snapshot?.runs.find((run) => run.status === "running")
     ?? null;
+  const taskSettingsBound = Boolean(
+    snapshot?.thread.origin.issueId ?? draftOrigin?.issueId ?? issueId,
+  );
+  const archivedReadonly = snapshot?.thread.archivedAt != null;
   const composerBlocked = Boolean(
-    selectedThreadId && deletingThreadId === selectedThreadId,
+    loading
+      || (selectedThreadId && deletingThreadId === selectedThreadId)
+      || archivedReadonly,
   );
   const sendBlocked = loading
     || settingsSaving
     || composerBlocked
     || Boolean(selectedThreadId && !snapshot);
-  const threadSettingsBlocked = loading || Boolean(selectedThreadId && !snapshot);
+  const threadSettingsBlocked = loading
+    || archivedReadonly
+    || Boolean(selectedThreadId && !snapshot);
+  const settingsControlsBlocked = threadSettingsBlocked
+    || snapshot?.thread.status === "running"
+    || Boolean(currentRun);
+  const canEditRuntimeSettings = !settingsControlsBlocked;
+  const canEditSandboxSettings = !settingsControlsBlocked && !taskSettingsBound;
   const attachmentBlocked = composerBlocked;
-  const primaryAction = chatPrimaryAction(
-    snapshot?.thread.status ?? "idle",
-    draft,
-    sendBlocked,
-    attachments.length > 0,
-  );
+  const primaryAction = archivedReadonly
+    ? "disabled" as const
+    : chatPrimaryAction(
+      snapshot?.thread.status ?? "idle",
+      draft,
+      sendBlocked,
+      attachments.length > 0,
+    );
   const anyRunning = threads.some((thread) => thread.status === "running");
   const anyFailed = threads.some((thread) => thread.status === "failed");
   const launcherState = anyRunning ? "running" : anyFailed ? "failed" : unread ? "unread" : "idle";
-  const lastUserEvent = snapshot?.thread.status === "failed"
-    ? [...snapshot.events].reverse().find((event) => (
-        event.role === "user"
-        || event.type === "user"
-        || event.type === "user_message"
+  const latestSettledRun = snapshot?.runs.at(-1) ?? null;
+  const retryableRun = latestSettledRun
+    && ["failed", "interrupted"].includes(latestSettledRun.status)
+    ? latestSettledRun
+    : null;
+  const lastUserEvent = retryableRun
+    ? [...(snapshot?.events ?? [])].reverse().find((event) => (
+        event.runId === retryableRun.id
+        && (
+          event.role === "user"
+          || event.type === "user"
+          || event.type === "user_message"
+        )
       )) ?? null
     : null;
   const retryableUserEvent = lastUserEvent && !eventHasAttachments(lastUserEvent)
@@ -1451,6 +1586,15 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       setError("请先进入一个已映射的项目，再新建对话");
       return;
     }
+    const taskDefaults = input.issueId && issueRole
+      ? TASK_ROLE_DEFAULT_SETTINGS[issueRole]
+      : null;
+    if (taskDefaults) {
+      setDraftModel(taskDefaults.model);
+      setDraftEffort(taskDefaults.reasoningEffort);
+      setDraftServiceTier(taskDefaults.serviceTier);
+      setDraftSandbox(taskDefaults.sandbox);
+    }
     if (!draftOrigin) draftReturnThreadIdRef.current = selectedThreadRef.current;
     resetComposer();
     setDraftOrigin({
@@ -1464,6 +1608,40 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
     setError(null);
   }
 
+  async function openConversationForCurrentContext() {
+    let currentThreads = threads;
+    if (
+      (issueId && !currentThreads.some((thread) => thread.origin.issueId === issueId))
+      || (preferredThreadId && !currentThreads.some((thread) => thread.id === preferredThreadId))
+    ) {
+      currentThreads = await loadThreads(undefined, true) ?? currentThreads;
+    }
+    const taskThreads = issueId
+      ? currentThreads.filter((thread) => thread.origin.issueId === issueId)
+      : [];
+    const preferredThread = preferredThreadId
+      ? currentThreads.find((thread) => thread.id === preferredThreadId) ?? null
+      : null;
+    const taskThread = preferredThread
+      ?? taskThreads.find((thread) => thread.archivedAt === null)
+      ?? taskThreads[0]
+      ?? null;
+
+    if (taskThread) {
+      if (taskThread.id !== selectedThreadRef.current) resetComposer();
+      draftReturnThreadIdRef.current = null;
+      setDraftOrigin(null);
+      setSnapshot(null);
+      selectThread(taskThread.id);
+      setHistoryOpen(false);
+      setMenu(null);
+      setError(null);
+    } else if (issueId && projectId) {
+      beginNewConversation();
+    }
+    setPanelOpen(true);
+  }
+
   async function createThreadForDraftOrigin(): Promise<AiChatThread | null> {
     const origin = draftOrigin ?? (
       projectId ? { projectId, issueId } : null
@@ -1473,29 +1651,42 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
       setError("请先进入一个已映射的项目，再新建对话");
       return null;
     }
-    const inheritedSettings = {
-      model: draftModel,
-      reasoningEffort: draftEffort,
-      sandbox: draftSandbox,
-    };
+    const inheritedSettings = settingsForNewAiThread(
+      input.projectId,
+      catalogLoadedProjectId,
+      {
+        model: draftModel,
+        reasoningEffort: draftEffort,
+        serviceTier: draftServiceTier,
+        sandbox: draftSandbox,
+      },
+    );
+    const taskRole = input.issueId ? issueRole : null;
+    const taskDefaults = taskRole ? TASK_ROLE_DEFAULT_SETTINGS[taskRole] : null;
     setLoading(true);
     try {
       const targetCatalog = catalogLoadedProjectId === input.projectId && activeCatalog
         ? activeCatalog
         : await getAiChatCatalog(input.projectId);
+      const requestedModel = draftModel || taskDefaults?.model || inheritedSettings.model;
+      const requestedEffort = draftEffort
+        || taskDefaults?.reasoningEffort
+        || inheritedSettings.reasoningEffort;
       const normalized = normalizeChatSelection(
         targetCatalog.models,
-        inheritedSettings.model,
-        inheritedSettings.reasoningEffort,
+        requestedModel,
+        requestedEffort,
       );
-      const sandbox = targetCatalog.sandboxes.includes(inheritedSettings.sandbox)
-        ? inheritedSettings.sandbox
-        : targetCatalog.sandboxes.find(
-          (candidate): candidate is AiChatSandbox => candidate === "workspace-write",
-        ) ?? targetCatalog.sandboxes.find(isAiChatSandbox) ?? inheritedSettings.sandbox;
+      const sandbox = taskDefaults?.sandbox
+        ?? (inheritedSettings.sandbox && targetCatalog.sandboxes.includes(inheritedSettings.sandbox)
+          ? inheritedSettings.sandbox
+          : targetCatalog.sandboxes.find(
+            (candidate): candidate is AiChatSandbox => candidate === "workspace-write",
+          ) ?? targetCatalog.sandboxes.find(isAiChatSandbox) ?? inheritedSettings.sandbox);
       const settings = {
-        model: normalized?.model ?? inheritedSettings.model,
-        reasoningEffort: normalized?.reasoningEffort ?? inheritedSettings.reasoningEffort,
+        model: normalized?.model ?? requestedModel,
+        reasoningEffort: normalized?.reasoningEffort ?? requestedEffort,
+        serviceTier: taskRole ? draftServiceTier : inheritedSettings.serviceTier ?? null,
         sandbox,
       };
       const thread = await createAiChatThread({
@@ -1518,19 +1709,51 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
     }
   }
 
-  async function deleteThread(thread: AiChatThread) {
-    if (!window.confirm(`删除本地对话“${thread.title}”？`)) return;
+  async function archiveThread(thread: AiChatThread) {
+    if (
+      !allowLocalArchiveRestore
+      || thread.origin.issueId
+      || thread.archivedAt !== null
+      || thread.status === "running"
+      || loading
+      || settingsSaving
+      || deletingThreadId !== null
+    ) return;
+    if (!window.confirm(`归档本地对话“${thread.title}”？`)) return;
     setDeletingThreadId(thread.id);
     try {
-      await deleteAiChatThread(thread.id);
-      const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
-      setThreads(remainingThreads);
+      const archived = await archiveAiChatThread(thread);
+      replaceThread(archived);
       if (selectedThreadRef.current === thread.id) {
-        setSnapshot(null);
-        setDraftOrigin(null);
-        selectThread(remainingThreads[0]?.id ?? null);
-        resetComposer();
+        setSnapshot((current) => patchAiChatSnapshot(current, thread.id, archived));
       }
+      setHistoryFilter("archived");
+      setError(null);
+    } catch (nextError) {
+      setError(messageFor(nextError));
+    } finally {
+      setDeletingThreadId(null);
+    }
+  }
+
+  async function restoreThread(thread: AiChatThread) {
+    if (
+      !allowLocalArchiveRestore
+      || thread.origin.issueId
+      || thread.archivedAt === null
+      || thread.status === "running"
+      || loading
+      || settingsSaving
+      || deletingThreadId !== null
+    ) return;
+    setDeletingThreadId(thread.id);
+    try {
+      const restored = await restoreAiChatThread(thread);
+      replaceThread(restored);
+      if (selectedThreadRef.current === thread.id) {
+        setSnapshot((current) => patchAiChatSnapshot(current, thread.id, restored));
+      }
+      setHistoryFilter("completed");
       setError(null);
     } catch (nextError) {
       setError(messageFor(nextError));
@@ -1542,10 +1765,11 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   async function saveThreadSettings(changes: {
     model?: string;
     reasoningEffort?: string;
+    serviceTier?: AiChatServiceTier | null;
     sandbox?: AiChatSandbox;
   }) {
     const previousThread = snapshot?.thread;
-    if (!previousThread) return;
+    if (!previousThread || previousThread.archivedAt !== null) return;
     const threadId = previousThread.id;
     setSettingsSaving(true);
     try {
@@ -1564,6 +1788,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   }
 
   async function chooseModel(model: AiChatModel) {
+    if (!canEditRuntimeSettings) return;
     const reasoningEffort = reasoningEffortForModel(model, draftEffort);
     setMenu(null);
     setDraftModel(model.slug);
@@ -1575,12 +1800,21 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   }
 
   async function chooseEffort(reasoningEffort: string) {
+    if (!canEditRuntimeSettings) return;
     setMenu(null);
     setDraftEffort(reasoningEffort);
     await saveThreadSettings({ reasoningEffort });
   }
 
+  async function chooseServiceTier(serviceTier: AiChatServiceTier | null) {
+    if (!canEditRuntimeSettings) return;
+    setMenu(null);
+    setDraftServiceTier(serviceTier);
+    await saveThreadSettings({ serviceTier });
+  }
+
   async function chooseSandbox(sandbox: AiChatSandbox) {
+    if (!canEditSandboxSettings) return;
     setMenu(null);
     setDraftSandbox(sandbox);
     await saveThreadSettings({ sandbox });
@@ -1637,6 +1871,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   }
 
   function removeComposerSkillToken(element: HTMLElement) {
+    if (composerBlocked) return;
     const editor = editorRef.current;
     const parent = element.parentNode;
     if (!editor || !parent) return;
@@ -1800,6 +2035,56 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
     }
   }
 
+  async function retryMessage(event: AiChatEvent) {
+    const thread = snapshot?.thread;
+    if (!thread || retryingRunId) return;
+    if (!thread.origin.issueId || !event.runId) {
+      await startMessage(event.content, false, eventSkillIds(event), false, []);
+      return;
+    }
+    setRetryingRunId(event.runId);
+    setError(null);
+    try {
+      const run = await retryAiChatTurn(thread.id, {
+        message: event.content,
+        sourceRunId: event.runId,
+        skillIds: eventSkillIds(event),
+      });
+      observedRunStatusesRef.current.set(run.id, run.status);
+      const threadStatus = run.status === "running"
+        ? "running" as const
+        : run.status === "failed"
+          ? "failed" as const
+          : "idle" as const;
+      setSnapshot((current) => current?.thread.id === thread.id ? {
+        ...current,
+        thread: {
+          ...current.thread,
+          status: threadStatus,
+          currentRun: run.status === "running" ? run : null,
+        },
+        runs: [
+          ...current.runs.filter((candidate) => candidate.id !== run.id),
+          run,
+        ].sort((left, right) => (
+          String(left.startedAt ?? "").localeCompare(String(right.startedAt ?? ""))
+          || left.id.localeCompare(right.id)
+        )),
+      } : current);
+      replaceThread({
+        ...thread,
+        status: threadStatus,
+        currentRun: run.status === "running" ? run : null,
+      });
+      void selectedHintRefreshQueue.request(thread.id);
+    } catch (nextError) {
+      if (selectedThreadRef.current === thread.id) setError(messageFor(nextError));
+      void selectedHintRefreshQueue.request(thread.id);
+    } finally {
+      setRetryingRunId(null);
+    }
+  }
+
   function attachmentFiles(files: FileList | File[]): File[] {
     return Array.from(files);
   }
@@ -1887,6 +2172,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
   }
 
   function handleComposerCut(event: ReactClipboardEvent<HTMLDivElement>) {
+    if (composerBlocked) return;
     const editor = editorRef.current;
     if (!editor) return;
     const fragment = selectedComposerFragment(editor);
@@ -2049,7 +2335,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
           />
           <header className="ai-chat-panel-header">
             <div className="ai-chat-panel-title">
-              <strong>{snapshot?.thread.title ?? "新对话"}</strong>
+              <strong>{snapshot?.thread.origin.issueTitle ?? snapshot?.thread.title ?? "新对话"}</strong>
               <span>{snapshot?.thread.origin.projectName ?? "选择对话或从当前项目新建"}</span>
             </div>
             <button
@@ -2087,11 +2373,49 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
             <div className="ai-chat-history" aria-label="对话历史">
               <div className="ai-chat-history-heading">
                 <strong>对话历史</strong>
-                <span>{threads.length}</span>
+                <span>{visibleThreads.length}</span>
               </div>
-              {threads.length > 0 ? threads.map((thread) => (
+              <div className="ai-chat-history-filter" role="tablist" aria-label="对话历史筛选">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={historyFilter === "running"}
+                  className={historyFilter === "running" ? "is-active" : undefined}
+                  onClick={() => setHistoryFilter("running")}
+                >
+                  运行中{runningThreadCount > 0 ? ` ${runningThreadCount}` : ""}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={historyFilter === "completed"}
+                  className={historyFilter === "completed" ? "is-active" : undefined}
+                  onClick={() => setHistoryFilter("completed")}
+                >
+                  已完成待验收{completedThreadCount > 0 ? ` ${completedThreadCount}` : ""}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={historyFilter === "retry"}
+                  className={historyFilter === "retry" ? "is-active" : undefined}
+                  onClick={() => setHistoryFilter("retry")}
+                >
+                  待重试{retryThreadCount > 0 ? ` ${retryThreadCount}` : ""}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={historyFilter === "archived"}
+                  className={historyFilter === "archived" ? "is-active" : undefined}
+                  onClick={() => setHistoryFilter("archived")}
+                >
+                  已归档
+                </button>
+              </div>
+              {visibleThreads.length > 0 ? visibleThreads.map((thread) => (
                 <div
-                  className={`ai-chat-history-row${thread.id === selectedThreadId ? " is-active" : ""}`}
+                  className={`ai-chat-history-row${thread.id === selectedThreadId ? " is-active" : ""}${thread.archivedAt !== null ? " is-archived" : ""}`}
                   key={thread.id}
                 >
                   <button
@@ -2106,23 +2430,80 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                   >
                     <span className={`ai-chat-thread-status is-${thread.status}`} aria-hidden="true" />
                     <span>
-                      <strong>{thread.title}</strong>
-                      <small>{thread.origin.projectName} · {dateLabel(thread.updatedAt)}</small>
+                      <strong>{thread.origin.issueTitle ?? thread.title}</strong>
+                      <small>
+                        {thread.origin.issueIdentifier && `${thread.origin.issueIdentifier} · `}
+                        {thread.origin.projectName} · {dateLabel(thread.updatedAt)}
+                        {thread.archivedAt !== null && " · 已归档"}
+                        {thread.retryJob && ` · ${retryLabel(thread.retryJob)}`}
+                      </small>
                     </span>
                   </button>
-                  <button
-                    className="ai-chat-history-delete"
-                    type="button"
-                    aria-label={`删除对话 ${thread.title}`}
-                    title="删除本地记录"
-                    disabled={thread.status === "running" || deletingThreadId === thread.id}
-                    onClick={() => void deleteThread(thread)}
-                  >
-                    <LinearIcon name="trash" />
-                  </button>
+                  {thread.origin.issueId && thread.origin.issueIdentifier ? (
+                    <button
+                      className="ai-chat-history-task-link"
+                      type="button"
+                      aria-label={`查看原任务 ${thread.origin.issueIdentifier}`}
+                      title="查看原任务描述与上下文；此对话由任务归档管理"
+                      onClick={() => {
+                        setHistoryOpen(false);
+                        setPanelOpen(false);
+                        onOpenTask({
+                          projectId: thread.origin.projectId,
+                          identifier: thread.origin.issueIdentifier!,
+                        });
+                      }}
+                    >
+                      查看原任务
+                    </button>
+                  ) : thread.origin.issueId ? (
+                    <span className="ai-chat-history-managed" title="由任务归档管理">由任务归档管理</span>
+                  ) : thread.archivedAt !== null ? (
+                    allowLocalArchiveRestore && (
+                      <button
+                        className="ai-chat-history-restore"
+                        type="button"
+                        aria-label={`恢复对话 ${thread.title}`}
+                        title="恢复对话"
+                        disabled={
+                          loading
+                          || settingsSaving
+                          || thread.status === "running"
+                          || deletingThreadId !== null
+                        }
+                        onClick={() => void restoreThread(thread)}
+                      >
+                        {deletingThreadId === thread.id ? "恢复中…" : "恢复"}
+                      </button>
+                    )
+                  ) : (
+                    allowLocalArchiveRestore && (
+                      <button
+                        className="ai-chat-history-archive"
+                        type="button"
+                        aria-label={`归档对话 ${thread.title}`}
+                        title="归档本地记录"
+                        disabled={
+                          loading
+                          || settingsSaving
+                          || thread.status === "running"
+                          || deletingThreadId !== null
+                        }
+                        onClick={() => void archiveThread(thread)}
+                      >
+                        <LinearIcon name="file" />
+                      </button>
+                    )
+                  )}
                 </div>
               )) : (
-                <p>还没有本地对话</p>
+                <p>{historyFilter === "archived"
+                  ? "还没有已归档对话"
+                  : historyFilter === "retry"
+                    ? "当前没有待重试任务"
+                    : historyFilter === "completed"
+                      ? "当前没有已完成待验收的对话"
+                      : "当前没有正在运行的对话"}</p>
               )}
             </div>
           )}
@@ -2137,33 +2518,51 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
               <div className="ai-chat-empty"><span className="ai-chat-spinner" />正在恢复对话…</div>
             ) : snapshot ? (
               <>
+                {archivedReadonly && (
+                  <div className="ai-chat-archived-banner" role="status">
+                    <LinearIcon name="file" />
+                    <span>
+                      此对话已归档，仅可阅读。
+                      {snapshot.thread.origin.issueId && " 由任务归档管理。"}
+                    </span>
+                  </div>
+                )}
                 <MessageTimeline
                   activeRunId={currentRun?.id ?? null}
                   events={snapshot.events}
                   skills={activeCatalog?.skills ?? []}
                 />
+                {snapshot.thread.retryJob && (
+                  <div
+                    className={`ai-chat-retry-status is-${snapshot.thread.retryJob.state}`}
+                    role="status"
+                  >
+                    <LinearIcon name="recurrence" />
+                    <span>
+                      <strong>{retryLabel(snapshot.thread.retryJob)}</strong>
+                      <small>{snapshot.thread.retryJob.lastError}</small>
+                    </span>
+                  </div>
+                )}
                 {snapshot.thread.status === "running" && (
                   <div className="ai-chat-running" role="status">
                     <span className="ai-chat-spinner" />
                     Codex 正在处理
                   </div>
                 )}
-                {retryableUserEvent && (
+                {retryableUserEvent && !archivedReadonly && (
                   <button
                     className="ai-chat-retry"
                     type="button"
-                    onClick={() => {
-                      void startMessage(
-                        retryableUserEvent.content,
-                        false,
-                        eventSkillIds(retryableUserEvent),
-                        false,
-                        [],
-                      );
-                    }}
+                    disabled={retryingRunId === retryableUserEvent.runId}
+                    onClick={() => void retryMessage(retryableUserEvent)}
                   >
                     <LinearIcon name="recurrence" />
-                    重试上一条消息
+                    {retryingRunId === retryableUserEvent.runId
+                      ? "正在继续…"
+                      : snapshot.thread.origin.issueId
+                        ? "继续处理"
+                        : "重试上一条消息"}
                   </button>
                 )}
               </>
@@ -2217,6 +2616,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                         type="button"
                         aria-label={`移除附件 ${attachment.filename}`}
                         title="移除附件"
+                        disabled={attachmentBlocked}
                         onClick={() => {
                           setAttachments((current) => current.filter((item) => item.id !== attachment.id));
                         }}
@@ -2322,6 +2722,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                 type="file"
                 multiple
                 tabIndex={-1}
+                disabled={attachmentBlocked}
                 onChange={(event) => void handleAttachmentSelection(event)}
               />
               <button
@@ -2342,11 +2743,12 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                   aria-expanded={menu === "sandbox"}
                   disabled={
                     !activeCatalog
-                    || snapshot?.thread.status === "running"
-                    || settingsSaving
-                    || threadSettingsBlocked
+                    || !canEditSandboxSettings
                   }
-                  onClick={() => setMenu((current) => current === "sandbox" ? null : "sandbox")}
+                  onClick={() => {
+                    if (!canEditSandboxSettings) return;
+                    setMenu((current) => current === "sandbox" ? null : "sandbox");
+                  }}
                 >
                   <LinearIcon name={SANDBOX_ICONS[draftSandbox]} />
                   {SANDBOX_LABELS[draftSandbox]}
@@ -2394,15 +2796,16 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                   aria-expanded={menu === "model" || menu === "model-list" || menu === "effort-list"}
                   disabled={
                     !activeCatalog
-                    || snapshot?.thread.status === "running"
-                    || settingsSaving
-                    || threadSettingsBlocked
+                    || !canEditRuntimeSettings
                   }
-                  onClick={() => setMenu((current) => (
-                    current === "model" || current === "model-list" || current === "effort-list"
-                      ? null
-                      : "model"
-                  ))}
+                  onClick={() => {
+                    if (!canEditRuntimeSettings) return;
+                    setMenu((current) => (
+                      current === "model" || current === "model-list" || current === "effort-list"
+                        ? null
+                        : "model"
+                    ));
+                  }}
                 >
                   <span>{modelDisplayName(selectedModel?.displayName ?? (draftModel || "模型"))}</span>
                   <span className="ai-chat-model-effort">
@@ -2412,7 +2815,11 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                 </button>
                 {menu === "model" && (
                   <div className="ai-chat-option-menu ai-chat-config-menu" role="menu" aria-label="模型与推理强度">
-                    <button type="button" onClick={() => setMenu("model-list")}>
+                    <button
+                      type="button"
+                      disabled={!canEditRuntimeSettings}
+                      onClick={() => setMenu("model-list")}
+                    >
                       <span>模型</span>
                       <strong>{modelDisplayName(selectedModel?.displayName ?? draftModel)}</strong>
                       <LinearIcon name="chevronRight" />
@@ -2437,6 +2844,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                         type="button"
                         role="menuitemradio"
                         aria-checked={model.slug === draftModel}
+                        disabled={!canEditRuntimeSettings}
                         key={model.slug}
                         onClick={() => void chooseModel(model)}
                       >
@@ -2472,7 +2880,62 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
                 )}
               </div>
 
-              {primaryAction === "stop" ? (
+              <div className="ai-chat-menu-wrap ai-chat-model-menu-wrap">
+                <button
+                  className="ai-chat-model-trigger"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-label="速度设置"
+                  aria-expanded={menu === "service-tier-list"}
+                  disabled={
+                    !activeCatalog
+                    || !canEditRuntimeSettings
+                  }
+                  onClick={() => {
+                    if (!canEditRuntimeSettings) return;
+                    setMenu((current) => current === "service-tier-list" ? null : "service-tier-list");
+                  }}
+                >
+                  <span>速度：{serviceTierDisplayName(draftServiceTier, selectedModel)}</span>
+                  <LinearIcon name="chevronDown" />
+                </button>
+                {menu === "service-tier-list" && (
+                  <div className="ai-chat-option-menu ai-chat-config-menu ai-chat-config-submenu" role="menu" aria-label="选择速度">
+                    <header>
+                      <strong>速度</strong>
+                    </header>
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={draftServiceTier === null}
+                      onClick={() => void chooseServiceTier(null)}
+                    >
+                      <span>
+                        <strong>标准</strong>
+                        <small>不使用 Fast 加速</small>
+                      </span>
+                      {draftServiceTier === null && <LinearIcon name="check" />}
+                    </button>
+                    {(selectedModel?.serviceTiers ?? []).map((tier) => (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={tier.id === draftServiceTier}
+                        key={tier.id}
+                        onClick={() => void chooseServiceTier(tier.id)}
+                      >
+                        <span>
+                          <strong>{serviceTierDisplayName(tier.id, selectedModel)}</strong>
+                          <small>{tier.id === "priority" ? "优先速度" : tier.name}</small>
+                        </span>
+                        {tier.id === draftServiceTier && <LinearIcon name="check" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+                {primaryAction === "stop" ? (
                 <button
                   className="ai-chat-send-button is-stop"
                   type="button"
@@ -2539,7 +3002,7 @@ export function AiChat({ available, projectId, issueId }: AiChatProps) {
           aria-label="打开 AI 对话"
           aria-expanded="false"
           title="AI 对话"
-          onClick={() => setPanelOpen(true)}
+          onClick={() => void openConversationForCurrentContext()}
         >
           <LinearIcon name="conversation" />
           {launcherState !== "idle" && <span className="ai-chat-launcher-state" aria-hidden="true" />}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "任务状态与 AI 走向",
+    "subtitle": "上排从积压进入审核与开发；下排从交付验收到待复盘和完成",
+    "output": "docs/diagrams/taskboard-status-ai-lifecycle.html",
+    "animation": "none",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "before_delivery", "label": "开发前主线", "focus": ["backlog", "todo", "sol_review", "review_decision", "development"], "note": "只有 Codex Agent 进入待开发才自动经过 Sol。" },
+      { "id": "after_delivery", "label": "交付后主线", "focus": ["in_review", "retrospective", "done"], "note": "下排箭头从右向左：审核中 → 待复盘 → 完成。" }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "审核与开发" },
+    { "id": "acceptance", "label": "验收与收尾" }
+  ],
+  "states": [
+    { "id": "backlog", "type": "start", "label": "积压事项", "sublabel": "不启动开发", "lane": "main", "col": 0, "step": "01" },
+    { "id": "todo", "type": "waiting", "label": "待开发", "sublabel": "Agent 才审核", "lane": "main", "col": 1, "step": "02" },
+    { "id": "sol_review", "type": "active", "label": "Sol 审核", "sublabel": "只读检查", "lane": "main", "col": 2, "step": "03" },
+    { "id": "review_decision", "type": "decision", "label": "信息足够？", "sublabel": "ready 或提问", "lane": "main", "col": 3, "step": "04" },
+    { "id": "development", "type": "active", "label": "开发或规划", "sublabel": "worker 默认 Luna / planner 默认 Sol", "lane": "main", "col": 4, "step": "05" },
+    { "id": "in_review", "type": "waiting", "label": "审核中", "sublabel": "等待你验收", "lane": "acceptance", "col": 2, "width": 110 },
+    { "id": "retrospective", "type": "waiting", "label": "待复盘", "sublabel": "交付已接受", "lane": "acceptance", "col": 1, "width": 110 },
+    { "id": "done", "type": "success", "label": "完成", "sublabel": "最终状态", "lane": "acceptance", "col": 0, "width": 110 }
+  ],
+  "transitions": [
+    { "id": "to_todo", "from": "backlog", "to": "todo", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "id": "start_review", "from": "todo", "to": "sol_review", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "id": "review_result", "from": "sol_review", "to": "review_decision", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "id": "ready", "from": "review_decision", "to": "development", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "id": "deliver", "from": "development", "to": "in_review", "route": "straight", "fromSide": "bottom", "toSide": "top", "variant": "emphasis" },
+    { "id": "accept", "from": "in_review", "to": "retrospective", "route": "straight", "fromSide": "left", "toSide": "right", "variant": "emphasis" },
+    { "id": "finish", "from": "retrospective", "to": "done", "route": "straight", "fromSide": "left", "toSide": "right", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "自动主线", "items": ["积压事项不会自动开始；你移动到待开发才进入下一步", "负责人不是 Codex Agent 时，待开发只表示排队，不创建审核或开发对话", "普通任务经审核通过后启动开发 worker；顶层主任务由 planner 规划，主任务子任务先过父任务派发审核"] },
+    { "dot": "amber", "title": "待解决与恢复", "items": ["Sol 信息不足会写编号问题并把任务移到待解决；审核失败或开发启动失败也会留评论并转待解决", "你要用“发布并重新审核”；“仅发布”只留评论，不唤醒复审", "项目缺少工作区时可能在审核记录创建前失败；此时任务可能仍显示待开发但没有审核记录"] },
+    { "dot": "rose", "title": "手动跨阶段与已取消", "items": ["面板允许任意跨阶段：进入进行中不证明 Agent 已开始写代码", "进入审核中、待复盘或完成，不会自动补出交付、验收、测试或复盘证据", "已取消不是归档，任务仍在看板且可重开；完成也可手动重新打开"] },
+    { "dot": "cyan", "title": "编辑与返工", "items": ["Codex Agent 任务处于待开发时，修改标题、描述或标签会重新触发审核", "优先级、负责人、截止日、重复和开发上下文的字段变化本身不触发复审", "审核中提交修改意见会回到待开发并再次过审核，而不是直接跳回开发 worker"] }
+  ]
+}

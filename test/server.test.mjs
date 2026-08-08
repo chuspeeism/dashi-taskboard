@@ -735,8 +735,20 @@ done
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body, {
     skills: [
-      { id: "repo-skill", label: "Repository Skill", scope: "repo" },
-      { id: "user-skill", label: "user-skill", scope: "user" },
+      {
+        id: "repo-skill",
+        label: "Repository Skill",
+        description: "",
+        path: "",
+        scope: "repo",
+      },
+      {
+        id: "user-skill",
+        label: "user-skill",
+        description: "",
+        path: "",
+        scope: "user",
+      },
     ],
     mcpServers: [
       { id: "context7", label: "context7", transport: "streamable_http" },
@@ -1140,11 +1152,11 @@ test("project and task CRUD flow", async () => {
 
   const archiveResult = await request(baseUrl, `/api/tasks/${created.id}/archive`, {
     method: "POST",
-    body: { version: updated.version, threadId: "thread-archive" },
+    body: { version: updated.version },
   });
   assert.equal(archiveResult.response.status, 200);
   assert.equal(archiveResult.body.task.version, 3);
-  assert.equal(archiveResult.body.task.threadId, "thread-archive");
+  assert.equal(archiveResult.body.task.threadId, "thread-456");
   assert.match(archiveResult.body.task.archivedAt, /^\d{4}-\d{2}-\d{2}T/);
 
   const activeList = await request(baseUrl, "/api/tasks?projectId=website");
@@ -1158,18 +1170,80 @@ test("project and task CRUD flow", async () => {
 
   const restoreResult = await request(baseUrl, `/api/tasks/${created.id}/restore`, {
     method: "POST",
-    body: { version: archiveResult.body.task.version, threadId: "thread-restore" },
+    body: { version: archiveResult.body.task.version },
   });
   assert.equal(restoreResult.response.status, 200);
   assert.equal(restoreResult.body.task.archivedAt, null);
   assert.equal(restoreResult.body.task.version, 4);
-  assert.equal(restoreResult.body.task.threadId, "thread-restore");
+  assert.equal(restoreResult.body.task.threadId, "thread-456");
 
   const activeAfterRestore = await request(baseUrl, "/api/tasks?projectId=website");
   assert.deepEqual(activeAfterRestore.body.tasks.map((task) => task.id), [created.id]);
   const projectsAfterRestore = await request(baseUrl, "/api/projects");
   const restoredWebsiteProject = projectsAfterRestore.body.projects.find((project) => project.id === "website");
   assert.equal(restoredWebsiteProject.issueCount, 1);
+});
+
+test("local task archive and restore accept optional mutation attribution with CAS", async () => {
+  const baseUrl = await startServer();
+  const created = await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Archive attribution", threadId: "initial-thread" },
+  });
+  const initial = created.body.task;
+  const edited = await request(baseUrl, `/api/tasks/${initial.id}`, {
+    method: "PATCH",
+    body: { version: initial.version, title: "Archive attribution edited" },
+  });
+  const current = edited.body.task;
+
+  const staleArchive = await request(baseUrl, `/api/tasks/${initial.id}/archive`, {
+    method: "POST",
+    body: { version: initial.version, threadId: "stale-archive-thread" },
+  });
+  assert.equal(staleArchive.response.status, 409);
+  assert.equal(staleArchive.body.error.code, "VERSION_CONFLICT");
+  assert.deepEqual((await request(baseUrl, `/api/tasks/${initial.id}`)).body.task, current);
+
+  const archived = await request(baseUrl, `/api/tasks/${initial.id}/archive`, {
+    method: "POST",
+    body: { version: current.version, threadId: "archive-thread" },
+  });
+  assert.equal(archived.response.status, 200);
+  assert.equal(archived.body.task.threadId, "archive-thread");
+  assert.ok(archived.body.task.archivedAt);
+
+  const staleRestore = await request(baseUrl, `/api/tasks/${initial.id}/restore`, {
+    method: "POST",
+    body: { version: current.version, threadId: "stale-restore-thread" },
+  });
+  assert.equal(staleRestore.response.status, 409);
+  assert.equal(staleRestore.body.error.code, "VERSION_CONFLICT");
+  assert.deepEqual((await request(baseUrl, `/api/tasks/${initial.id}`)).body.task, archived.body.task);
+
+  const restored = await request(baseUrl, `/api/tasks/${initial.id}/restore`, {
+    method: "POST",
+    body: { version: archived.body.task.version, threadId: "restore-thread" },
+  });
+  assert.equal(restored.response.status, 200);
+  assert.equal(restored.body.task.archivedAt, null);
+  assert.equal(restored.body.task.threadId, "restore-thread");
+
+  const versionOnlyTask = await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Version only" },
+  });
+  const versionOnlyArchive = await request(baseUrl, `/api/tasks/${versionOnlyTask.body.task.id}/archive`, {
+    method: "POST",
+    body: { version: versionOnlyTask.body.task.version },
+  });
+  assert.equal(versionOnlyArchive.response.status, 200);
+  const versionOnlyRestore = await request(baseUrl, `/api/tasks/${versionOnlyTask.body.task.id}/restore`, {
+    method: "POST",
+    body: { version: versionOnlyArchive.body.task.version },
+  });
+  assert.equal(versionOnlyRestore.response.status, 200);
+  assert.equal(versionOnlyRestore.body.task.threadId, null);
 });
 
 test("moving a task updates its status and sort order", async () => {
@@ -1189,6 +1263,76 @@ test("moving a task updates its status and sort order", async () => {
   assert.equal(moveResult.body.task.sortOrder, 2500.5);
   assert.equal(moveResult.body.task.threadId, "thread-move");
   assert.equal(moveResult.body.task.version, 2);
+});
+
+test("reassigning a task preserves its status, identity, context, comments, and relations", async () => {
+  const baseUrl = await startServer();
+  for (const [id, name] of [["inbox", "Inbox"], ["website", "Website"]]) {
+    const result = await request(baseUrl, "/api/projects", {
+      method: "POST",
+      body: { id, name },
+    });
+    assert.equal(result.response.status, 201);
+  }
+
+  const parent = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "inbox", title: "Original parent" },
+  })).body.task;
+  const created = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: {
+      projectId: "inbox",
+      title: "Classify me",
+      threadId: "thread-original",
+      developmentContext: { type: "branch", branch: "feature/classify" },
+    },
+  })).body.task;
+  const related = (await request(
+    baseUrl,
+    `/api/tasks/${created.id}/relations/parent/${parent.id}`,
+    {
+      method: "POST",
+      body: { version: created.version, threadId: "thread-relation" },
+    },
+  )).body.task;
+  const comment = (await request(baseUrl, `/api/tasks/${created.id}/comments`, {
+    method: "POST",
+    body: { body: "Keep this context", threadId: "thread-comment" },
+  })).body.comment;
+
+  const reassigned = await request(baseUrl, `/api/tasks/${created.id}/reassign`, {
+    method: "POST",
+    body: { version: related.version, projectId: "website" },
+  });
+  assert.equal(reassigned.response.status, 200);
+  assert.equal(reassigned.body.task.id, created.id);
+  assert.notEqual(reassigned.body.task.identifier, created.identifier);
+  assert.ok(reassigned.body.task.previousIdentifiers.includes(created.identifier));
+  assert.equal(reassigned.body.task.projectId, "website");
+  assert.equal(reassigned.body.task.status, "backlog");
+  assert.equal(reassigned.body.task.threadId, "thread-relation");
+  assert.deepEqual(reassigned.body.task.developmentContext, created.developmentContext);
+  assert.equal(reassigned.body.task.relations.parent.id, parent.id);
+  assert.equal(reassigned.body.task.version, related.version + 1);
+
+  const comments = await request(baseUrl, `/api/tasks/${created.id}/comments`);
+  assert.deepEqual(comments.body.comments.map((item) => item.id), [comment.id]);
+  const projects = (await request(baseUrl, "/api/projects")).body.projects;
+  assert.equal(projects.find((project) => project.id === "inbox").issueCount, 1);
+  assert.equal(projects.find((project) => project.id === "website").issueCount, 1);
+
+  const notBacklog = await request(baseUrl, `/api/tasks/${created.id}/move`, {
+    method: "POST",
+    body: { version: reassigned.body.task.version, status: "todo" },
+  });
+  const reassignedTodo = await request(baseUrl, `/api/tasks/${created.id}/reassign`, {
+    method: "POST",
+    body: { version: notBacklog.body.task.version, projectId: "inbox" },
+  });
+  assert.equal(reassignedTodo.response.status, 200);
+  assert.equal(reassignedTodo.body.task.projectId, "inbox");
+  assert.equal(reassignedTodo.body.task.status, "todo");
 });
 
 test("tasks can bind, change, and unbind one project workflow", async () => {
@@ -1720,9 +1864,12 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
   });
   const htmlAttachment = htmlUpload.body.attachment;
   const htmlContent = await fetch(`${baseUrl}/api/attachments/${htmlAttachment.id}/content`);
-  assert.equal(htmlContent.headers.get("content-type"), "application/octet-stream");
-  assert.match(htmlContent.headers.get("content-disposition"), /^attachment;/);
-  assert.equal(htmlContent.headers.get("content-security-policy"), "sandbox; default-src 'none'");
+  assert.equal(htmlContent.headers.get("content-type"), "text/html");
+  assert.match(htmlContent.headers.get("content-disposition"), /^inline;/);
+  assert.equal(
+    htmlContent.headers.get("content-security-policy"),
+    "sandbox allow-scripts; default-src 'none'; img-src data: blob:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:",
+  );
   const htmlDelete = await request(baseUrl, `/api/attachments/${htmlAttachment.id}`, { method: "DELETE" });
   assert.equal(htmlDelete.response.status, 204);
 
@@ -1733,6 +1880,36 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
   const deletedContent = await request(baseUrl, `/api/attachments/${attachment.id}/content`);
   assert.equal(deletedContent.response.status, 404);
   assert.equal(deletedContent.body.error.code, "ATTACHMENT_NOT_FOUND");
+});
+
+test("archived task attachment deletion is rejected before storage removal", async () => {
+  const baseUrl = await startServer();
+  const created = await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Archived attachment" },
+  });
+  const task = created.body.task;
+  const uploaded = await request(baseUrl, `/api/tasks/${task.id}/attachments`, {
+    method: "POST",
+    headers: {
+      "content-type": "text/plain",
+      "x-taskboard-filename": encodeURIComponent("keep.txt"),
+    },
+    body: "keep me",
+  });
+  const attachment = uploaded.body.attachment;
+  const archived = await request(baseUrl, `/api/tasks/${task.id}/archive`, {
+    method: "POST",
+    body: { version: task.version },
+  });
+  assert.equal(archived.response.status, 200);
+
+  const deleted = await request(baseUrl, `/api/attachments/${attachment.id}`, { method: "DELETE" });
+  assert.equal(deleted.response.status, 409);
+  assert.equal(deleted.body.error.code, "TASK_ARCHIVED");
+  const content = await fetch(`${baseUrl}/api/attachments/${attachment.id}/content`);
+  assert.equal(content.status, 200);
+  assert.equal(await content.text(), "keep me");
 });
 
 test("comments support attachments and deleting a comment removes its files", async () => {

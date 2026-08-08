@@ -2,7 +2,10 @@ import type {
   AiChatEvent,
   AiChatAttachmentInput,
   AiChatModel,
+  AiChatRole,
   AiChatSandbox,
+  AiChatServiceTier,
+  AiChatSkill,
   AiChatThread,
   AiChatThreadSnapshot,
   AiChatThreadStatus,
@@ -49,6 +52,52 @@ export function buildThreadCreateInput(projectId: string, issueId: string | null
   return {
     projectId,
     ...(issueId ? { issueId } : {}),
+  };
+}
+
+export function settingsForNewAiThread<T extends Record<string, unknown>>(
+  projectId: string,
+  sourceProjectId: string | null,
+  settings: T,
+): Partial<T> {
+  return sourceProjectId === projectId ? settings : {};
+}
+
+export function serviceTierForTaskRole(
+  role: AiChatRole | null,
+  inherited: AiChatServiceTier | null,
+): AiChatServiceTier | null {
+  if (role === "planner") return null;
+  if (role === "worker") return "priority";
+  return inherited;
+}
+
+export function readSkillMention(
+  value: string,
+  caret: number,
+): { start: number; end: number; query: string } | null {
+  const prefix = value.slice(0, caret);
+  const match = /(?:^|\s)@([^\s@]*)$/.exec(prefix);
+  if (!match) return null;
+  return {
+    start: (match.index ?? 0) + match[0].length - match[1].length - 1,
+    end: caret,
+    query: match[1].toLocaleLowerCase(),
+  };
+}
+
+export function insertSkillMention(
+  value: string,
+  start: number,
+  end: number,
+  skill: Pick<AiChatSkill, "id" | "label">,
+): { value: string; caret: number; skillId: string } {
+  const label = skill.label || skill.id;
+  const replacement = `@${label}`;
+  return {
+    value: `${value.slice(0, start)}${replacement}${value.slice(end)}`,
+    caret: start + replacement.length,
+    skillId: skill.id,
   };
 }
 

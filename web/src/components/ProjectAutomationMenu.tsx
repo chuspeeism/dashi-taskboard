@@ -32,6 +32,7 @@ interface AutomationState extends AutomationOptions {
 }
 
 interface ProjectAutomationMenuProps {
+  projectName: string;
   automation?: Partial<AutomationState>;
   pending: boolean;
   error: string | null;
@@ -58,6 +59,7 @@ const EFFORT_LABELS: Record<AutomationReasoningEffort, string> = {
 };
 
 export function ProjectAutomationMenu({
+  projectName,
   automation,
   pending,
   error,
@@ -72,28 +74,17 @@ export function ProjectAutomationMenu({
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
   const [draft, setDraft] = useState<AutomationOptions>(DEFAULT_OPTIONS);
   const status = automation?.status ?? "PAUSED";
-  const quota = automation?.quota;
-  const stateLabel = !automation?.enabledByUser
-    ? "已暂停"
-    : automation.quotaAware && quota?.state === "blocked"
-      ? "额度暂停"
-      : automation.quotaAware && quota?.state === "unavailable"
-        ? "额度不可用"
-        : automation.quotaAware && (!quota || quota.state === "unknown")
-          ? "额度未知"
-          : status === "ACTIVE"
-            ? "运行中"
-            : "已暂停";
+  const stateLabel = status === "ACTIVE" ? "运行中" : "已暂停";
   const disabled = pending || Boolean(unavailableReason);
 
   useEffect(() => {
     if (!open) return;
-    setDraft({ ...DEFAULT_OPTIONS, ...automation });
+    setDraft({ ...DEFAULT_OPTIONS, ...automation, quotaAware: false });
   }, [open]);
 
   useEffect(() => {
     if (wasPendingRef.current && !pending) {
-      setDraft({ ...DEFAULT_OPTIONS, ...automation });
+      setDraft({ ...DEFAULT_OPTIONS, ...automation, quotaAware: false });
     }
     wasPendingRef.current = pending;
   }, [automation, pending]);
@@ -148,17 +139,17 @@ export function ProjectAutomationMenu({
       ref={menuRef}
       className="project-automation-menu no-drag"
       role="dialog"
-      aria-label="自动认领待办设置"
+      aria-label={`${projectName} 自动开发设置`}
       style={{ left: position.left, top: position.top, visibility: position.ready ? "visible" : "hidden" }}
     >
       <div className="project-automation-menu-heading">
-        <strong>自动认领待办</strong>
+        <strong>{projectName} 自动开发</strong>
         <span className={status === "ACTIVE" ? "is-active" : "is-paused"}>
           {stateLabel}
         </span>
       </div>
       <div className="project-automation-switch">
-        <span>自动认领开关</span>
+        <span>当前项目自动开发</span>
         <button
           type="button"
           className={`board-setting-switch${draft.enabledByUser ? " is-on" : ""}`}
@@ -168,43 +159,15 @@ export function ProjectAutomationMenu({
           onClick={() => submitChange({
             ...draft,
             enabledByUser: !draft.enabledByUser,
+            quotaAware: false,
           })}
         >
           <span aria-hidden="true" />
         </button>
       </div>
-      <div className="project-automation-switch">
-        <span>根据额度启用/关闭</span>
-        <button
-          type="button"
-          className={`board-setting-switch${draft.quotaAware ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={draft.quotaAware}
-          disabled={disabled}
-          onClick={() => submitChange({
-            ...draft,
-            quotaAware: !draft.quotaAware,
-          })}
-        >
-          <span aria-hidden="true" />
-        </button>
-      </div>
-      {draft.quotaAware && (
-        <div className={`project-automation-quota is-${quota?.state ?? "unknown"}`}>
-          {quota?.state === "available" && "当前额度可用"}
-          {quota?.state === "blocked" && (
-            quota.resetsAt
-              ? `额度已用尽，预计 ${formatResetTime(quota.resetsAt)} 恢复`
-              : "额度已用尽，自动认领已暂停"
-          )}
-          {quota?.state === "unavailable" && (
-            quota.reason === "api-key"
-              ? "API Key 模式不支持读取 Codex App 额度"
-              : "当前账户无法读取额度"
-          )}
-          {(!quota || quota.state === "unknown") && "额度状态未知，自动认领已暂停"}
-        </div>
-      )}
+      <p className="project-automation-note">
+        仅影响「{projectName}」；关闭后会保持暂停，手动拖到待开发仍会先经过需求审核，通过后再启动。
+      </p>
       <label className="project-automation-field">
         <span>间隔</span>
         <select
@@ -257,11 +220,11 @@ export function ProjectAutomationMenu({
         ref={triggerRef}
         type="button"
         className={`project-automation-trigger no-drag ${status === "ACTIVE" ? "is-active" : "is-paused"}`}
-        aria-label={status === "ACTIVE" ? "自动认领" : "无自动化"}
+        aria-label={status === "ACTIVE" ? "自动开发" : "手动启动"}
         aria-busy={pending}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={status === "ACTIVE" ? "自动认领" : "无自动化"}
+        title={status === "ACTIVE" ? "自动开发" : "手动启动"}
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
@@ -271,18 +234,9 @@ export function ProjectAutomationMenu({
         }}
       >
         <LinearIcon name={status === "ACTIVE" ? "play" : "pause"} />
-        <span>{status === "ACTIVE" ? "自动认领" : "无自动化"}</span>
+        <span>{status === "ACTIVE" ? "自动开发" : "手动启动"}</span>
       </button>
       {menu}
     </>
   );
-}
-
-function formatResetTime(value: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value * 1_000));
 }

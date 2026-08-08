@@ -58,7 +58,7 @@ test("opening Taskboard suppresses native selection and contextual header until 
 
 test("the embedded header fills the native titlebar without clipping or a full-page no-drag region", () => {
   assert.match(source, /top: 0;/);
-  assert.match(source, /z-index: 31 !important/);
+  assert.match(source, /z-index: 41 !important/);
   assert.doesNotMatch(source, /headerRightInset/);
   assert.doesNotMatch(source, /NATIVE_HEADER_RIGHT_INSET/);
   assert.doesNotMatch(source, /clip-path: polygon/);
@@ -120,12 +120,20 @@ test("opening asks the resident launcher to ensure the service and rebuilds fail
   assert.match(source, /hostResponse: onHostResponse/);
   assert.match(source, /function hasLiveHostBinding/);
   assert.match(source, /HOST_HEARTBEAT_MAX_AGE_MS/);
+  assert.match(source, /get frameReady\(\) \{\s*return frameReady;\s*\}/);
 });
 
-test("the injected iframe can be cache-busted without reloading the Codex shell", () => {
+test("the injected iframe refresh preserves the active Taskboard route", () => {
   assert.match(source, /const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh"/);
+  assert.match(source, /let frameRouteUrl = ""/);
+  assert.match(source, /function rememberFrameRoute\(rawUrl\)/);
+  assert.match(source, /message\.type === "taskboard:route"/);
+  assert.match(webApp, /type: "taskboard:route"/);
+  assert.match(webApp, /href: window\.location\.href/);
+  assert.match(webApp, /type: "taskboard:reload-frame"/);
+  assert.match(source, /message\.type === "taskboard:reload-frame"/);
   assert.match(source, /function reloadFrame\(\)/);
-  assert.match(source, /loadTaskboardFrame\(true\)/);
+  assert.match(source, /loadTaskboardFrame\(true, frameRouteUrl\)/);
   assert.match(source, /reloadFrame,/);
 });
 
@@ -189,6 +197,8 @@ test("complete App automation payloads cross the injected forwarder into the cur
     workspacePath: "/tmp/local-project",
     skillPath: "/tmp/manage-taskboard/SKILL.md",
     automationId: "automation-1",
+    enabledByUser: true,
+    quotaAware: false,
     intervalMinutes: 10,
     model: "gpt-5.6-sol",
     reasoningEffort: "ultra",

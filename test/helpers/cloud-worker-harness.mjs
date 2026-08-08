@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +7,11 @@ import { Miniflare } from "miniflare";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ENTRY_PATH = path.join(PROJECT_ROOT, "cloud", "src", "index.mjs");
-const MIGRATION_PATH = path.join(PROJECT_ROOT, "cloud", "migrations", "0001_initial.sql");
+const MIGRATION_DIRECTORY = path.join(PROJECT_ROOT, "cloud", "migrations");
 
 async function requireCloudImplementation() {
   const missing = [];
-  for (const filename of [ENTRY_PATH, MIGRATION_PATH]) {
+  for (const filename of [ENTRY_PATH, MIGRATION_DIRECTORY]) {
     try {
       await access(filename);
     } catch (error) {
@@ -48,7 +48,12 @@ export async function createCloudWorkerHarness({
   try {
     await miniflare.ready;
     const db = await miniflare.getD1Database("DB");
-    await db.exec(await readFile(MIGRATION_PATH, "utf8"));
+    const migrations = (await readdir(MIGRATION_DIRECTORY))
+      .filter((filename) => filename.endsWith(".sql"))
+      .sort();
+    for (const migration of migrations) {
+      await db.exec(await readFile(path.join(MIGRATION_DIRECTORY, migration), "utf8"));
+    }
     const attachments = await miniflare.getR2Bucket("ATTACHMENTS");
 
     async function request(pathname, {

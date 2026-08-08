@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "方案二：一条评论的三种去向",
+    "subtitle": "仅记录、继续当前审核、另开 Sol 讨论必须由用户明确选择",
+    "animation": "trace",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase",
+    "viewBox": [1440, 900],
+    "views": [
+      { "id": "plain_comment", "label": "仅发布评论", "focus": ["compose", "choose_action", "save_comment", "show_comment"], "note": "只留下记录，不唤醒 AI。" },
+      { "id": "resume_review", "label": "继续当前审核", "focus": ["compose", "choose_action", "rerun_review", "review_result"], "note": "复用当前需求审核上下文。" },
+      { "id": "new_discussion", "label": "新建 Sol 讨论", "focus": ["compose", "choose_action", "sol_discussion", "adopt_result"], "note": "支线讨论完成后再决定是否采用结论。" }
+    ]
+  },
+  "lanes": [
+    { "id": "user", "label": "用户操作" },
+    { "id": "comment", "label": "仅记录" },
+    { "id": "review", "label": "继续当前审核" },
+    { "id": "discussion", "label": "新 Sol 讨论" }
+  ],
+  "phases": [
+    { "id": "phase_input", "label": "填写与选择", "fromCol": 0, "toCol": 1 },
+    { "id": "phase_action", "label": "系统执行", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "phase_outcome", "label": "可见结果", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["compose", "choose_action", "sol_discussion", "adopt_result"],
+  "nodes": [
+    { "id": "compose", "lane": "user", "col": 0, "type": "frontend", "label": "填写内容", "sublabel": "评论、问题或补充" },
+    { "id": "choose_action", "lane": "user", "col": 1, "type": "security", "label": "选择用途", "sublabel": "三个明确动作" },
+    { "id": "save_comment", "lane": "comment", "col": 3, "type": "database", "label": "保存评论", "sublabel": "不触发 AI" },
+    { "id": "show_comment", "lane": "comment", "col": 5, "type": "frontend", "label": "显示在活动区", "sublabel": "流程不变" },
+    { "id": "rerun_review", "lane": "review", "col": 4, "type": "backend", "label": "Sol 自动复审", "sublabel": "追加当前审核上下文" },
+    { "id": "review_result", "lane": "review", "col": 5, "type": "messagebus", "label": "更新审核结论", "sublabel": "通过或继续等待" },
+    { "id": "sol_discussion", "lane": "discussion", "col": 4, "width": 56, "type": "backend", "label": "Sol 讨论", "sublabel": "创建独立对话" },
+    { "id": "adopt_result", "lane": "discussion", "col": 5, "width": 56, "type": "security", "label": "采用结论", "sublabel": "继续或仅保存" }
+  ],
+  "edges": [
+    { "from": "compose", "to": "choose_action", "role": "main", "variant": "emphasis" },
+    { "from": "choose_action", "to": "save_comment", "role": "branch" },
+    { "from": "save_comment", "to": "show_comment", "role": "branch" },
+    { "from": "choose_action", "to": "rerun_review", "role": "branch", "variant": "emphasis" },
+    { "from": "rerun_review", "to": "review_result", "role": "branch" },
+    { "from": "choose_action", "to": "sol_discussion", "role": "main", "variant": "security" },
+    { "from": "sol_discussion", "to": "adopt_result", "role": "main" },
+    { "from": "adopt_result", "to": "review_result", "role": "return", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "默认保持安静", "items": ["普通评论只记录", "只有明确动作才唤醒 AI", "避免一句随手留言意外推进流程"] },
+    { "dot": "cyan", "title": "两个 AI 动作不混用", "items": ["继续审核复用现有上下文", "新讨论创建独立对话", "独立讨论需手动采用结论"] }
+  ]
+}

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>返工流程 v0.2 · 交互设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Inter Variable", "PingFang SC", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #fcfcfd;
+      --sidebar: #f3f3f4;
+      --surface: #fff;
+      --surface-muted: #f5f5f6;
+      --surface-hover: #f7f7f8;
+      --text: #1b1b1b;
+      --text-2: #5d5d5f;
+      --text-3: #9e9ea1;
+      --border: #e1e1e1;
+      --border-strong: #d5d5d5;
+      --accent: #5e6ad2;
+      --accent-soft: rgba(94, 106, 210, .11);
+      --warning: #b57900;
+      --warning-soft: #fff6db;
+      --success: #2e9b55;
+      --success-soft: #eaf8ef;
+      --danger: #e5484d;
+      --danger-soft: #fff0f0;
+      --shadow: 0 18px 48px rgba(0, 0, 0, .12), 0 2px 8px rgba(0, 0, 0, .06);
+      --card-shadow: 0 3px 8px rgba(0, 0, 0, .05);
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #171719;
+      --sidebar: #151517;
+      --surface: #222225;
+      --surface-muted: #29292c;
+      --surface-hover: #303034;
+      --text: #eeeeef;
+      --text-2: #b8b8bd;
+      --text-3: #85858b;
+      --border: rgba(255,255,255,.075);
+      --border-strong: rgba(255,255,255,.13);
+      --accent: #6e78df;
+      --accent-soft: rgba(110,120,223,.16);
+      --warning: #e5b729;
+      --warning-soft: rgba(229,183,41,.12);
+      --success: #53b98a;
+      --success-soft: rgba(83,185,138,.12);
+      --danger: #ef686d;
+      --danger-soft: rgba(229,72,77,.12);
+      --shadow: 0 24px 64px rgba(0,0,0,.58);
+      --card-shadow: 0 3px 8px rgba(0,0,0,.32);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); font-size: 12px; line-height: 1.5; }
+    button, textarea, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    .prototype-bar {
+      position: sticky; top: 0; z-index: 20; height: 54px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(16px);
+    }
+    .prototype-brand { display: flex; align-items: center; gap: 10px; }
+    .prototype-brand b { font-size: 13px; }
+    .version { padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+    .prototype-tools { display: flex; align-items: center; gap: 8px; }
+    .prototype-tools select, .icon-button {
+      min-height: 30px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); padding: 0 9px;
+    }
+    .icon-button { width: 32px; padding: 0; }
+    .workspace { min-height: calc(100vh - 54px); display: grid; grid-template-columns: 205px minmax(0, 1fr); }
+    .sidebar { padding: 14px 10px; background: var(--sidebar); border-right: 1px solid var(--border); }
+    .sidebar-brand { display: flex; align-items: center; gap: 8px; padding: 8px 10px 16px; font-weight: 700; }
+    .brand-mark { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: white; background: var(--accent); }
+    .nav-label { margin: 12px 10px 5px; color: var(--text-3); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+    .nav-item { display: flex; gap: 9px; align-items: center; height: 32px; padding: 0 10px; border-radius: 6px; color: var(--text-2); }
+    .nav-item.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .nav-dot { width: 9px; height: 9px; border: 2px solid currentColor; border-radius: 50%; }
+    .main { min-width: 0; }
+    .main-header { height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; border-bottom: 1px solid var(--border); }
+    .breadcrumbs { color: var(--text-2); }
+    .breadcrumbs b { color: var(--text); }
+    .header-actions { display: flex; gap: 7px; }
+    .button { min-height: 31px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); font-weight: 600; }
+    .button:hover { background: var(--surface-hover); }
+    .button.primary { border-color: var(--accent); color: white; background: var(--accent); }
+    .detail-shell { width: min(1180px, 100%); min-height: calc(100vh - 108px); margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 318px; }
+    .detail-main { min-width: 0; padding: 34px clamp(24px, 5vw, 68px) 80px; border-right: 1px solid var(--border); }
+    .detail-aside { padding: 22px 18px; }
+    .task-kicker { display: flex; align-items: center; gap: 8px; color: var(--text-3); }
+    .rework-badge { display: inline-flex; align-items: center; gap: 5px; min-height: 21px; padding: 1px 7px; border-radius: 999px; color: var(--warning); background: var(--warning-soft); font-weight: 700; white-space: nowrap; }
+    .rework-badge[hidden] { display: none; }
+    h1 { margin: 12px 0 8px; max-width: 760px; font-size: clamp(22px, 3vw, 30px); line-height: 1.23; letter-spacing: -.025em; }
+    .description { max-width: 760px; margin: 0 0 28px; color: var(--text-2); font-size: 13px; }
+    .stage-card { margin: 20px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--card-shadow); overflow: hidden; }
+    .stage-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 16px 17px; border-bottom: 1px solid var(--border); }
+    .stage-card-header strong { display: block; font-size: 13px; }
+    .stage-card-header span { color: var(--text-2); }
+    .owner { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); white-space: nowrap; }
+    .owner-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .stage-track { display: grid; grid-template-columns: repeat(4, 1fr); padding: 16px 17px 18px; }
+    .stage { position: relative; min-width: 0; padding-top: 20px; color: var(--text-3); }
+    .stage::before { content: ""; position: absolute; top: 6px; left: 5px; right: -5px; height: 2px; background: var(--border); }
+    .stage:last-child::before { right: calc(100% - 7px); }
+    .stage-dot { position: absolute; z-index: 1; top: 1px; left: 0; width: 12px; height: 12px; border: 2px solid var(--border-strong); border-radius: 50%; background: var(--surface); }
+    .stage.done::before, .stage.done .stage-dot { border-color: var(--success); background: var(--success); }
+    .stage.current .stage-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    .stage strong { display: block; overflow: hidden; color: inherit; text-overflow: ellipsis; white-space: nowrap; }
+    .stage.current strong { color: var(--text); }
+    .stage small { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .review-card, .ai-card, .rework-sheet, .activity-card { margin-top: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .review-card > header, .ai-card > header, .rework-sheet > header { display: flex; align-items: center; justify-content: space-between; padding: 13px 15px; border-bottom: 1px solid var(--border); }
+    .review-card > header b, .ai-card > header b, .rework-sheet > header b { font-size: 13px; }
+    .review-card > header span, .ai-card > header span, .rework-sheet > header span { color: var(--text-3); }
+    .review-card-body, .ai-card-body, .rework-sheet-body { padding: 15px; }
+    .check-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .check-list li { display: flex; gap: 8px; align-items: flex-start; color: var(--text-2); }
+    .check-list i { width: 17px; height: 17px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: var(--success); background: var(--success-soft); font-style: normal; font-weight: 800; }
+    .ai-card { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); }
+    .ai-card-body p { margin: 0 0 10px; color: var(--text-2); }
+    .ai-findings { margin: 0 0 14px; padding-left: 18px; }
+    .ai-findings li { margin: 5px 0; }
+    .ai-card-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .rework-sheet { border-color: color-mix(in srgb, var(--warning) 34%, var(--border)); }
+    .sheet-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .meta-chip { padding: 2px 7px; border-radius: 999px; color: var(--text-2); background: var(--surface-muted); }
+    .rework-sheet h3 { margin: 10px 0 5px; font-size: 12px; }
+    .rework-sheet ul { margin: 0; padding-left: 18px; color: var(--text-2); }
+    .composer { margin-top: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--card-shadow); overflow: hidden; }
+    .composer textarea { display: block; width: 100%; min-height: 104px; resize: vertical; border: 0; outline: 0; padding: 14px; background: transparent; line-height: 1.55; }
+    .composer-footer { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 9px 10px; border-top: 1px solid var(--border); }
+    .composer-hint { color: var(--text-3); }
+    .composer-actions { display: flex; gap: 7px; }
+    .composer-note { margin: 8px 2px 0; color: var(--text-3); }
+    .aside-section { margin-bottom: 24px; }
+    .aside-title { margin-bottom: 9px; color: var(--text-3); font-size: 10px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+    .property { display: grid; grid-template-columns: 94px minmax(0, 1fr); align-items: center; min-height: 34px; }
+    .property > span:first-child { color: var(--text-3); }
+    .property-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-preview { padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: var(--card-shadow); }
+    .card-preview-top { display: flex; justify-content: space-between; gap: 8px; color: var(--text-3); }
+    .avatar { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--accent); font-size: 9px; font-weight: 800; }
+    .card-preview h3 { margin: 10px 0 9px; font-size: 12px; line-height: 1.45; }
+    .card-preview-bottom { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .flow-note { padding: 11px 12px; border-radius: 8px; color: var(--text-2); background: var(--surface-muted); }
+    .flow-note b { display: block; color: var(--text); margin-bottom: 3px; }
+    .toast { position: fixed; z-index: 40; left: 50%; bottom: 26px; display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); opacity: 0; transform: translate(-50%, 12px); pointer-events: none; transition: .2s ease; }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+    .toast-mark { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--success); font-weight: 800; }
+    [data-view] { display: none; }
+    [data-view].active { display: block; }
+    .muted { color: var(--text-3); }
+    @media (max-width: 860px) {
+      .workspace { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .detail-shell { grid-template-columns: 1fr; }
+      .detail-main { border-right: 0; }
+      .detail-aside { border-top: 1px solid var(--border); }
+    }
+    @media (max-width: 560px) {
+      .prototype-brand .muted, .prototype-tools label, .main-header .header-actions { display: none; }
+      .prototype-tools select { max-width: 150px; }
+      .detail-main { padding: 24px 16px 60px; }
+      .stage-track { overflow-x: auto; grid-template-columns: repeat(4, 126px); }
+      .composer-footer { align-items: flex-start; flex-direction: column; }
+      .composer-actions { width: 100%; }
+      .composer-actions .button { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <header class="prototype-bar">
+    <div class="prototype-brand"><b>返工流程设计稿</b><span class="version">v0.2</span><span class="muted">方案 A</span></div>
+    <div class="prototype-tools">
+      <label for="scenario">演示场景</label>
+      <select id="scenario">
+        <option value="delivery">交付验收</option>
+        <option value="ai">AI 发现问题</option>
+        <option value="review">返工审核中</option>
+        <option value="blocked">等待补充</option>
+        <option value="development">返工开发中</option>
+        <option value="return">再次交付验收</option>
+      </select>
+      <button class="icon-button" id="themeToggle" type="button" title="切换主题">◐</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-brand"><span class="brand-mark">D</span>Dashi Taskboard</div>
+      <div class="nav-label">工作区</div>
+      <div class="nav-item active"><span class="nav-dot"></span>任务面板</div>
+      <div class="nav-item"><span class="nav-dot"></span>待我跟进</div>
+      <div class="nav-label">项目</div>
+      <div class="nav-item"><span class="nav-dot"></span>Dashi Taskboard</div>
+      <div class="nav-item"><span class="nav-dot"></span>AI Virtual Fitting</div>
+    </aside>
+
+    <main class="main">
+      <header class="main-header">
+        <div class="breadcrumbs">Dashi Taskboard / <b>DASHITASKBOA-28</b></div>
+        <div class="header-actions"><button class="button">···</button><button class="button">在对话中打开</button></div>
+      </header>
+
+      <div class="detail-shell">
+        <section class="detail-main">
+          <div class="task-kicker"><span>DASHITASKBOA-28</span><span>·</span><span>产品体验</span><span class="rework-badge" id="topBadge" hidden>↩ 返工 #2</span></div>
+          <h1>审核反馈返工前先重新确认范围，再启动开发</h1>
+          <p class="description">交付验收发现问题后，用户意见或 AI 复核结论先汇总成返工单。任务回到待开发，由 Sol 只读审核本轮返工范围，通过后才启动 Luna。</p>
+
+          <section class="stage-card" aria-label="返工进度">
+            <div class="stage-card-header">
+              <div><strong id="stageTitle">交付验收</strong><span id="stageDescription">开发结果已提交，等待接受交付或提出修改意见。</span></div>
+              <div class="owner"><span class="owner-dot"></span><span id="stageOwner">当前负责人：你</span></div>
+            </div>
+            <div class="stage-track" id="stageTrack"></div>
+          </section>
+
+          <div data-view="delivery" class="active">
+            <section class="review-card">
+              <header><b>开发结果待验收</b><span>Codex Agent · 8 分钟前</span></header>
+              <div class="review-card-body">
+                <ul class="check-list">
+                  <li><i>✓</i><span>已将交付验收与开发前需求审核的界面名称区分开。</span></li>
+                  <li><i>✓</i><span>已补充评论动作的可见后果和关联 AI 对话入口。</span></li>
+                  <li><i>✓</i><span>类型检查与 Web 构建通过；真实返工链路等待验收。</span></li>
+                </ul>
+              </div>
+            </section>
+          </div>
+
+          <div data-view="ai">
+            <section class="ai-card">
+              <header><b>Sol 交付重新审核</b><span>只读复核 · 已完成</span></header>
+              <div class="ai-card-body">
+                <p>结论：当前交付仍有两项会影响主流程的问题，建议发起返工。</p>
+                <ol class="ai-findings">
+                  <li>“提交修改意见并返工”仍会跳过 readiness，直接启动 Luna。</li>
+                  <li>AI 复核评论没有成为返工范围审核的明确输入。</li>
+                </ol>
+                <div class="ai-card-actions"><button class="button">仅保留反馈</button><button class="button primary" id="adoptAi">采纳意见并发起返工</button></div>
+              </div>
+            </section>
+          </div>
+
+          <div data-view="review blocked development return">
+            <section class="rework-sheet">
+              <header><b>↩ 第 2 轮返工单</b><span id="sheetStatus">Sol 审核中</span></header>
+              <div class="rework-sheet-body">
+                <div class="sheet-meta"><span class="meta-chip">来源：用户修改意见</span><span class="meta-chip">发起：今天 15:42</span><span class="meta-chip">关联评论：2 条</span></div>
+                <h3>本轮修改范围</h3>
+                <ul><li>返工操作回到待开发，不直接启动开发。</li><li>Sol 同时读取用户与 AI 汇总形成的返工单。</li><li>看板卡片显示“↩ 返工 #2”，验收结束后转入历史。</li></ul>
+                <h3>通过标准</h3>
+                <ul><li>Sol 明确返回 ready 后，任务才进入开发中并启动 Luna。</li><li>信息不足时进入待解决，补充内容继续同一轮返工审核。</li></ul>
+              </div>
+            </section>
+          </div>
+
+          <form class="composer" id="composer">
+            <textarea id="commentInput" placeholder="填写本轮需要修改的内容、期望结果或验收标准……">返工意见：提交后先回到待开发，由 Sol 检查本轮修改范围，确认完整后再进入开发中。</textarea>
+            <div class="composer-footer">
+              <span class="composer-hint">草稿会自动保存</span>
+              <div class="composer-actions"><button class="button" type="button" id="plainComment">仅发布</button><button class="button primary" type="submit" id="reworkAction">提交返工并重新审核</button></div>
+            </div>
+          </form>
+          <p class="composer-note" id="composerNote">提交返工会生成返工单、回到待开发并启动 Sol；不会直接启动 Luna。</p>
+        </section>
+
+        <aside class="detail-aside">
+          <section class="aside-section">
+            <div class="aside-title">任务属性</div>
+            <div class="property"><span>状态</span><span class="property-value" id="statusValue">交付验收</span></div>
+            <div class="property"><span>负责人</span><span class="property-value">Codex Agent</span></div>
+            <div class="property"><span>优先级</span><span class="property-value">高</span></div>
+            <div class="property"><span>项目</span><span class="property-value">Dashi Taskboard</span></div>
+          </section>
+          <section class="aside-section">
+            <div class="aside-title">看板卡片标识</div>
+            <article class="card-preview">
+              <div class="card-preview-top"><span>DASHITASKBOA-28</span><span class="avatar">C</span></div>
+              <h3>审核反馈返工前先重新确认范围，再启动开发</h3>
+              <div class="card-preview-bottom"><span class="rework-badge" id="cardBadge" hidden>↩ 返工 #2</span><span class="meta-chip">产品体验</span></div>
+            </article>
+          </section>
+          <section class="aside-section">
+            <div class="aside-title">规则</div>
+            <div class="flow-note"><b>返工不是新状态</b><span>状态仍由待开发、待解决、开发中和交付验收表达；标识只说明当前属于第几轮返工。</span></div>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status"><span class="toast-mark">✓</span><span id="toastText">已发起返工审核</span></div>
+
+  <script>
+    const stages = [
+      { label: "交付验收", hint: "发现修改项" },
+      { label: "返工审核", hint: "Sol 只读" },
+      { label: "开发执行", hint: "Luna 返工" },
+      { label: "再次验收", hint: "确认结果" }
+    ];
+    const scenarios = {
+      delivery: { step: 0, title: "交付验收", desc: "开发结果已提交，等待接受交付或提出修改意见。", owner: "当前负责人：你", status: "交付验收", badge: false, sheet: "", action: true },
+      ai: { step: 0, title: "AI 发现待修改项", desc: "Sol 已完成交付复核；反馈仍需显式采纳后才会发起返工。", owner: "当前负责人：你", status: "交付验收", badge: false, sheet: "", action: true },
+      review: { step: 1, title: "返工审核 · 第 2 轮", desc: "任务已回到待开发，Sol 正在审核本轮返工范围。", owner: "当前负责人：Sol 5.6", status: "待开发 · 返工审核中", badge: true, sheet: "Sol 审核中", action: false },
+      blocked: { step: 1, title: "返工范围待补充", desc: "Sol 发现验收标准不完整；补充后继续同一轮审核。", owner: "当前负责人：你", status: "待解决", badge: true, sheet: "等待补充", action: true },
+      development: { step: 2, title: "返工开发中 · 第 2 轮", desc: "返工审核已通过，Luna 正按冻结后的返工单执行。", owner: "当前负责人：Luna", status: "开发中", badge: true, sheet: "审核已通过", action: false },
+      return: { step: 3, title: "返工结果待验收", desc: "第 2 轮返工已重新交付，等待接受或再次提出修改。", owner: "当前负责人：你", status: "交付验收", badge: true, sheet: "已重新交付", action: true }
+    };
+    const scenarioSelect = document.getElementById("scenario");
+    const views = [...document.querySelectorAll("[data-view]")];
+    const toast = document.getElementById("toast");
+    let toastTimer;
+
+    function render(key) {
+      const state = scenarios[key];
+      document.getElementById("stageTitle").textContent = state.title;
+      document.getElementById("stageDescription").textContent = state.desc;
+      document.getElementById("stageOwner").textContent = state.owner;
+      document.getElementById("statusValue").textContent = state.status;
+      document.getElementById("topBadge").hidden = !state.badge;
+      document.getElementById("cardBadge").hidden = !state.badge;
+      document.getElementById("sheetStatus").textContent = state.sheet;
+      document.getElementById("reworkAction").disabled = !state.action;
+      document.getElementById("composerNote").textContent = key === "blocked"
+        ? "补充内容会继续第 2 轮返工审核，不会新建第 3 轮。"
+        : key === "return"
+          ? "如仍有问题，将生成第 3 轮返工单；旧轮次保留在经历记录中。"
+          : "提交返工会生成返工单、回到待开发并启动 Sol；不会直接启动 Luna。";
+      views.forEach((node) => {
+        node.classList.toggle("active", node.dataset.view.split(" ").includes(key));
+      });
+      document.getElementById("stageTrack").innerHTML = stages.map((stage, index) => {
+        const className = index < state.step ? "done" : index === state.step ? "current" : "";
+        return `<div class="stage ${className}"><span class="stage-dot"></span><strong>${stage.label}</strong><small>${stage.hint}</small></div>`;
+      }).join("");
+    }
+    function showToast(message) {
+      document.getElementById("toastText").textContent = message;
+      toast.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("visible"), 2400);
+    }
+    scenarioSelect.addEventListener("change", () => render(scenarioSelect.value));
+    document.getElementById("themeToggle").addEventListener("click", () => {
+      const root = document.documentElement;
+      root.dataset.theme = root.dataset.theme === "dark" ? "" : "dark";
+    });
+    document.getElementById("plainComment").addEventListener("click", () => showToast("评论已发布，任务状态未改变"));
+    document.getElementById("composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!document.getElementById("commentInput").value.trim()) return showToast("请先填写返工意见");
+      scenarioSelect.value = "review";
+      render("review");
+      showToast("第 2 轮返工单已创建，Sol 正在审核");
+    });
+    document.getElementById("adoptAi").addEventListener("click", () => {
+      scenarioSelect.value = "review";
+      render("review");
+      showToast("已采纳 AI 意见并发起返工审核");
+    });
+    render("delivery");
+  </script>
+</body>
+</html>

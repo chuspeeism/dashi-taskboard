@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "方案三：任务流程与 AI 对话双轨",
+    "subtitle": "上轨回答任务走到哪里，下轨回答 AI 正在讨论什么",
+    "animation": "trace",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "viewBox": [1440, 820],
+    "views": [
+      { "id": "task_track", "label": "只看任务进度", "focus": ["need_review", "wait_reply", "development", "delivery", "done"], "note": "任务状态始终沿主轨推进。" },
+      { "id": "conversation_track", "label": "只看关联对话", "focus": ["review_thread", "dev_thread", "side_thread", "adopt_side"], "note": "不同对话附着在对应阶段，不冒充任务状态。" }
+    ]
+  },
+  "lanes": [
+    { "id": "task_track", "label": "任务主流程" },
+    { "id": "conversation_track", "label": "AI 对话支线" },
+    { "id": "user_track", "label": "用户决策" }
+  ],
+  "phases": [
+    { "id": "phase_need", "label": "需求", "fromCol": 0, "toCol": 1 },
+    { "id": "phase_build", "label": "开发", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "phase_accept", "label": "验收", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["need_review", "wait_reply", "development", "delivery", "done"],
+  "nodes": [
+    { "id": "need_review", "lane": "task_track", "col": 0, "type": "messagebus", "label": "需求审核", "sublabel": "Sol 准入判断" },
+    { "id": "wait_reply", "lane": "task_track", "col": 1, "type": "external", "label": "等待用户", "sublabel": "需要补充信息" },
+    { "id": "development", "lane": "task_track", "col": 3, "width": 48, "type": "cloud", "label": "开发执行", "sublabel": "Agent 处理中" },
+    { "id": "delivery", "lane": "task_track", "col": 4, "width": 48, "type": "database", "label": "交付验收", "sublabel": "当前阶段" },
+    { "id": "done", "lane": "task_track", "col": 5, "type": "security", "label": "已完成", "sublabel": "用户接受交付" },
+    { "id": "review_thread", "lane": "conversation_track", "col": 0, "type": "backend", "label": "审核对话 #1", "sublabel": "Sol X-High" },
+    { "id": "dev_thread", "lane": "conversation_track", "col": 3, "width": 48, "type": "backend", "label": "开发对话 #1", "sublabel": "实现与验证记录" },
+    { "id": "side_thread", "lane": "conversation_track", "col": 4, "width": 48, "type": "backend", "label": "Sol 讨论 #2", "sublabel": "新问题支线" },
+    { "id": "user_comment", "lane": "user_track", "col": 1, "type": "frontend", "label": "回复审核问题", "sublabel": "继续原审核" },
+    { "id": "adopt_side", "lane": "user_track", "col": 5, "type": "external", "label": "采用讨论结论", "sublabel": "再继续验收" }
+  ],
+  "edges": [
+    { "from": "need_review", "to": "wait_reply", "role": "main" },
+    { "from": "wait_reply", "to": "development", "role": "main", "variant": "emphasis" },
+    { "from": "development", "to": "delivery", "role": "main" },
+    { "from": "delivery", "to": "done", "role": "main", "variant": "emphasis" },
+    { "from": "review_thread", "to": "need_review", "role": "async", "variant": "dashed" },
+    { "from": "wait_reply", "to": "user_comment", "role": "branch" },
+    { "from": "user_comment", "to": "review_thread", "role": "return", "variant": "emphasis" },
+    { "from": "dev_thread", "to": "development", "role": "async", "variant": "dashed" },
+    { "from": "delivery", "to": "side_thread", "role": "branch", "variant": "security" },
+    { "from": "side_thread", "to": "adopt_side", "role": "branch" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "为什么要双轨", "items": ["任务状态和 AI 对话不是一回事", "一个阶段可以关联多个对话", "对话结束不代表任务已经推进"] },
+    { "dot": "rose", "title": "当前阶段示例", "items": ["任务主轨停在交付验收", "Sol 讨论作为验收支线存在", "采用结论后才回到主轨"] }
+  ]
+}

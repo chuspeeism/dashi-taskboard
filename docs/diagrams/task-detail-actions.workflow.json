@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "任务详情操作与后果",
+    "subtitle": "先选择操作类别，再产生直接副作用，最后保存并在所有窗口显示",
+    "output": "docs/diagrams/task-detail-actions.html",
+    "animation": "none",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "detail_main", "label": "详情操作主线", "focus": ["open_task", "choose_action", "classify_action", "direct_effect", "persist", "visible_result"], "note": "图下卡片列出属性、评论、附件、关系、对话、项目与归档的具体后果。" },
+      { "id": "comment_focus", "label": "评论按钮", "focus": ["choose_action", "classify_action", "direct_effect"], "note": "仅发布、继续阶段和独立 Sol 讨论的副作用不同。" }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "任务详情操作主线" }
+  ],
+  "phases": [
+    { "id": "enter", "label": "打开", "fromCol": 0, "toCol": 1 },
+    { "id": "operate", "label": "操作", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "observe", "label": "结果", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["open_task", "choose_action", "classify_action", "direct_effect", "persist", "visible_result"],
+  "nodes": [
+    { "id": "open_task", "lane": "main", "col": 0, "width": 50, "type": "frontend", "label": "打开" },
+    { "id": "choose_action", "lane": "main", "col": 1, "width": 50, "type": "frontend", "label": "选择" },
+    { "id": "classify_action", "lane": "main", "col": 2, "width": 50, "type": "security", "label": "分类" },
+    { "id": "direct_effect", "lane": "main", "col": 3, "width": 42, "type": "cloud", "label": "后果" },
+    { "id": "persist", "lane": "main", "col": 4, "width": 42, "type": "database", "label": "保存" },
+    { "id": "visible_result", "lane": "main", "col": 5, "width": 50, "type": "messagebus", "label": "结果" }
+  ],
+  "edges": [
+    { "from": "open_task", "to": "choose_action", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "from": "choose_action", "to": "classify_action", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "from": "classify_action", "to": "direct_effect", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" },
+    { "from": "direct_effect", "to": "persist", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left" },
+    { "from": "persist", "to": "visible_result", "role": "main", "route": "straight", "fromSide": "right", "toSide": "left", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "属性、附件与关系", "items": ["标题、描述、状态、优先级、负责人、标签、工作流、开发上下文、截止日期与重复都会写任务并增加 version", "重复只保存规则元数据，当前代码不会按天或按周自动复制任务", "父子关系会改变主任务/子任务识别；阻塞关系显示 blocker，但不会禁止手动跨阶段"] },
+    { "dot": "emerald", "title": "三个评论按钮", "items": ["仅发布：保存评论与附件，不触发 AI，不改变状态", "发布并重新审核：审核等待/失败时唤醒 planner；审核中提修改意见会回待开发再过审核", "发布并开始开发：仅在 todo 且 readiness=ready 时创建开发 worker；新开 Sol 是 X-High 只读独立讨论，任务状态不变"] },
+    { "dot": "amber", "title": "Codex、项目与副本", "items": ["在对话中打开只预填 $manage-taskboard ISSUE-ID；真正 taskctl 修改后才绑定 Codex thread", "未归档任务可从详情或右键菜单切换项目；切换后保留当前状态，不自动开始或重新启动开发", "创建副本复制任务字段但清空开发上下文，避免两个任务默认指向同一分支或 worktree"] },
+    { "dot": "rose", "title": "归档与删除", "items": ["归档任务会从普通看板消失，并连带归档该任务关联的 AI 对话；恢复会恢复对应对话", "正在运行或被活跃编排占用的任务可能拒绝归档，不会强行终止", "评论删除不可撤销；附件删除会永久删除文件内容，二者都要确认"] }
+  ]
+}

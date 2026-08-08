@@ -87,6 +87,37 @@ test("model and effort selections are normalized exclusively against the real ca
   assert.equal(normalizeChatSelection([], "missing-model", "high"), null);
 });
 
+test("task conversations use role defaults but keep runtime model controls editable", () => {
+  assert.match(
+    chatSource,
+    /worker:\s*\{[\s\S]*?model: "gpt-5\.6-luna"[\s\S]*?reasoningEffort: "max"/,
+  );
+  assert.match(chatSource, /const canEditRuntimeSettings = !settingsControlsBlocked/);
+  assert.match(chatSource, /disabled=\{!canEditRuntimeSettings\}/);
+  assert.doesNotMatch(chatSource, /disabled=\{taskSettingsBound\}/);
+  assert.match(chatSource, /const canEditSandboxSettings = !settingsControlsBlocked && !taskSettingsBound/);
+});
+
+test("AI chat uses distinct labels for all six reasoning efforts", () => {
+  const labelBlock = chatSource.match(
+    /const EFFORT_LABELS: Record<string, string> = \{([\s\S]*?)\n\};/,
+  )?.[1];
+  assert.ok(labelBlock);
+  const labels = Object.fromEntries(
+    [...labelBlock.matchAll(/^\s+(low|medium|high|xhigh|max|ultra): "([^"]+)",?$/gm)]
+      .map((match) => [match[1], match[2]]),
+  );
+  assert.deepEqual(labels, {
+    low: "低",
+    medium: "中",
+    high: "高",
+    xhigh: "超高",
+    max: "最高",
+    ultra: "极致",
+  });
+  assert.equal(new Set(Object.values(labels)).size, 6);
+});
+
 test("@ skill insertion uses the selected real skill id while keeping the mention visible", () => {
   assert.deepEqual(insertSkillMention("请用 @cl 检查", 3, 6, {
     id: "cloudflare",
@@ -214,6 +245,14 @@ test("danger confirmation sends the bound pending retry instead of the current d
   assert.doesNotMatch(chatSource, /onClick=\{\(\) => void startMessage\(draft,\s*true\)\}/);
 });
 
+test("failed task conversations resume through a fresh server-managed attempt", () => {
+  assert.match(chatSource, /\["failed", "interrupted"\]\.includes\(latestSettledRun\.status\)/);
+  assert.match(chatSource, /retryAiChatTurn\(thread\.id/);
+  assert.match(chatSource, /sourceRunId:\s*event\.runId/);
+  assert.match(chatSource, /\? "继续处理"/);
+  assert.match(apiSource, /\/api\/local\/ai\/threads\/\$\{encodeURIComponent\(threadId\)\}\/retry/);
+});
+
 test("SSE hints are coalesced and the panel remains resizable without clipping narrow menus", () => {
   assert.match(chatSource, /createAiSnapshotRefreshQueue/);
   assert.match(chatSource, /selectedHintRefreshQueue\.request\(selectedThreadId\)/);
@@ -223,8 +262,8 @@ test("SSE hints are coalesced and the panel remains resizable without clipping n
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-option-menu\s*\{[\s\S]*?right:\s*0;[\s\S]*?left:\s*0;/);
 });
 
-test("history exposes deletion of local records without adding rename controls", () => {
-  assert.match(chatSource, /deleteAiChatThread\(/);
+test("history archives local records without adding rename controls", () => {
+  assert.match(chatSource, /archiveAiChatThread\(/);
   assert.match(chatSource, /aria-label=\{`删除对话 \$\{thread\.title\}`\}/);
   assert.match(chatSource, /window\.confirm\(`删除本地对话“\$\{thread\.title\}”\？`\)/);
   assert.doesNotMatch(chatSource, /重命名对话|renameAiChatThread/);

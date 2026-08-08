@@ -16,6 +16,7 @@ import {
   taskFilterCount,
   type TaskFilterKey,
   type TaskFilters,
+  type TaskHierarchyFilter,
 } from "../taskFilters";
 import {
   TASK_PRIORITIES,
@@ -59,6 +60,11 @@ const PRIORITY_LABELS: Record<TaskPriority, string> = {
 const LINK_LABELS = {
   linked: "Codex 已处理",
   unlinked: "尚未由 Codex 处理",
+} as const;
+
+const HIERARCHY_LABELS = {
+  parent: "主任务",
+  child: "子任务",
 } as const;
 
 function labelColor(label: string): string {
@@ -153,6 +159,10 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     onChange({ ...filters, link: filters.link === link ? "all" : link });
   }
 
+  function toggleHierarchy(hierarchy: Exclude<TaskHierarchyFilter, "all">) {
+    onChange({ ...filters, hierarchy: filters.hierarchy === hierarchy ? "all" : hierarchy });
+  }
+
   const statusOptions = useMemo<FilterOption[]>(() => TASK_STATUSES.map((status) => ({
     id: `status-${status}`,
     label: STATUS_DETAILS[status].label,
@@ -208,10 +218,34 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     },
   ]), [filters, search, tasks]);
 
+  const hierarchyOptions = useMemo<FilterOption[]>(() => ([
+    {
+      id: "hierarchy-parent",
+      label: HIERARCHY_LABELS.parent,
+      category: "任务层级",
+      keywords: "parent main 父任务 主任务",
+      count: countFor("hierarchy", (task) => task.relations.subIssues.length > 0),
+      selected: filters.hierarchy === "parent",
+      icon: <LinearIcon name="branch" />,
+      toggle: () => toggleHierarchy("parent"),
+    },
+    {
+      id: "hierarchy-child",
+      label: HIERARCHY_LABELS.child,
+      category: "任务层级",
+      keywords: "child subissue 子任务",
+      count: countFor("hierarchy", (task) => Boolean(task.relations.parent)),
+      selected: filters.hierarchy === "child",
+      icon: <LinearIcon name="branch" />,
+      toggle: () => toggleHierarchy("child"),
+    },
+  ]), [filters, search, tasks]);
+
   const optionsBySubmenu: Partial<Record<SubmenuName, FilterOption[]>> = {
     statuses: statusOptions,
     priorities: priorityOptions,
     labels: labelOptions,
+    hierarchy: hierarchyOptions,
     link: linkOptions,
   };
 
@@ -238,6 +272,13 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
       summary: joinSummary(filters.labels, "标签"),
     },
     {
+      id: "hierarchy" as const,
+      label: "任务层级",
+      keywords: "hierarchy parent child main subissue 父任务 主任务 子任务",
+      icon: <LinearIcon name="branch" />,
+      summary: filters.hierarchy === "all" ? null : HIERARCHY_LABELS[filters.hierarchy],
+    },
+    {
       id: "link" as const,
       label: "Codex 关联",
       keywords: "link linked thread task codex 关联",
@@ -259,7 +300,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     return `${category.label} ${category.keywords}`.toLowerCase().includes(normalizedRootQuery);
   });
   const quickOptions = normalizedRootQuery
-    ? [...statusOptions, ...priorityOptions, ...labelOptions, ...linkOptions].filter((option) =>
+    ? [...statusOptions, ...priorityOptions, ...labelOptions, ...hierarchyOptions, ...linkOptions].filter((option) =>
       `${option.label} ${option.keywords ?? ""}`.toLowerCase().includes(normalizedRootQuery),
     )
     : [];

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "identity": {
+    "appId": "cli_aacdaa258e785cd2",
+    "appName": "personal-latest-bot"
+  },
+  "tables": {
+    "productIdeas": {
+      "tableId": "tbl_product_ideas",
+      "schema": {
+        "fields": [
+          { "field_id": "fld_title", "field_name": "标题", "type": "text" },
+          { "field_id": "fld_description", "field_name": "描述", "type": "text" },
+          { "field_id": "fld_project", "field_name": "项目", "type": "text" },
+          { "field_id": "fld_labels", "field_name": "标签", "type": "multi_select" }
+        ]
+      },
+      "pages": [
+        {
+          "offset": 0,
+          "has_more": false,
+          "records": [
+            {
+              "record_id": "rec_idea_mapped",
+              "last_modified_time": "2026-08-08T08:00:00.000Z",
+              "fields": {
+                "标题": "把灵感整理成可执行卡片",
+                "描述": "产品灵感的最小验证路径",
+                "项目": "idea-project",
+                "标签": ["灵感"]
+              }
+            },
+            {
+              "record_id": "rec_idea_empty_project",
+              "last_modified_time": "2026-08-08T08:01:00.000Z",
+              "fields": {
+                "标题": "没有项目归属的灵感",
+                "描述": "保留原始项目为空的信息",
+                "项目": "",
+                "标签": ["灵感", "主任务"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "requirements": {
+      "tableId": "tbl_requirements",
+      "schema": {
+        "fields": [
+          { "field_id": "fld_requirement_title", "field_name": "需求名称", "type": "text" },
+          { "field_id": "fld_requirement_description", "field_name": "需求描述", "type": "text" },
+          { "field_id": "fld_requirement_project", "field_name": "所属项目", "type": "text" },
+          { "field_id": "fld_requirement_status", "field_name": "当前状态", "type": "select" },
+          { "field_id": "fld_requirement_priority", "field_name": "优先级", "type": "select" }
+        ]
+      },
+      "pages": [
+        {
+          "offset": 0,
+          "has_more": false,
+          "records": [
+            {
+              "record_id": "rec_requirement_mapped",
+              "last_modified_time": "2026-08-08T08:02:00.000Z",
+              "fields": {
+                "需求名称": "需求收集的入站对账",
+                "需求描述": "只读读取 Base 并保持 Taskboard backlog",
+                "所属项目": "requirement-project",
+                "当前状态": "已完成",
+                "优先级": "高"
+              }
+            },
+            {
+              "record_id": "rec_requirement_unknown_project",
+              "last_modified_time": "2026-08-08T08:03:00.000Z",
+              "fields": {
+                "需求名称": "未知项目的需求",
+                "需求描述": "未知项目不能猜测归属",
+                "所属项目": "not-configured-project",
+                "当前状态": "待评估",
+                "优先级": "中"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "excludedScopes": {
+    "account_profiles": { "reads": 0, "writes": 0 },
+    "payments_billing": { "reads": 0, "writes": 0 },
+    "prompt_content_and_generation_parameters": { "reads": 0, "writes": 0 },
+    "competitor_details_and_research": { "reads": 0, "writes": 0 }
+  }
+}

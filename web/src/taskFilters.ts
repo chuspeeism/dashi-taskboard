@@ -7,12 +7,14 @@ import {
 } from "./types";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
-export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content";
+export type TaskHierarchyFilter = "all" | "parent" | "child";
+export type TaskFilterKey = "statuses" | "priorities" | "labels" | "hierarchy" | "link" | "content";
 
 export interface TaskFilters {
   statuses: TaskStatus[];
   priorities: TaskPriority[];
   labels: string[];
+  hierarchy: TaskHierarchyFilter;
   link: TaskLinkFilter;
   content: string;
 }
@@ -21,6 +23,7 @@ export const EMPTY_TASK_FILTERS: TaskFilters = {
   statuses: [],
   priorities: [],
   labels: [],
+  hierarchy: "all",
   link: "all",
   content: "",
 };
@@ -37,12 +40,14 @@ export function readTaskFilters(): TaskFilters {
   const params = new URLSearchParams(window.location.search);
   const statuses = (params.get("status") ?? "").split(",").filter(isTaskStatus);
   const priorities = (params.get("priority") ?? "").split(",").filter(isTaskPriority);
+  const hierarchyValue = params.get("hierarchy");
   const linkValue = params.get("linked");
 
   return {
     statuses,
     priorities,
     labels: params.getAll("label").filter(Boolean),
+    hierarchy: hierarchyValue === "parent" || hierarchyValue === "child" ? hierarchyValue : "all",
     link: linkValue === "yes" ? "linked" : linkValue === "no" ? "unlinked" : "all",
     content: params.get("content") ?? "",
   };
@@ -60,6 +65,9 @@ export function writeTaskFilters(filters: TaskFilters) {
   url.searchParams.delete("label");
   filters.labels.forEach((label) => url.searchParams.append("label", label));
 
+  if (filters.hierarchy !== "all") url.searchParams.set("hierarchy", filters.hierarchy);
+  else url.searchParams.delete("hierarchy");
+
   if (filters.link === "linked") url.searchParams.set("linked", "yes");
   else if (filters.link === "unlinked") url.searchParams.set("linked", "no");
   else url.searchParams.delete("linked");
@@ -74,6 +82,7 @@ export function taskFilterCount(filters: TaskFilters): number {
   return Number(filters.statuses.length > 0)
     + Number(filters.priorities.length > 0)
     + Number(filters.labels.length > 0)
+    + Number(filters.hierarchy !== "all")
     + Number(filters.link !== "all")
     + Number(Boolean(filters.content.trim()));
 }
@@ -81,7 +90,17 @@ export function taskFilterCount(filters: TaskFilters): number {
 export function matchesTaskSearch(task: Task, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
-  return [task.identifier, task.title, task.description, ...task.labels]
+  const number = /^#(\d+)$/.exec(needle)?.[1];
+  if (number && task.identifier.endsWith(`-${Number(number)}`)) return true;
+  return [
+    task.identifier,
+    ...(task.previousIdentifiers ?? []),
+    task.title,
+    task.description,
+    ...task.labels,
+    task.relations.parent?.identifier ?? "",
+    task.relations.parent?.title ?? "",
+  ]
     .join(" ")
     .toLowerCase()
     .includes(needle);
@@ -103,6 +122,12 @@ export function matchesTaskFilters(
     && filters.labels.length
     && !filters.labels.some((label) => task.labels.includes(label))
   ) {
+    return false;
+  }
+  if (omit !== "hierarchy" && filters.hierarchy === "parent" && task.relations.subIssues.length === 0) {
+    return false;
+  }
+  if (omit !== "hierarchy" && filters.hierarchy === "child" && !task.relations.parent) {
     return false;
   }
   if (omit !== "link" && filters.link === "linked" && !task.threadId) return false;

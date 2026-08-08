@@ -369,6 +369,7 @@ function expectedProjectCounts() {
     alpha: {
       projects: 1,
       tasks: 2,
+      task_identifier_aliases: 0,
       comments: 1,
       attachments: 2,
       task_relations: 1,
@@ -377,6 +378,7 @@ function expectedProjectCounts() {
     beta: {
       projects: 1,
       tasks: 1,
+      task_identifier_aliases: 0,
       comments: 1,
       attachments: 1,
       task_relations: 0,

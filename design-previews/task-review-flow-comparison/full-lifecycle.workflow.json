@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "方案一：任务完整生命周期",
+    "subtitle": "把需求审核、用户补充、开发执行与交付验收明确分开",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "viewBox": [1440, 820],
+    "views": [
+      { "id": "readiness", "label": "需求审核", "focus": ["move_todo", "sol_review", "wait_user", "user_reply", "sol_recheck"], "note": "评论只在等待确认时继续同一轮审核。" },
+      { "id": "delivery", "label": "开发与验收", "focus": ["sol_recheck", "agent_build", "delivery_review", "accept_done"], "note": "开发完成后的审核应明确叫交付验收。" }
+    ]
+  },
+  "lanes": [
+    { "id": "user", "label": "用户" },
+    { "id": "taskboard", "label": "Taskboard" },
+    { "id": "sol", "label": "Sol 5.6" },
+    { "id": "agent", "label": "开发 Agent" }
+  ],
+  "phases": [
+    { "id": "phase_review", "label": "开发前需求审核", "fromCol": 0, "toCol": 4, "variant": "emphasis" },
+    { "id": "phase_delivery", "label": "开发与交付", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["move_todo", "sol_review", "wait_user", "user_reply", "sol_recheck", "agent_build", "delivery_review", "accept_done"],
+  "nodes": [
+    { "id": "move_todo", "lane": "user", "col": 0, "type": "external", "label": "移到待开发", "sublabel": "用户明确启动" },
+    { "id": "sol_review", "lane": "sol", "col": 1, "type": "backend", "label": "需求审核", "sublabel": "Sol X-High · 只读" },
+    { "id": "wait_user", "lane": "taskboard", "col": 2, "type": "messagebus", "label": "等待你补充", "sublabel": "待解决 / 待我评论" },
+    { "id": "user_reply", "lane": "user", "col": 3, "type": "frontend", "label": "补充评论", "sublabel": "继续当前审核" },
+    { "id": "sol_recheck", "lane": "sol", "col": 4, "type": "backend", "label": "Sol 复审", "sublabel": "形成通过结论" },
+    { "id": "agent_build", "lane": "agent", "col": 5, "type": "cloud", "label": "开发执行", "sublabel": "实现与验证" },
+    { "id": "delivery_review", "lane": "taskboard", "col": 5, "type": "database", "label": "交付验收", "sublabel": "等待用户确认" },
+    { "id": "accept_done", "lane": "user", "col": 5, "type": "security", "label": "接受交付", "sublabel": "任务完成" }
+  ],
+  "edges": [
+    { "from": "move_todo", "to": "sol_review", "role": "main", "variant": "emphasis" },
+    { "from": "sol_review", "to": "wait_user", "role": "main", "route": "bottom-channel" },
+    { "from": "wait_user", "to": "user_reply", "role": "main" },
+    { "from": "user_reply", "to": "sol_recheck", "role": "main", "variant": "emphasis" },
+    { "from": "sol_recheck", "to": "agent_build", "role": "main", "variant": "emphasis" },
+    { "from": "agent_build", "to": "delivery_review", "role": "main" },
+    { "from": "delivery_review", "to": "accept_done", "role": "main", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "violet", "title": "阶段必须分清", "items": ["需求审核发生在开发前", "交付验收发生在开发后", "Sol 讨论本身不改变任务状态"] },
+    { "dot": "emerald", "title": "当前负责人可见", "items": ["等待用户时显示你需要做什么", "AI 执行时显示关联对话与轮次", "每个节点都有明确的下一步"] }
+  ]
+}

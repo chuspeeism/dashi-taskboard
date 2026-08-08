@@ -274,7 +274,7 @@ function initialNodes(): WorkflowCanvasNode[] {
       data: {
         ...paletteData("issue-trigger"),
         title: "议题触发器",
-        description: "状态变为「待办事项」时触发",
+        description: "状态变为「待开发」时触发",
         meta: "任意优先级 · 任意标签",
       },
     },

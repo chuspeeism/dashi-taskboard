@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import type { Task, TaskStatus } from "../types";
+import type { Task, TaskInterventionView, TaskStatus } from "../types";
 import { ColumnVisibilityMenu } from "./ColumnVisibilityMenu";
 import { LinearIcon, LinearStatusIcon } from "./LinearIcon";
 import { TaskCard } from "./TaskCard";
@@ -10,11 +10,12 @@ export const STATUS_DETAILS: Record<
   { label: string; tone: string }
 > = {
   backlog: { label: "积压事项", tone: "backlog" },
-  todo: { label: "待办事项", tone: "todo" },
+  todo: { label: "待开发", tone: "todo" },
   in_progress: { label: "进行中", tone: "progress" },
   in_review: { label: "审核中", tone: "review" },
-  blocked: { label: "已阻塞", tone: "blocked" },
+  pending_retrospective: { label: "待复盘", tone: "retrospective" },
   done: { label: "完成", tone: "done" },
+  blocked: { label: "待解决", tone: "blocked" },
   canceled: { label: "已取消", tone: "canceled" },
 };
 
@@ -26,6 +27,11 @@ interface BoardColumnProps {
   status: TaskStatus;
   statusIndex: number;
   tasks: Task[];
+  allTasks: Task[];
+  interventionView: TaskInterventionView | null;
+  projectNames: Map<string, string> | null;
+  allowBoardActions: boolean;
+  allowColumnActions: boolean;
   isDropTarget: boolean;
   draggedTaskId: string | null;
   draggedTaskHeight: number;
@@ -48,6 +54,11 @@ export function BoardColumn({
   status,
   statusIndex,
   tasks,
+  allTasks,
+  interventionView,
+  projectNames,
+  allowBoardActions,
+  allowColumnActions,
   isDropTarget,
   draggedTaskId,
   draggedTaskHeight,
@@ -67,6 +78,9 @@ export function BoardColumn({
 }: BoardColumnProps) {
   const details = STATUS_DETAILS[status];
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
+  const dragFrameRef = useRef<number | null>(null);
+  const pendingDragRef = useRef<{ container: HTMLElement; clientY: number } | null>(null);
+  const dropCardsRef = useRef<HTMLElement[] | null>(null);
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
   const remainingIndexes = new Map(remainingTasks.map((task, index) => [task.id, index]));
@@ -78,22 +92,53 @@ export function BoardColumn({
   const dragDistance = draggedTaskHeight + 8;
 
   useEffect(() => {
-    if (!isDropTarget || !draggedTaskId) setDropBeforeTaskId(undefined);
+    if (!isDropTarget || !draggedTaskId) {
+      if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+      pendingDragRef.current = null;
+      dropCardsRef.current = null;
+      setDropBeforeTaskId(undefined);
+    }
   }, [draggedTaskId, isDropTarget]);
 
+  useEffect(() => () => {
+    if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
+  }, []);
+
   function findDropBefore(container: HTMLElement, clientY: number): string | null {
-    const cards = Array.from(container.querySelectorAll<HTMLElement>("[data-task-id]"))
-      .filter((card) => card.dataset.taskId !== draggedTaskId);
-    return cards.find((card) => clientY < card.getBoundingClientRect().top + card.offsetHeight / 2)
+    if (!dropCardsRef.current) {
+      dropCardsRef.current = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-task-id]"),
+      ).filter((card) => card.dataset.taskId !== draggedTaskId);
+    }
+    return dropCardsRef.current
+      .find((card) => clientY < card.getBoundingClientRect().top + card.offsetHeight / 2)
       ?.dataset.taskId ?? null;
+  }
+
+  function scheduleDragPreview(container: HTMLElement, clientY: number) {
+    pendingDragRef.current = { container, clientY };
+    if (dragFrameRef.current !== null) return;
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = null;
+      const pending = pendingDragRef.current;
+      pendingDragRef.current = null;
+      if (!pending) return;
+      const nextTaskId = findDropBefore(pending.container, pending.clientY);
+      setDropBeforeTaskId((current) => current === nextTaskId ? current : nextTaskId);
+    });
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
+    if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
+    dragFrameRef.current = null;
+    pendingDragRef.current = null;
     const taskId =
       event.dataTransfer.getData("application/x-taskboard-task") ||
       event.dataTransfer.getData("text/plain");
     if (taskId) onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY));
+    dropCardsRef.current = null;
     setDropBeforeTaskId(undefined);
   }
 
@@ -112,19 +157,25 @@ export function BoardColumn({
     <section
       className={`board-column status-${status}${isDropTarget ? " is-drop-target" : ""}`}
       aria-labelledby={`column-${status}`}
-      onDragEnter={() => onDragEnter(status)}
-      onDragOver={(event) => {
+      onDragEnter={allowBoardActions ? () => {
+        if (!isDropTarget) onDragEnter(status);
+      } : undefined}
+      onDragOver={allowBoardActions ? (event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
-        onDragEnter(status);
-        setDropBeforeTaskId(findDropBefore(event.currentTarget, event.clientY));
-      }}
-      onDragLeave={(event) => {
+        if (!isDropTarget) onDragEnter(status);
+        scheduleDragPreview(event.currentTarget, event.clientY);
+      } : undefined}
+      onDragLeave={allowBoardActions ? (event) => {
         if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+          if (dragFrameRef.current !== null) window.cancelAnimationFrame(dragFrameRef.current);
+          dragFrameRef.current = null;
+          pendingDragRef.current = null;
+          dropCardsRef.current = null;
           setDropBeforeTaskId(undefined);
         }
-      }}
-      onDrop={handleDrop}
+      } : undefined}
+      onDrop={allowBoardActions ? handleDrop : undefined}
     >
       <header className="column-header">
         <div className="column-heading">
@@ -135,7 +186,7 @@ export function BoardColumn({
           <span className="task-count" aria-label={`${tasks.length} 个议题`}>{tasks.length}</span>
         </div>
         <div className="column-actions">
-          {tasks.length > 0 && (
+          {allowColumnActions && tasks.length > 0 && (
             <ColumnVisibilityMenu
               label={details.label}
               action="hide"
@@ -143,7 +194,7 @@ export function BoardColumn({
               onAction={() => onHide(status)}
             />
           )}
-          <button
+          {allowColumnActions && <button
             type="button"
             className="icon-button add-task-button"
             onClick={() => onCreate(status)}
@@ -151,7 +202,7 @@ export function BoardColumn({
             title={`添加到${details.label}`}
           >
             <LinearIcon name="plus" />
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -162,6 +213,10 @@ export function BoardColumn({
             <TaskCard
               key={task.id}
               task={task}
+              allTasks={allTasks}
+              interventionView={interventionView}
+              projectName={projectNames?.get(task.projectId)}
+              allowBoardActions={allowBoardActions}
               statusIndex={statusIndex}
               isDragging={draggedTaskId === task.id}
               dragShift={dragShift}

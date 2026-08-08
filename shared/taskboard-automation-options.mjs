@@ -12,12 +12,6 @@ export const AUTOMATION_MODELS = [
     efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
   },
   {
-    label: "5.6 Luna",
-    slug: "gpt-5.6-luna",
-    defaultEffort: "medium",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
     label: "5.5",
     slug: "gpt-5.5",
     defaultEffort: "medium",

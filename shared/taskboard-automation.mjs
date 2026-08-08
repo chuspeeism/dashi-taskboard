@@ -61,10 +61,9 @@ export function buildTaskboardAutomationName(request) {
 export function buildTaskboardAutomationPrompt(request) {
   return [
     `[$manage-taskboard](${request.skillPath}) e-taskboard 每 ${request.intervalMinutes} 分钟检查任务面板中的「${request.projectName}」项目（项目 ID：${request.taskboardProjectId}，项目目录：${request.workspacePath}）。`,
-    "每次仅处理一个 todo：先用 issue get 读取最新议题内容，并用 comment list 读取全部评论，确认是否包含已完成后被打回的返工要求。",
-    "认领时使用最新 version 将议题移动到 in_progress；若发生版本冲突或最新状态已变化，立即跳过，避免多个 Agent 抢同一任务。",
-    "若议题已绑定 branch 或 worktree，必须在该议题绑定的开发上下文执行，避免并行 Agent 修改同一工作目录。",
-    "执行完成并验证后，先用 comment add 记录关键改动、验证结果、执行结果和剩余风险，再使用最新 version 将议题移动到 in_review；不要直接标记为 done。",
+    "每次仅处理一个 todo；该任务必须由 Codex Agent 负责且 readinessReview.status 为 ready。按 Skill 用 issue get 和 comment list 回读当前要求，其他 readiness 状态全部跳过。",
+    "按 Skill 使用最新 version 认领到 in_progress；版本冲突或状态变化时跳过。若已绑定 branch 或 worktree，只在该开发上下文执行。",
+    "完成后按 Skill 记录关键改动、验证结果、执行结果和剩余风险及用户验收说明，再移到 in_review；不得直接标记 done。",
   ].join("\n");
 }
 

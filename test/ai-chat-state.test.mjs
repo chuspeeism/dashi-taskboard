@@ -16,6 +16,7 @@ import {
   readSkillMention,
   routeChatState,
   settingsForNewAiThread,
+  serviceTierForTaskRole,
   shouldRefreshAiSnapshot,
 } from "../web/src/aiChatState.ts";
 
@@ -79,6 +80,12 @@ test("new-thread settings are reused only when they belong to the current projec
   assert.deepEqual(settingsForNewAiThread("project-a", "project-a", settings), settings);
   assert.deepEqual(settingsForNewAiThread("project-b", "project-a", settings), {});
   assert.deepEqual(settingsForNewAiThread("project-b", null, settings), {});
+});
+
+test("planner task settings explicitly use standard speed instead of inherited Fast", () => {
+  assert.equal(serviceTierForTaskRole("planner", "priority"), null);
+  assert.equal(serviceTierForTaskRole("worker", null), "priority");
+  assert.equal(serviceTierForTaskRole(null, "priority"), "priority");
 });
 
 test("PATCH results can update only the snapshot for the thread that started the request", () => {

@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>任务审核时间线与评论动作 · 交互演示</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --panel-soft: #f8f8fa;
+      --line: #e7e7eb;
+      --line-strong: #d7d8de;
+      --text: #24252a;
+      --muted: #8d8f98;
+      --purple: #6965db;
+      --purple-soft: #efefff;
+      --green: #2fa36b;
+      --green-soft: #eaf8f0;
+      --amber: #c88319;
+      --amber-soft: #fff5df;
+      --red: #d84d59;
+      --shadow: 0 18px 60px rgba(26, 27, 34, .11);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 1100px;
+      color: var(--text);
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    button, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 236px minmax(760px, 1fr);
+    }
+
+    .sidebar {
+      padding: 28px 18px;
+      color: #f5f5f8;
+      background: #202126;
+      border-right: 1px solid #15161a;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 8px 24px;
+      font-weight: 720;
+      letter-spacing: -.02em;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #918eff, #5a55d1);
+      box-shadow: 0 7px 20px rgba(105, 101, 219, .4);
+    }
+
+    .sidebar small {
+      display: block;
+      padding: 0 10px 10px;
+      color: #777a85;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .nav-button {
+      width: 100%;
+      margin: 3px 0;
+      padding: 11px 12px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      border: 0;
+      border-radius: 10px;
+      color: #aeb0b8;
+      background: transparent;
+      text-align: left;
+    }
+
+    .nav-button:hover { color: white; background: #2a2b31; }
+    .nav-button.active { color: white; background: #35363e; }
+    .nav-button span:first-child { width: 18px; text-align: center; }
+
+    .sidebar-note {
+      margin: 26px 8px 0;
+      padding: 14px;
+      border: 1px solid #3c3d44;
+      border-radius: 12px;
+      color: #a8aab3;
+      font-size: 12px;
+      line-height: 1.65;
+      background: #28292f;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 28px 32px 110px;
+    }
+
+    .demo-toolbar {
+      max-width: 1280px;
+      margin: 0 auto 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .demo-toolbar h1 {
+      margin: 0 0 5px;
+      font-size: 20px;
+      letter-spacing: -.03em;
+    }
+
+    .demo-toolbar p { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .scenario-control {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 7px 6px 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 3px 12px rgba(30, 31, 36, .04);
+    }
+
+    .scenario-control label { color: var(--muted); font-size: 12px; }
+    .scenario-control select { border: 0; outline: none; color: var(--text); background: transparent; }
+
+    .task-shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .task-header {
+      padding: 25px 28px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow { margin-bottom: 10px; color: var(--muted); font-size: 12px; }
+    .task-header h2 { margin: 0; font-size: 25px; letter-spacing: -.035em; }
+
+    .status-pill {
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      border-radius: 999px;
+      color: var(--purple);
+      background: var(--purple-soft);
+      font-weight: 650;
+      font-size: 13px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 4px rgba(105, 101, 219, .12);
+    }
+
+    .task-content { padding: 0 28px 30px; }
+
+    .view { display: none; padding-top: 26px; }
+    .view.active { display: block; }
+
+    .view-intro {
+      margin-bottom: 22px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .view-intro h3 { margin: 0 0 7px; font-size: 17px; }
+    .view-intro p { margin: 0; max-width: 720px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+
+    .recommended {
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* A: horizontal */
+    .horizontal-timeline {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 4px;
+      padding: 22px 14px 36px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-soft);
+    }
+
+    .horizontal-timeline::before {
+      content: "";
+      position: absolute;
+      top: 45px;
+      left: 8.7%;
+      right: 8.7%;
+      height: 2px;
+      background: var(--line-strong);
+    }
+
+    .step { position: relative; z-index: 1; text-align: center; }
+    .step-node {
+      width: 25px;
+      height: 25px;
+      margin: 11px auto 13px;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--line-strong);
+      border-radius: 50%;
+      color: white;
+      background: var(--panel-soft);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .step.done .step-node { border-color: var(--green); background: var(--green); }
+    .step.current .step-node {
+      border-color: var(--purple);
+      background: var(--purple);
+      box-shadow: 0 0 0 7px rgba(105, 101, 219, .13);
+    }
+    .step strong { display: block; font-size: 12px; }
+    .step span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+
+    .current-callout {
+      margin-top: 16px;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid #dcdafe;
+      border-radius: 14px;
+      background: linear-gradient(90deg, #f4f3ff, #fafaff);
+    }
+
+    .current-callout strong { display: block; margin-bottom: 4px; }
+    .current-callout span { color: #737580; font-size: 12px; }
+    .branch-chip { display: none; padding: 7px 10px; border-radius: 9px; color: var(--purple); background: white; font-size: 12px; }
+    .branch-chip.visible { display: block; }
+
+    /* B: vertical */
+    .vertical-timeline { max-width: 820px; margin: 4px auto 10px; }
+    .event {
+      position: relative;
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 14px;
+      min-height: 82px;
+    }
+
+    .event:not(:last-child)::before {
+      content: "";
+      position: absolute;
+      left: 11px;
+      top: 26px;
+      bottom: 0;
+      width: 2px;
+      background: var(--line);
+    }
+
+    .event-marker {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--muted);
+      background: white;
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .event.done .event-marker { color: white; border-color: var(--green); background: var(--green); }
+    .event.current .event-marker { color: white; border-color: var(--purple); background: var(--purple); box-shadow: 0 0 0 5px var(--purple-soft); }
+    .event-card { padding: 1px 0 22px; }
+    .event-card strong { font-size: 14px; }
+    .event-card p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .event-card button { margin-top: 9px; border: 0; color: var(--purple); background: transparent; padding: 0; font-size: 12px; }
+
+    /* C: dual track */
+    .dual-track {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-soft);
+    }
+
+    .track-row {
+      display: grid;
+      grid-template-columns: 128px repeat(5, 1fr);
+      min-height: 118px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+    }
+    .track-row:last-child { border-bottom: 0; }
+    .track-label { align-self: stretch; display: grid; place-items: center; padding: 14px; color: var(--muted); background: #f0f1f4; font-size: 12px; font-weight: 700; text-align: center; }
+    .track-cell { position: relative; height: 100%; display: grid; place-items: center; padding: 12px 7px; }
+    .track-cell:not(:last-child)::after { content: ""; position: absolute; top: 50%; left: 65%; right: -35%; height: 2px; background: var(--line-strong); }
+    .track-node { position: relative; z-index: 1; min-width: 108px; padding: 11px 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: white; text-align: center; box-shadow: 0 4px 12px rgba(25, 26, 30, .04); }
+    .track-node strong { display: block; font-size: 12px; }
+    .track-node span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .track-node.done { border-color: #bfe6cf; background: var(--green-soft); }
+    .track-node.current { border-color: #bbb8ff; background: var(--purple-soft); box-shadow: 0 0 0 4px rgba(105,101,219,.08); }
+    .track-node.thread { border-style: dashed; color: var(--purple); }
+    .track-node.thread.active { border-style: solid; animation: pulse 1.8s infinite; }
+    .track-empty { color: #c0c2c9; font-size: 11px; }
+
+    @keyframes pulse { 50% { box-shadow: 0 0 0 7px rgba(105,101,219,.06); } }
+
+    /* D: interaction */
+    .composer-card, .rules-card { border: 1px solid var(--line); border-radius: 16px; background: var(--panel-soft); }
+    .composer-card { padding: 18px; }
+    .vertical-composer { max-width: 820px; margin: 18px auto 8px; }
+    .composer-card textarea { width: 100%; min-height: 128px; padding: 14px; resize: vertical; outline: none; border: 1px solid var(--line-strong); border-radius: 12px; color: var(--text); background: white; line-height: 1.6; }
+    .composer-card textarea:focus { border-color: #aaa7f7; box-shadow: 0 0 0 4px var(--purple-soft); }
+
+    .direct-actions { margin-top: 12px; display: grid; grid-template-columns: 1fr 1.35fr 1fr; gap: 9px; }
+    .direct-action { min-height: 43px; padding: 10px 13px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--text); background: white; font-weight: 700; }
+    .direct-action:hover:not(:disabled) { border-color: #aaa7f7; transform: translateY(-1px); }
+    .direct-action.resume { border-color: var(--purple); color: white; background: var(--purple); box-shadow: 0 7px 18px rgba(105,101,219,.2); }
+    .direct-action.discuss { border-color: #c8c6ff; color: var(--purple); background: var(--purple-soft); }
+    .direct-action:disabled { opacity: .42; cursor: default; transform: none; box-shadow: none; }
+    .direct-action-note { margin: 10px 2px 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+    .rules-card { padding: 18px; }
+    .rules-card h4 { margin: 0 0 14px; font-size: 14px; }
+    .rule { padding: 11px 0; border-top: 1px solid var(--line); }
+    .rule:first-of-type { border-top: 0; padding-top: 0; }
+    .rule strong { display: block; font-size: 12px; }
+    .rule span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+    .activity-preview { margin-top: 18px; border-top: 1px solid var(--line); }
+    .activity-preview h4 { margin: 18px 0 12px; font-size: 13px; }
+    .activity-item { padding: 11px 13px; margin-top: 8px; display: flex; gap: 10px; border-radius: 11px; background: white; border: 1px solid var(--line); font-size: 12px; }
+    .activity-item b { color: var(--purple); }
+    .activity-item span { color: var(--muted); }
+
+    /* chat drawer */
+    .chat-drawer {
+      position: fixed;
+      z-index: 30;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 430px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      border-left: 1px solid var(--line);
+      background: white;
+      box-shadow: -20px 0 60px rgba(20, 21, 26, .16);
+      transform: translateX(105%);
+      transition: transform .28s ease;
+    }
+
+    .chat-drawer.open { transform: translateX(0); }
+    .chat-header { padding: 18px 20px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
+    .chat-header strong { display: block; }
+    .chat-header span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .icon-button { width: 32px; height: 32px; border: 0; border-radius: 9px; color: var(--muted); background: var(--panel-soft); }
+    .chat-body { overflow: auto; padding: 20px; }
+    .chat-message { max-width: 88%; margin-bottom: 14px; padding: 12px 14px; border-radius: 14px; font-size: 12px; line-height: 1.65; }
+    .chat-message.user { margin-left: auto; background: var(--purple); color: white; border-bottom-right-radius: 4px; }
+    .chat-message.ai { background: var(--panel-soft); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .chat-footer { padding: 15px; border-top: 1px solid var(--line); }
+    .chat-footer button { width: 100%; padding: 11px; border: 1px solid #c8c6ff; border-radius: 10px; color: var(--purple); background: var(--purple-soft); font-weight: 700; }
+    .decision-bar { display: none; margin-bottom: 10px; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .decision-bar.visible { display: grid; }
+    .decision-bar button { border-color: var(--line-strong); color: var(--text); background: white; font-size: 11px; }
+    .decision-bar button:first-child { border-color: #b9e0c9; color: var(--green); background: var(--green-soft); }
+
+    .toast {
+      position: fixed;
+      z-index: 50;
+      left: 50%;
+      bottom: 28px;
+      padding: 11px 15px;
+      border-radius: 11px;
+      color: white;
+      background: #26272c;
+      box-shadow: 0 12px 35px rgba(20, 21, 26, .25);
+      font-size: 12px;
+      opacity: 0;
+      transform: translate(-50%, 18px);
+      transition: .22s ease;
+      pointer-events: none;
+    }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+    .backdrop { position: fixed; z-index: 20; inset: 0; background: rgba(20,21,26,.18); opacity: 0; pointer-events: none; transition: opacity .25s; }
+    .backdrop.visible { opacity: 1; pointer-events: auto; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">T</span>Taskboard 交互探索</div>
+      <small>同一任务 · 四种观察方式</small>
+      <button class="nav-button" data-view-target="horizontal"><span>━</span><span>顶部生命周期</span></button>
+      <button class="nav-button active" data-view-target="vertical"><span>↳</span><span>纵向经历日志</span></button>
+      <button class="nav-button" data-view-target="dual"><span>═</span><span>任务 / 对话双轨</span></button>
+      <div class="sidebar-note">
+        这是操作原型，不会调用真实 AI，也不会改变任务状态。你可以切换场景、发布评论、开启 Sol 对话并采用讨论结论。
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="demo-toolbar">
+        <div>
+          <h1>审核阶段、评论动作与 Sol 对话</h1>
+          <p>比较信息结构，也可以直接点击体验关键操作。</p>
+        </div>
+        <div class="scenario-control">
+          <label for="scenario">演示场景</label>
+          <select id="scenario">
+            <option value="waiting">需求审核 · 等待你补充</option>
+            <option value="reviewing">Sol 正在复审</option>
+            <option value="development">开发执行中</option>
+            <option value="delivery">交付验收 · 等待你确认</option>
+          </select>
+        </div>
+      </div>
+
+      <section class="task-shell">
+        <header class="task-header">
+          <div>
+            <div class="eyebrow">DASHITASKBOA-11 · dashi-taskboard</div>
+            <h2>增加“待我介入”快捷筛选与任务突出提示</h2>
+          </div>
+          <div class="status-pill"><span class="status-dot"></span><span id="statusText">等待你补充</span></div>
+        </header>
+
+        <div class="task-content">
+          <section class="view" data-view="horizontal">
+            <div class="view-intro">
+              <div><h3>A · 顶部生命周期时间轴</h3><p>进入任务后第一眼回答“走到哪里、现在由谁处理、下一步是什么”。适合成为任务详情的固定总览。</p></div>
+              <span class="recommended">推荐作为主结构</span>
+            </div>
+            <div class="horizontal-timeline" id="horizontalTimeline"></div>
+            <div class="current-callout">
+              <div><strong id="currentOwner">当前负责人：你</strong><span id="currentAction">请回复审核问题，发布后继续当前需求审核。</span></div>
+              <span class="branch-chip" id="branchChip">Sol 独立讨论 #2 · 进行中</span>
+            </div>
+          </section>
+
+          <section class="view active" data-view="vertical">
+            <div class="view-intro">
+              <div><h3>B · 纵向经历日志</h3><p>把审核轮次、评论、AI 对话和状态变化按发生顺序放在一条线上；评论区直接提供三个动作，不再使用下拉框。</p></div>
+              <span class="recommended">已选方向</span>
+            </div>
+            <div class="vertical-timeline" id="verticalTimeline"></div>
+            <div class="composer-card vertical-composer">
+              <textarea id="commentInput" placeholder="例如：当前为什么没有任务被标注到待我跟进，是不是需要做一次初始化？"></textarea>
+              <div class="direct-actions">
+                <button class="direct-action" data-comment-action="comment" disabled>仅发布评论</button>
+                <button class="direct-action resume" id="resumeAction" data-comment-action="resume" disabled>发布并继续需求审核</button>
+                <button class="direct-action discuss" data-comment-action="discuss" disabled>发起 Sol 新讨论</button>
+              </div>
+              <p class="direct-action-note" id="directActionNote">普通评论只记录；继续审核会复用当前对话；Sol 新讨论会创建独立支线。</p>
+              <div class="activity-preview">
+                <h4>本次演示产生的活动</h4>
+                <div id="activityList"><div class="activity-item"><b>提示</b><span>尚未进行操作。</span></div></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="view" data-view="dual">
+            <div class="view-intro">
+              <div><h3>C · 任务流程 / AI 对话双轨</h3><p>上轨是任务真实状态，下轨是关联对话。讨论可以并行存在，但只有明确采用结论后才影响主流程。</p></div>
+              <span class="recommended">适合多轮讨论</span>
+            </div>
+            <div class="dual-track" id="dualTrack"></div>
+          </section>
+
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <aside class="chat-drawer" id="chatDrawer" aria-label="Sol 独立讨论">
+    <header class="chat-header">
+      <div><strong>Sol 独立讨论 #2</strong><span>DASHITASKBOA-11 · gpt-5.6-sol · X-High</span></div>
+      <button class="icon-button" id="closeChat" aria-label="关闭">×</button>
+    </header>
+    <div class="chat-body" id="chatBody"></div>
+    <footer class="chat-footer">
+      <div class="decision-bar" id="decisionBar">
+        <button id="adoptResult">采用结论并继续</button>
+        <button id="saveDiscussion">仅保存讨论</button>
+      </div>
+      <button id="simulateSol">模拟 Sol 完成讨论</button>
+    </footer>
+  </aside>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const stages = [
+      { label: "需求审核", hint: "Sol 首轮检查" },
+      { label: "等待补充", hint: "需要你回复" },
+      { label: "Sol 复审", hint: "审核新信息" },
+      { label: "开发执行", hint: "Agent 实现" },
+      { label: "交付验收", hint: "确认开发结果" },
+      { label: "已完成", hint: "验收通过" }
+    ];
+
+    const scenarioMap = {
+      waiting: { current: 1, status: "等待你补充", owner: "当前负责人：你", action: "请回复审核问题，发布后继续当前需求审核。" },
+      reviewing: { current: 2, status: "Sol 复审中", owner: "当前负责人：Sol 5.6", action: "AI 正在读取你的补充；可打开审核对话查看进度。" },
+      development: { current: 3, status: "开发执行中", owner: "当前负责人：开发 Agent", action: "Agent 正在实现与验证；普通评论不会中断执行。" },
+      delivery: { current: 4, status: "交付验收", owner: "当前负责人：你", action: "请接受交付，或提交修改意见让 Agent 跟进。" }
+    };
+
+    const baseEvents = [
+      { stage: 0, title: "需求审核 · 第 1 轮", body: "Sol X-High 提出三个待确认问题。", thread: "打开需求审核对话" },
+      { stage: 1, title: "等待你补充", body: "任务已进入待解决，当前明确等待用户评论。" },
+      { stage: 2, title: "Sol 复审", body: "读取新增评论并更新结构化审核结论。", thread: "查看复审轮次" },
+      { stage: 3, title: "开发执行", body: "Agent 根据已通过的需求完成实现与验证。", thread: "打开开发对话" },
+      { stage: 4, title: "交付验收", body: "开发结果已提交，等待用户确认或提出修改。", thread: "打开交付对话" },
+      { stage: 5, title: "任务完成", body: "仅在用户明确接受交付后进入完成状态。" }
+    ];
+
+    let currentScenario = "waiting";
+    let discussionActive = false;
+    let toastTimer = null;
+    const demoActivities = [];
+
+    const scenarioSelect = document.getElementById("scenario");
+    const horizontalTimeline = document.getElementById("horizontalTimeline");
+    const verticalTimeline = document.getElementById("verticalTimeline");
+    const dualTrack = document.getElementById("dualTrack");
+    const commentInput = document.getElementById("commentInput");
+    const directActionButtons = [...document.querySelectorAll("[data-comment-action]")];
+    const resumeAction = document.getElementById("resumeAction");
+    const activityList = document.getElementById("activityList");
+    const chatDrawer = document.getElementById("chatDrawer");
+    const backdrop = document.getElementById("backdrop");
+    const chatBody = document.getElementById("chatBody");
+    const decisionBar = document.getElementById("decisionBar");
+    const simulateSol = document.getElementById("simulateSol");
+
+    function render() {
+      const state = scenarioMap[currentScenario];
+      document.getElementById("statusText").textContent = state.status;
+      document.getElementById("currentOwner").textContent = state.owner;
+      document.getElementById("currentAction").textContent = state.action;
+      document.getElementById("branchChip").classList.toggle("visible", discussionActive);
+      resumeAction.textContent = currentScenario === "delivery"
+        ? "提交修改意见并让 AI 跟进"
+        : currentScenario === "development"
+          ? "追加到开发上下文"
+          : "发布并继续需求审核";
+
+      horizontalTimeline.innerHTML = stages.map((stage, index) => {
+        const className = index < state.current ? "done" : index === state.current ? "current" : "";
+        const symbol = index < state.current ? "✓" : index === state.current ? "●" : "";
+        return `<div class="step ${className}"><div class="step-node">${symbol}</div><strong>${stage.label}</strong><span>${stage.hint}</span></div>`;
+      }).join("");
+
+      verticalTimeline.innerHTML = baseEvents.map((event) => {
+        const className = event.stage < state.current ? "done" : event.stage === state.current ? "current" : "";
+        return `<div class="event ${className}"><div class="event-marker">${event.stage < state.current ? "✓" : event.stage === state.current ? "●" : event.stage + 1}</div><div class="event-card"><strong>${event.title}</strong><p>${event.body}</p>${event.thread ? `<button>${event.thread} →</button>` : ""}</div></div>`;
+      }).join("") + (discussionActive ? `<div class="event current"><div class="event-marker">AI</div><div class="event-card"><strong>Sol 独立讨论 #2</strong><p>围绕用户的新问题建立支线对话；尚未改变任务主状态。</p><button onclick="openChat()">打开讨论 →</button></div></div>` : "");
+
+      const taskNodes = ["需求审核", "等待补充", "开发执行", "交付验收", "已完成"];
+      const taskStageIndex = state.current <= 2 ? state.current : state.current - 1;
+      const taskCells = taskNodes.map((label, index) => `<div class="track-cell"><div class="track-node ${index < taskStageIndex ? "done" : index === taskStageIndex ? "current" : ""}"><strong>${label}</strong><span>${index === taskStageIndex ? "当前任务状态" : index < taskStageIndex ? "已完成" : "尚未开始"}</span></div></div>`).join("");
+      const threadCells = [
+        `<div class="track-cell"><div class="track-node thread done"><strong>审核对话 #1</strong><span>Sol X-High</span></div></div>`,
+        `<div class="track-cell"><span class="track-empty">用户评论</span></div>`,
+        `<div class="track-cell"><div class="track-node thread ${currentScenario === "development" ? "active" : ""}"><strong>开发对话 #1</strong><span>实现与验证</span></div></div>`,
+        `<div class="track-cell">${discussionActive ? `<button class="track-node thread active" onclick="openChat()"><strong>Sol 讨论 #2</strong><span>点击打开</span></button>` : `<span class="track-empty">可发起新讨论</span>`}</div>`,
+        `<div class="track-cell"><span class="track-empty">等待结论</span></div>`
+      ].join("");
+      dualTrack.innerHTML = `<div class="track-row"><div class="track-label">任务主流程<br>真实状态</div>${taskCells}</div><div class="track-row"><div class="track-label">AI 对话支线<br>关联上下文</div>${threadCells}</div>`;
+      renderActivities();
+    }
+
+    function renderActivities() {
+      activityList.innerHTML = demoActivities.length === 0
+        ? `<div class="activity-item"><b>提示</b><span>尚未进行操作。</span></div>`
+        : demoActivities.map(item => `<div class="activity-item"><b>${item.type}</b><span>${item.text}</span></div>`).join("");
+    }
+
+    function addActivity(type, text) {
+      demoActivities.unshift({ type, text });
+      renderActivities();
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("visible"), 2400);
+    }
+
+    function setScenario(value) {
+      currentScenario = value;
+      scenarioSelect.value = value;
+      render();
+    }
+
+    function openChat() {
+      chatDrawer.classList.add("open");
+      backdrop.classList.add("visible");
+    }
+
+    function closeChat() {
+      chatDrawer.classList.remove("open");
+      backdrop.classList.remove("visible");
+    }
+
+    document.querySelectorAll(".nav-button").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".nav-button").forEach(item => item.classList.remove("active"));
+        document.querySelectorAll(".view").forEach(item => item.classList.remove("active"));
+        button.classList.add("active");
+        document.querySelector(`[data-view="${button.dataset.viewTarget}"]`).classList.add("active");
+      });
+    });
+
+    scenarioSelect.addEventListener("change", event => setScenario(event.target.value));
+    commentInput.addEventListener("input", () => {
+      const disabled = commentInput.value.trim().length === 0;
+      directActionButtons.forEach(button => { button.disabled = disabled; });
+    });
+    document.getElementById("closeChat").addEventListener("click", closeChat);
+    backdrop.addEventListener("click", closeChat);
+
+    function submitCommentWithAction(action) {
+      const text = commentInput.value.trim();
+      if (!text) return;
+      if (action === "comment") {
+        addActivity("普通评论", `已保存：“${text}”——没有触发 AI，任务状态保持不变。`);
+        showToast("评论已发布 · 未触发 AI");
+      }
+      if (action === "resume") {
+        if (currentScenario === "waiting") {
+          setScenario("reviewing");
+          addActivity("继续审核", "评论已加入原需求审核上下文，Sol 正在进行下一轮复审。");
+          showToast("已继续当前需求审核");
+        } else if (currentScenario === "delivery") {
+          setScenario("development");
+          addActivity("修改跟进", "评论已作为交付修改意见，任务回到开发执行阶段。");
+          showToast("已提交修改意见给开发 Agent");
+        } else {
+          addActivity("继续阶段", "评论已绑定当前阶段；演示状态保持不变。");
+          showToast("已绑定当前阶段");
+        }
+      }
+      if (action === "discuss") {
+        discussionActive = true;
+        chatBody.innerHTML = `<div class="chat-message user">${text.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</div><div class="chat-message ai">我已经读取当前任务、审核结论和这条评论。这个对话是独立支线，不会自动改变任务状态。</div>`;
+        decisionBar.classList.remove("visible");
+        simulateSol.style.display = "block";
+        addActivity("新 Sol 讨论", "已创建独立对话 #2，并关联当前任务与评论。");
+        render();
+        openChat();
+        showToast("已创建 Sol 独立讨论");
+      }
+      commentInput.value = "";
+      directActionButtons.forEach(button => { button.disabled = true; });
+    }
+
+    directActionButtons.forEach(button => {
+      button.addEventListener("click", () => submitCommentWithAction(button.dataset.commentAction));
+    });
+
+    simulateSol.addEventListener("click", () => {
+      chatBody.insertAdjacentHTML("beforeend", `<div class="chat-message ai">讨论结论：当前问题属于阶段命名和触发意图不清。建议保留普通评论，同时新增“继续当前阶段”和“发起独立讨论”两个明确动作。</div>`);
+      decisionBar.classList.add("visible");
+      simulateSol.style.display = "none";
+      chatBody.scrollTop = chatBody.scrollHeight;
+      addActivity("Sol 已完成", "讨论已形成结论，等待你选择是否采用。");
+      showToast("Sol 讨论已完成 · 等待采用结论");
+    });
+
+    document.getElementById("adoptResult").addEventListener("click", () => {
+      const wasDelivery = currentScenario === "delivery";
+      setScenario(wasDelivery ? "development" : "reviewing");
+      discussionActive = false;
+      addActivity("采用结论", wasDelivery ? "结论已转为修改要求，任务进入开发执行。" : "结论已写回当前需求审核，Sol 开始复审。");
+      closeChat();
+      showToast("已采用讨论结论并继续流程");
+    });
+
+    document.getElementById("saveDiscussion").addEventListener("click", () => {
+      discussionActive = false;
+      addActivity("保存讨论", "讨论内容已保留，但任务状态没有变化。");
+      render();
+      closeChat();
+      showToast("讨论已保存 · 任务状态未变化");
+    });
+
+    const previewParams = new URLSearchParams(window.location.search);
+    const previewScenario = previewParams.get("scenario");
+    if (previewScenario && scenarioMap[previewScenario]) currentScenario = previewScenario;
+    render();
+    const previewView = previewParams.get("view");
+    const previewButton = document.querySelector(`[data-view-target="${previewView}"]`);
+    if (previewButton) previewButton.click();
+    if (previewParams.get("demo") === "chat") {
+      discussionActive = true;
+      chatBody.innerHTML = `<div class="chat-message user">这条新问题是否需要重新触发需求审核？</div><div class="chat-message ai">可以先作为独立讨论，不改变任务状态。讨论结束后，由你决定是否采用结论并继续当前阶段。</div>`;
+      decisionBar.classList.add("visible");
+      simulateSol.style.display = "none";
+      render();
+      openChat();
+    }
+    window.openChat = openChat;
+  </script>
+</body>
+</html>
