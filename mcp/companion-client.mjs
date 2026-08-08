@@ -8,7 +8,9 @@ const ERROR_GUIDANCE = new Map([
   ["INVALID_COMPANION_URL", ["invalid_configuration", "Set the companion URL to a loopback HTTP or HTTPS origin."]],
   ["INVALID_COMPANION_PATH", ["invalid_request", "Use a companion API path that starts with a single slash."]],
   ["INVALID_COMPANION_RESPONSE", ["invalid_response", "Restart or update the local taskboard companion and retry."]],
+  ["COMPANION_REDIRECT_BLOCKED", ["invalid_response", "Use a direct loopback companion URL without redirects."]],
   ["PROJECT_MAPPING_NOT_FOUND", ["project_not_mapped", "Map the current workspace to a taskboard project and retry."]],
+  ["PROJECT_MAPPING_AMBIGUOUS", ["project_mapping_ambiguous", "Keep exactly one taskboard project mapping for the current workspace and retry."]],
   ["UNAUTHORIZED", ["authentication_required", "Log in through the local companion and retry."]],
   ["VERSION_CONFLICT", ["version_conflict", "Reload the context entry, then retry with its current version."]],
   ["CONTEXT_VERSION_CONFLICT", ["version_conflict", "Reload the context entry, then retry with its current version."]],
@@ -20,6 +22,20 @@ const ERROR_GUIDANCE = new Map([
   ["SERVER_MISCONFIGURED", ["server_misconfigured", "Ask the taskboard administrator to check the server configuration."]],
   ["REMOTE_UNAVAILABLE", ["cloud_unavailable", "Check the cloud taskboard connection and retry."]],
   ["COMPANION_UNAVAILABLE", ["companion_unavailable", "Start the local taskboard companion and retry."]],
+]);
+
+const SAFE_ERROR_CODES = new Set([
+  ...ERROR_GUIDANCE.keys(),
+  "INVALID_BODY",
+  "INVALID_FIELD",
+  "INVALID_JSON",
+  "INVALID_PATH",
+  "INVALID_QUERY_PARAMETER",
+  "UNKNOWN_FIELD",
+  "UNKNOWN_QUERY_PARAMETER",
+  "PROJECT_NOT_FOUND",
+  "CONTEXT_NOT_FOUND",
+  "NOT_FOUND",
 ]);
 
 export class CompanionError extends Error {
@@ -36,6 +52,7 @@ export function publicCompanionError(error) {
   const normalized = error instanceof CompanionError
     ? error
     : new CompanionError(500, "INTERNAL_ERROR", "Unexpected companion client failure");
+  const code = safeErrorCode(normalized.status, normalized.code);
   const fallback = normalized.status === 400
     ? ["invalid_request", "Check the tool arguments and retry."]
     : normalized.status === 404
@@ -43,7 +60,7 @@ export function publicCompanionError(error) {
       : normalized.status === 409
         ? ["conflict", "Reload the affected context and retry."]
         : ["request_failed", "Check the taskboard service status and retry."];
-  const [category, action] = ERROR_GUIDANCE.get(normalized.code) ?? fallback;
+  const [category, action] = ERROR_GUIDANCE.get(code) ?? fallback;
   const details = {};
   for (const field of ["expectedVersion", "actualVersion"]) {
     if (Number.isSafeInteger(normalized.details?.[field])) {
@@ -52,11 +69,21 @@ export function publicCompanionError(error) {
   }
   return {
     status: normalized.status,
-    code: normalized.code,
+    code,
     category,
     action,
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
+}
+
+function safeErrorCode(status, code) {
+  if (typeof code === "string" && (
+    SAFE_ERROR_CODES.has(code)
+    || /^HTTP_[1-5]\d{2}$/.test(code)
+  )) {
+    return code;
+  }
+  return `HTTP_${status}`;
 }
 
 export function resolveCompanionUrl(env = process.env) {
@@ -108,10 +135,27 @@ export function workspaceContains(workspacePath, cwd) {
 
 export function resolveMappedProject(projects, cwd) {
   if (!Array.isArray(projects) || !path.isAbsolute(cwd ?? "")) return null;
-  const matches = projects
-    .filter((project) => workspaceContains(project?.workspacePath, cwd))
-    .sort((left, right) => right.workspacePath.length - left.workspacePath.length);
-  return matches[0] ?? null;
+  const canonicalCwd = path.resolve(cwd);
+  const matches = projects.flatMap((project) => {
+    if (!path.isAbsolute(project?.workspacePath ?? "")) return [];
+    const workspacePath = path.resolve(project.workspacePath);
+    if (!workspaceContains(workspacePath, canonicalCwd)) return [];
+    return [{ project, workspacePath }];
+  }).sort((left, right) => right.workspacePath.length - left.workspacePath.length);
+  const match = matches[0];
+  if (!match) return null;
+  const ambiguous = matches.some((candidate) => (
+    candidate.workspacePath === match.workspacePath
+    && candidate.project?.id !== match.project?.id
+  ));
+  if (ambiguous) {
+    throw new CompanionError(
+      409,
+      "PROJECT_MAPPING_AMBIGUOUS",
+      "Current workspace has multiple taskboard project mappings",
+    );
+  }
+  return match.project;
 }
 
 export function publicProject(project) {
@@ -134,6 +178,7 @@ function requestPath(pathOrSegments) {
     typeof pathOrSegments !== "string"
     || !pathOrSegments.startsWith("/")
     || pathOrSegments.startsWith("//")
+    || pathOrSegments.includes("\\")
   ) {
     throw invalidCompanionPath();
   }
@@ -183,8 +228,10 @@ export function createCompanionClient({
     const pathname = requestPath(pathOrSegments);
     const url = new URL(pathname, `${origin}/`);
     appendQuery(url, options.query);
+    if (url.origin !== origin) throw invalidCompanionPath();
     const hasBody = Object.hasOwn(options, "body") && options.body !== undefined;
     let response;
+    let text;
     try {
       response = await fetchImplementation(url, {
         method,
@@ -194,9 +241,19 @@ export function createCompanionClient({
           ...(hasBody ? { "content-type": "application/json" } : {}),
         },
         signal: createTimeoutSignal(timeoutMs),
+        redirect: "manual",
         ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
       });
-    } catch {
+      if (response.status >= 300 && response.status < 400) {
+        throw new CompanionError(
+          502,
+          "COMPANION_REDIRECT_BLOCKED",
+          "Local taskboard companion returned a redirect",
+        );
+      }
+      text = await response.text();
+    } catch (error) {
+      if (error instanceof CompanionError) throw error;
       throw new CompanionError(
         503,
         "COMPANION_UNAVAILABLE",
@@ -204,12 +261,18 @@ export function createCompanionClient({
       );
     }
 
-    const text = await response.text();
     let payload = {};
     if (text) {
       try {
         payload = JSON.parse(text);
       } catch {
+        if (!response.ok) {
+          throw new CompanionError(
+            response.status,
+            response.status === 401 ? "UNAUTHORIZED" : `HTTP_${response.status}`,
+            "Taskboard companion request failed",
+          );
+        }
         throw new CompanionError(
           502,
           "INVALID_COMPANION_RESPONSE",
@@ -218,9 +281,12 @@ export function createCompanionClient({
       }
     }
     if (!response.ok) {
+      const code = response.status === 401
+        ? "UNAUTHORIZED"
+        : safeErrorCode(response.status, payload?.error?.code);
       throw new CompanionError(
         response.status,
-        typeof payload?.error?.code === "string" ? payload.error.code : `HTTP_${response.status}`,
+        code,
         "Taskboard companion request failed",
         payload?.error?.details,
       );

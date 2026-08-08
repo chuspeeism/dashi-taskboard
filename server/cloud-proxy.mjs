@@ -3,6 +3,8 @@ import path from "node:path";
 import { DEFAULT_PROJECT_ID } from "../shared/domain.mjs";
 import { normalizeCloudUrl } from "./cloud-config.mjs";
 
+const DEFAULT_CLOUD_PROXY_TIMEOUT_MS = 30_000;
+
 const LOCAL_COMPANION_ROUTES = new Set([
   "/health",
   "/api/meta",
@@ -200,9 +202,20 @@ export function createCloudProxy({
   configStore,
   getConfig,
   fetch: fetchImplementation = globalThis.fetch,
+  createTimeoutSignal = (timeoutMs) => AbortSignal.timeout(timeoutMs),
+  timeoutMs = DEFAULT_CLOUD_PROXY_TIMEOUT_MS,
   resolveDevelopmentContext,
   assertTaskProjectMoveAllowed,
 }) {
+  if (typeof fetchImplementation !== "function") {
+    throw new Error("fetch is not available");
+  }
+  if (typeof createTimeoutSignal !== "function") {
+    throw new Error("createTimeoutSignal must be a function");
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("timeoutMs must be a positive integer");
+  }
   const readConfig = getConfig ?? (() => configStore.read());
   const setProjectWorkspace = configStore?.setProjectWorkspace?.bind(configStore);
 
@@ -257,6 +270,10 @@ export function createCloudProxy({
         method: request.method,
         headers,
         redirect: "manual",
+        signal: AbortSignal.any([
+          request.signal,
+          createTimeoutSignal(timeoutMs),
+        ]),
       };
       if (request.method !== "GET" && request.method !== "HEAD" && prepared.body !== null) {
         init.body = prepared.body;
@@ -274,12 +291,22 @@ export function createCloudProxy({
           error instanceof Error ? error.message : String(error),
         );
       }
-      return localizeResponse(response, {
-        readConfig,
-        setProjectWorkspace,
-        projectWorkspace: prepared.projectWorkspace,
-        resolveDevelopmentContext,
-      });
+      try {
+        return await localizeResponse(response, {
+          readConfig,
+          setProjectWorkspace,
+          projectWorkspace: prepared.projectWorkspace,
+          resolveDevelopmentContext,
+        });
+      } catch (error) {
+        if (!init.signal.aborted) throw error;
+        throw new CloudProxyError(
+          502,
+          "REMOTE_UNAVAILABLE",
+          `Cannot reach cloud taskboard at ${remoteUrl}`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     },
   };
 }

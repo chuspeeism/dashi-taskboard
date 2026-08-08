@@ -30,7 +30,7 @@ The cloud service is authoritative whenever cloud mode is active. `REMOTE_UNAVAI
 
 Every tool has a closed input schema and returns both structured JSON and a short model-readable text result. Successful structured results use `ok: true`. Failures use `ok: false`, set the MCP error flag, and return only `status`, `code`, `category`, `action`, and safe numeric version details when available.
 
-Project-scoped tools accept an explicit `projectId`; otherwise they resolve the current process directory through local device mappings. Resolution never selects an unrelated fallback project. Current-project output omits `cwd`, `workspacePath`, and all device mappings. HTTP requests have a 10-second timeout, never include an incoming Authorization value, and never return upstream exception text, full environment data, or credential fields.
+Project-scoped tools accept an explicit `projectId`; otherwise they resolve the current process directory through canonical local device mappings. Resolution never selects an unrelated fallback project and rejects duplicate mappings for the same directory. Current-project output omits `cwd`, `workspacePath`, and all device mappings. HTTP requests have a 10-second timeout across headers and body, reject redirects and any path that could leave the loopback origin, never include an incoming Authorization value, and return only allowlisted error codes and version details rather than upstream exception text, full environment data, or credential fields.
 
 `taskboard_context_publish` always sends `sourceType: agent`. Use `sourceId` and `sourceThreadId` only for provenance. `sourceThreadId` does not contain a chat and cannot grant access to, transfer, or restore a Codex conversation on another device.
 

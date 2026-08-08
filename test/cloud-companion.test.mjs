@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -270,6 +271,114 @@ test("configured cloud mode fails explicitly and never falls back to the local d
   );
   assert.equal(upstreamCalls, 1);
   assert.equal(localFallbackCalls, 0);
+});
+
+test("cloud proxy applies its deadline while consuming an upstream JSON body", async () => {
+  const { createCloudProxy } = await importCloudProxy();
+  const timeoutController = new AbortController();
+  let requestedTimeout;
+  let upstreamSignal;
+  let startedResolve;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  const proxy = createCloudProxy({
+    configStore: memoryConfigStore(),
+    timeoutMs: 3210,
+    createTimeoutSignal(timeoutMs) {
+      requestedTimeout = timeoutMs;
+      return timeoutController.signal;
+    },
+    fetch: async (_url, init) => {
+      upstreamSignal = init.signal;
+      startedResolve();
+      return new Response(new ReadableStream({
+        start(controller) {
+          if (!init.signal) {
+            controller.error(new Error("missing upstream signal"));
+            return;
+          }
+          init.signal.addEventListener("abort", () => {
+            controller.error(init.signal.reason);
+          }, { once: true });
+        },
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const pendingError = proxy.forward(
+    new Request("http://127.0.0.1:47823/api/projects"),
+  ).then(() => null, (error) => error);
+  await started;
+  timeoutController.abort(new DOMException("deadline exceeded", "TimeoutError"));
+  const error = await pendingError;
+
+  assert.equal(requestedTimeout, 3210);
+  assert.ok(upstreamSignal instanceof AbortSignal);
+  assert.equal(upstreamSignal.aborted, true);
+  assert.equal(error?.status, 502);
+  assert.equal(error?.code, "REMOTE_UNAVAILABLE");
+});
+
+test("disconnecting a companion client aborts the in-flight cloud request", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-abort-"));
+  temporaryDirectories.push(directory);
+  let startedResolve;
+  let abortedResolve;
+  let releaseUpstream;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  const aborted = new Promise((resolve) => {
+    abortedResolve = resolve;
+  });
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    cloudConfigStore: memoryConfigStore(),
+    remoteFetch: async (_url, init) => new Promise((_resolve, reject) => {
+      startedResolve(init.signal);
+      releaseUpstream = () => reject(new Error("test cleanup"));
+      init.signal?.addEventListener("abort", () => {
+        abortedResolve();
+        reject(init.signal.reason);
+      }, { once: true });
+    }),
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  let clientRequest;
+
+  try {
+    clientRequest = httpRequest({
+      host: "127.0.0.1",
+      port: address.port,
+      path: "/api/projects",
+      method: "GET",
+    });
+    clientRequest.on("error", () => {});
+    clientRequest.end();
+    const upstreamSignal = await started;
+
+    clientRequest.destroy();
+    let timeout;
+    try {
+      await Promise.race([
+        aborted,
+        new Promise((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("upstream request was not aborted")), 1000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    assert.ok(upstreamSignal instanceof AbortSignal);
+    assert.equal(upstreamSignal.aborted, true);
+  } finally {
+    clientRequest?.destroy();
+    releaseUpstream?.();
+    await app.close();
+  }
 });
 
 test("cloud proxy preserves upstream 401 responses and binary attachment streams", async () => {

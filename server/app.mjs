@@ -94,7 +94,7 @@ function sendEmpty(response, status, headers = {}) {
   response.end();
 }
 
-function toFetchRequest(request) {
+function toFetchRequest(request, signal) {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
     if (Array.isArray(value)) {
@@ -103,7 +103,7 @@ function toFetchRequest(request) {
       headers.set(name, value);
     }
   }
-  const init = { method: request.method, headers };
+  const init = { method: request.method, headers, signal };
   if (request.method !== "GET" && request.method !== "HEAD") {
     init.body = Readable.toWeb(request);
     init.duplex = "half";
@@ -138,6 +138,24 @@ async function sendFetchResponse(response, upstream) {
     response.once("finish", resolve);
     body.pipe(response);
   });
+}
+
+async function forwardCloudRequest(request, response, cloudProxy) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortOnClose = () => {
+    if (!response.writableFinished) abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortOnClose);
+  if (request.aborted || response.destroyed) abort();
+  try {
+    const upstream = await cloudProxy.forward(toFetchRequest(request, controller.signal));
+    await sendFetchResponse(response, upstream);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortOnClose);
+  }
 }
 
 function normalizeHostname(hostname) {
@@ -2054,10 +2072,7 @@ export function createTaskboardServer(options = {}) {
         if (currentCloudConfig.remoteUrl) {
           assertLoopbackRequest(request);
           if (!isLocalCompanionRoute(pathname)) {
-            return sendFetchResponse(
-              response,
-              await cloudProxy.forward(toFetchRequest(request)),
-            );
+            return await forwardCloudRequest(request, response, cloudProxy);
           }
         }
       }
