@@ -376,4 +376,3 @@ export function createContextServer({ companionClient } = {}) {
 
   return server;
 }
-

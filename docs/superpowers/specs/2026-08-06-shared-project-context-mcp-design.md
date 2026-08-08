@@ -42,4 +42,3 @@ After work, publish only durable decisions, constraints, state, risks, handoffs,
 ## Verification
 
 Use the official MCP client over a spawned stdio process to cover initialize, tools/list, tools/call, success, 404, all relevant 409 classes, 401, remote unavailability, idempotent replay, and leak sentinels. Validate both Skills, the plugin manifest, the marketplace, focused tests, typecheck/build, and the full check against the recorded 18-failure baseline.
-
