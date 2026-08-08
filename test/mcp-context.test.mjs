@@ -611,7 +611,10 @@ async function startContextCompanion() {
 
       if (
         request.method === "GET"
-        && url.pathname === "/api/projects/project-1/context/brief"
+        && (
+          url.pathname === "/api/projects/project-1/context/brief"
+          || url.pathname === "/api/projects/api--v2/context/brief"
+        )
       ) {
         sendHttpJson(response, 200, {
           brief: "## [decision] Use the companion boundary\n\nRead and write through HTTP.",
@@ -844,6 +847,25 @@ test("stdio server initializes and advertises exactly seven strict context tools
   assert.equal(byName.get("taskboard_context_get").annotations.readOnlyHint, true);
   assert.equal(byName.get("taskboard_context_publish").annotations.idempotentHint, true);
   assert.equal(byName.get("taskboard_context_archive").annotations.destructiveHint, true);
+});
+
+test("stdio project-scoped tools accept every project id allowed by the service", async (t) => {
+  const { client, companion } = await createMcpFixture(t);
+  const result = await client.callTool({
+    name: "taskboard_context_brief",
+    arguments: { projectId: "api--v2" },
+  });
+
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(assertStructuredResult(result), {
+    ok: true,
+    brief: "## [decision] Use the companion boundary\n\nRead and write through HTTP.",
+    includedEntryIds: [BASE_ENTRY.id],
+    truncated: false,
+  });
+  assert.equal(companion.requests.some((request) => (
+    request.pathname === "/api/projects/api--v2/context/brief"
+  )), true);
 });
 
 test("stdio tools route reads and versioned writes through the companion safely", async (t) => {

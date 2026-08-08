@@ -241,10 +241,16 @@ export function createCloudProxy({
       }
 
       const sourceUrl = new URL(request.url);
-      const upstreamUrl = new URL(
-        `${sourceUrl.pathname}${sourceUrl.search}`,
-        `${remoteUrl}/`,
-      );
+      if (sourceUrl.pathname.startsWith("//") || sourceUrl.pathname.includes("\\")) {
+        throw new CloudProxyError(400, "INVALID_PATH", "Request path is invalid");
+      }
+      const remoteOrigin = new URL(remoteUrl);
+      const upstreamUrl = new URL(remoteOrigin);
+      upstreamUrl.pathname = sourceUrl.pathname;
+      upstreamUrl.search = sourceUrl.search;
+      if (upstreamUrl.origin !== remoteOrigin.origin) {
+        throw new CloudProxyError(400, "INVALID_PATH", "Request path is invalid");
+      }
       const headers = new Headers(request.headers);
       headers.delete("authorization");
       headers.delete("host");

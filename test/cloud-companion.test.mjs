@@ -200,6 +200,24 @@ test("cloud proxy replaces client identity with Basic Auth and makes exactly one
   });
 });
 
+test("cloud proxy rejects network-path URLs before attaching cloud credentials", async () => {
+  const { createCloudProxy } = await importCloudProxy();
+  const calls = [];
+  const proxy = createCloudProxy({
+    configStore: memoryConfigStore(),
+    fetch: async (url, init) => {
+      calls.push({ url: url.toString(), init });
+      return jsonResponse({ projects: [] });
+    },
+  });
+
+  await assert.rejects(
+    proxy.forward(new Request("http://127.0.0.1//outside.example.test/collect")),
+    (error) => error?.status === 400 && error?.code === "INVALID_PATH",
+  );
+  assert.equal(calls.length, 0);
+});
+
 test("cloud companion blocks project moves for issue-linked local AI chats", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-chat-move-"));
   temporaryDirectories.push(directory);

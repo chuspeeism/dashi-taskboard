@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 
 import {
   DEFAULT_PROJECT_ID,
+  PROJECT_ID_PATTERN,
   TASK_STATUSES,
   isTaskPriority,
   isTaskStatus,
@@ -54,7 +55,6 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "image/webp",
   "text/plain",
 ]);
-const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
 const CODEX_AGENT_ACTOR = {
   type: "agent",

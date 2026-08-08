@@ -1,4 +1,5 @@
 import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mjs";
+import { PROJECT_ID_PATTERN } from "../../shared/domain.mjs";
 import {
   buildProjectContextBrief,
   contextEntryFromRow,
@@ -15,7 +16,6 @@ import {
 
 const JSON_BODY_LIMIT = 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
-const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TASK_STATUSES = [
   "backlog",
   "todo",

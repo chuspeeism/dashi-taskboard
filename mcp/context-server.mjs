@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
+import { PROJECT_ID_PATTERN } from "../shared/domain.mjs";
 import {
   CONTEXT_BODY_MAX_BYTES,
   CONTEXT_KINDS,
@@ -12,7 +13,6 @@ import {
 } from "./companion-client.mjs";
 
 const SERVER_INFO = Object.freeze({ name: "dashi-taskboard", version: "0.1.0" });
-const PROJECT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const ENTRY_FIELDS = Object.freeze([
   "id",
   "projectId",
