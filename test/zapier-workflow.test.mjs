@@ -15,9 +15,9 @@ test("workflow editing is a constrained vertical execution sequence instead of a
   assert.match(board, /normalizeWorkflowSnapshot/);
   assert.match(board, /deriveWorkflowLayout/);
   assert.match(board, /insertWorkflowNode/);
-  assert.match(board, /moveWorkflowNode/);
   assert.match(board, /edgeTypes=\{EDGE_TYPES\}/);
   assert.match(board, /nodeOrigin=\{TOP_CENTER_ORIGIN\}/);
+  assert.match(board, /nodesDraggable=\{false\}/);
   assert.match(board, /nodesConnectable=\{false\}/);
   assert.match(board, /aria-label="流程编排区"/);
   assert.match(board, /instance\.setCenter\(0, 220, \{ zoom: 1 \}\)/);
@@ -206,7 +206,7 @@ test("condition branch pickers use recursive sequence refs and allow nested cond
   assert.doesNotMatch(board, /item\.data\.kind !== "condition"/);
 });
 
-test("deleting a condition removes its subtree, while conditions move as one subtree and cannot duplicate", () => {
+test("deleting a condition removes its subtree and conditions cannot duplicate", () => {
   assert.match(
     board,
     /deleteWorkflowNode\(flow, nodeId\)[\s\S]*?deleted\.removedNodeIds/,
@@ -214,10 +214,6 @@ test("deleting a condition removes its subtree, while conditions move as one sub
   assert.match(
     board,
     /source\.data\.kind === "condition"\) return/,
-  );
-  assert.match(
-    board,
-    /moveWorkflowNode\([\s\S]*?session\.sequenceRef/,
   );
 });
 

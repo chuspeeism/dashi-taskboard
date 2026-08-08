@@ -25,7 +25,7 @@ const COMMAND_OPTIONS = new Map([
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
-  ["issue list", new Set(["project", "status", "json"])],
+  ["issue list", new Set(["project", "status", "archived", "json"])],
   ["issue get", new Set(["json"])],
   [
     "issue create",
@@ -41,6 +41,7 @@ const COMMAND_OPTIONS = new Map([
       "git-branch",
       "worktree-path",
       "worktree-branch",
+      "start-date",
       "due-date",
       "recurrence-interval",
       "recurrence-unit",
@@ -50,6 +51,7 @@ const COMMAND_OPTIONS = new Map([
   [
     "issue update",
     new Set([
+      "project",
       "title",
       "description",
       "description-file",
@@ -60,6 +62,7 @@ const COMMAND_OPTIONS = new Map([
       "git-branch",
       "worktree-path",
       "worktree-branch",
+      "start-date",
       "due-date",
       "recurrence-interval",
       "recurrence-unit",
@@ -477,9 +480,13 @@ async function listIssues(api, options) {
   if (options.status !== undefined) {
     assertStatus(options.status);
   }
+  if (options.archived !== undefined && !["true", "false", "all"].includes(options.archived)) {
+    throw usageError("--archived must be true, false, or all");
+  }
   const search = new URLSearchParams();
   if (options.project !== undefined) search.set("projectId", options.project);
   if (options.status !== undefined) search.set("status", options.status);
+  if (options.archived !== undefined) search.set("archived", options.archived);
   const query = search.size > 0 ? `?${search}` : "";
   return api.request("GET", `/api/tasks${query}`);
 }
@@ -502,6 +509,7 @@ async function createIssue(api, options, overrides) {
     labels: parseLabels(options.labels),
     threadId,
     ...optionalField("developmentContext", developmentContext),
+    ...optionalField("startDate", options["start-date"]),
     ...optionalField("dueDate", options["due-date"]),
     ...optionalField("recurrence", recurrence),
   });
@@ -515,11 +523,13 @@ async function updateIssue(api, taskId, options, overrides) {
   const recurrence = recurrenceFromOptions(options);
   const threadId = resolveThreadId(options, overrides);
   const patch = {
+    ...optionalField("projectId", options.project),
     ...optionalField("title", options.title),
     ...optionalField("status", options.status),
     ...optionalField("priority", options.priority),
     ...optionalField("labels", options.labels === undefined ? undefined : parseLabels(options.labels)),
     ...optionalField("developmentContext", developmentContext),
+    ...optionalField("startDate", options["start-date"]),
     ...optionalField("dueDate", options["due-date"]),
     ...optionalField("recurrence", recurrence),
   };

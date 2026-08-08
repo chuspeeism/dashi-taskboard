@@ -84,7 +84,7 @@ test("health and the default local project are available", async () => {
   assert.equal(result.response.status, 200);
   assert.equal(result.body.projects.length, 1);
   assert.equal(result.body.projects[0].id, "local");
-  assert.equal(result.body.projects[0].name, "Local");
+  assert.equal(result.body.projects[0].name, "全局");
   assert.equal(result.body.projects[0].workspacePath, null);
   assert.equal(result.body.projects[0].issueCount, 0);
 });
@@ -720,7 +720,7 @@ fi
 while IFS= read -r line; do
   case "$line" in
     *'"id":1'*) printf '%s\\n' '{"id":1,"result":{"platformFamily":"unix"}}' ;;
-    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
+    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","description":"User skill","path":"/user/skills/user-skill/SKILL.md","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","description":"Repository skill","path":"/workspace/.agents/skills/repo-skill/SKILL.md","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
   esac
 done
 `);
@@ -735,8 +735,20 @@ done
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body, {
     skills: [
-      { id: "repo-skill", label: "Repository Skill", scope: "repo" },
-      { id: "user-skill", label: "user-skill", scope: "user" },
+      {
+        id: "repo-skill",
+        label: "Repository Skill",
+        description: "Repository skill",
+        path: "/workspace/.agents/skills/repo-skill/SKILL.md",
+        scope: "repo",
+      },
+      {
+        id: "user-skill",
+        label: "user-skill",
+        description: "User skill",
+        path: "/user/skills/user-skill/SKILL.md",
+        scope: "user",
+      },
     ],
     mcpServers: [
       { id: "context7", label: "context7", transport: "streamable_http" },

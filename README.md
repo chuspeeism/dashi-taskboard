@@ -79,7 +79,7 @@ After pulling plugin changes, `npm link` alone does not refresh Codex's cached S
 
 The following launcher adds the browser board as a visual Codex sidebar entry. It is optional compatibility tooling and is not the official plugin or its MCP transport. The plugin remains usable when CDP injection is disabled.
 
-### Recommended: keep your current window and open a separate Taskboard window
+### Manual: use a dedicated CDP port
 
 Keep the existing Codex window open. From the Taskboard repository, start a second Codex instance with a dedicated CDP port:
 
@@ -98,15 +98,27 @@ npm run codex:inject -- --port 9231 --open
 
 Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Taskboard sidebar entry. If port `9231` is occupied, use another port in both commands.
 
-### Alternative: restart Codex with the standalone launcher
+### Recommended: launch an independent Taskboard window with one command
 
-Quit every running Codex window, then run:
+Keep existing Codex windows open and run:
 
 ```bash
 CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
 ```
 
-This starts the local Taskboard service when needed, launches the official macOS Codex app with a loopback-only CDP port, injects a native-looking Taskboard entry after Plugins, and keeps watching both the service and replacement renderers. Opening Taskboard asks this launcher to health-check the fixed local service, restart it when needed, and rebuild a failed iframe. Keep this command running while using the embedded panel. The launcher does not modify `ChatGPT.app` or its `app.asar`.
+This starts the local Taskboard service when needed, launches the official macOS Codex app with an independent profile and loopback-only port `9231`, waits for the main renderer and sidebar, injects a native-looking Taskboard entry after Plugins, and keeps watching both the service and replacement renderers. Existing Codex windows remain unchanged. Keep this command running while using the embedded panel. The launcher does not modify `ChatGPT.app` or its `app.asar`.
+
+### macOS App: open and inject without a terminal
+
+Build the local launcher once:
+
+```bash
+npm run app:codex
+```
+
+Then open `dist/macos/Codex Taskboard.app` from Finder. The App contains its own Node runtime, Taskboard service, built web UI, Skill, CLI wrapper, and injection script. It starts the service, launches the official Codex app, waits for the renderer, injects the sidebar entry, and opens the panel without showing a terminal window. The App can be copied away from this checkout; the target Mac only needs the official Codex app and does not need this repository, a system Node installation, or a separate Codex CLI installation. Taskboard data is stored in `~/Library/Application Support/Codex Taskboard`, and launcher output is written to `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`.
+
+The local build uses ad-hoc code signing for direct verification. A public macOS download still needs Developer ID signing and Apple notarization.
 
 Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Taskboard OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
 
@@ -120,7 +132,7 @@ This command also stays resident so the injected tab can restart Taskboard after
 
 The script adds a Taskboard entry to the Codex sidebar and renders the iframe across Codex's complete main workspace, including the contextual titlebar area so Taskboard's own header does not leave an empty strip. That full rectangular header is placed above Electron's draggable layer and marked `no-drag`; because the native contextual actions are suppressed while Taskboard is active, its own actions use their normal edge padding without an artificial right-side gap. The native sidebar stays mounted, while the previous page selection and contextual header are temporarily suppressed; choosing another Codex page restores them.
 
-“在对话中打开” selects the corresponding native Codex project when one is available and opens an unsent native composer with `$manage-taskboard ISSUE-ID`. A conversation is attributed only after it actually processes the issue: `taskctl` reads Codex's `CODEX_THREAD_ID` and records that ID on the issue or comment mutation. Recorded IDs are clickable through Codex's native route bridge. Each issue can bind either one Git branch or one worktree; the options are scanned from the selected Codex project's repository instead of being typed by hand. The integration uses Codex's existing project, composer, and route markers; it does not patch React, replace `fetch`, load private chunks, or edit Codex data files.
+“在对话中打开” selects the corresponding native Codex project when one is available and opens an unsent native composer with an `e-taskboard` instruction and the issue's actual identifier. The installed Skill is selected implicitly from that instruction, so the composer does not add a `$manage-taskboard` mention. A conversation is attributed only after it actually processes the issue: `taskctl` reads Codex's `CODEX_THREAD_ID` and records that ID on the issue or comment mutation. Recorded IDs are clickable through Codex's native route bridge. Each issue can bind either one Git branch or one worktree; the options are scanned from the selected Codex project's repository instead of being typed by hand. The integration uses Codex's existing project, composer, and route markers; it does not patch React, replace `fetch`, load private chunks, or edit Codex data files.
 
 To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the user script runs.
 

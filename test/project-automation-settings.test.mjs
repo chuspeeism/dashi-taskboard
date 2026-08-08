@@ -3,16 +3,20 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
-const settingsSource = await readFile(
-  new URL("../web/src/components/BoardSettingsMenu.tsx", import.meta.url),
-  "utf8",
-);
 const menuSource = await readFile(
   new URL("../web/src/components/ProjectAutomationMenu.tsx", import.meta.url),
   "utf8",
 );
 const iconSource = await readFile(
-  new URL("../web/src/components/LinearIcon.tsx", import.meta.url),
+  new URL("../web/src/components/TaskboardIcon.tsx", import.meta.url),
+  "utf8",
+);
+const playIcon = await readFile(
+  new URL("../web/src/assets/figma-taskboard/automation-play.svg", import.meta.url),
+  "utf8",
+);
+const pauseIcon = await readFile(
+  new URL("../web/src/assets/figma-taskboard/automation-pause.svg", import.meta.url),
   "utf8",
 );
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
@@ -54,12 +58,11 @@ test("project mapping is based on exact ids and workspace paths, never project n
 });
 
 test("the project navigation automation menu owns the icon, fields, and accessible popover", () => {
-  assert.doesNotMatch(settingsSource, /自动认领待办|automationEnabled|automationPending/);
-  assert.match(menuSource, /status === "ACTIVE" \? "play" : "pause"/);
+  assert.match(menuSource, /status === "ACTIVE" \? "automationPause" : "automationPlay"/);
   assert.doesNotMatch(menuSource, /statusStarted|statusTodo/);
   assert.match(menuSource, /aria-busy=\{pending/);
   assert.match(menuSource, /自动认领/);
-  assert.match(menuSource, /无自动化/);
+  assert.match(menuSource, /status === "ACTIVE" \? "自动认领中" : "自动化"/);
   assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
   assert.match(menuSource, /自动认领开关/);
   assert.match(menuSource, /5, 10, 15, 30, 60/);
@@ -76,29 +79,23 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.match(appSource, /仅本地任务面板可用/);
 });
 
-test("automation status uses the verified Linear play and pause icon assets", () => {
-  assert.match(
-    iconSource,
-    /play:\s*\{\s*content: <path d="m5\.604 2\.41 7\.23 4\.502a1\.375 1\.375 0 0 1-.02 2\.345L5\.585 13\.6a1\.375 1\.375 0 0 1-2\.083-1\.18V3\.576A1\.375 1\.375 0 0 1 5\.604 2\.41Z" \/>,\s*\}/s,
-  );
-  assert.match(
-    iconSource,
-    /pause:\s*\{\s*content: <path d="M3\.5 3\.5a1 1 0 0 1 1-1H6a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4\.5a1 1 0 0 1-1-1v-9ZM9 3\.5a1 1 0 0 1 1-1h1\.5a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1v-9Z" \/>,\s*\}/s,
-  );
+test("automation status uses the exported Taskboard play and pause icon assets", () => {
+  assert.match(iconSource, /import automationPause from "\.\.\/assets\/figma-taskboard\/automation-pause\.svg"/);
+  assert.match(iconSource, /import automationPlay from "\.\.\/assets\/figma-taskboard\/automation-play\.svg"/);
+  assert.match(iconSource, /const TASKBOARD_ICONS = \{[\s\S]*?automationPause,[\s\S]*?automationPlay,/);
 });
 
-test("automation play and pause retain Linear's 16px filled presentation", () => {
-  const playAndPause = iconSource.slice(
-    iconSource.indexOf("pause:"),
-    iconSource.indexOf("priority:"),
-  );
-  assert.doesNotMatch(playAndPause, /viewBox: "0 0 24 24"|strokeWidth|strokeLinecap|strokeLinejoin/);
+test("automation play and pause retain the exported 16px presentation", () => {
+  assert.match(playIcon, /width="16" height="16" viewBox="0 0 16 16"/);
+  assert.match(pauseIcon, /width="16" height="16" viewBox="0 0 16 16"/);
 });
 
-test("the automation menu reuses the Linear switch and keeps form focus chrome suppressed", () => {
-  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.status === "ACTIVE" \? " is-on" : ""\}`\}/);
+test("the automation menu reuses the board switches and keeps form focus chrome suppressed", () => {
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.enabledByUser \? " is-on" : ""\}`\}/);
   assert.match(menuSource, /role="switch"/);
-  assert.match(menuSource, /aria-checked=\{draft\.status === "ACTIVE"\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.enabledByUser\}/);
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.quotaAware \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.quotaAware\}/);
   assert.doesNotMatch(menuSource, /type="checkbox"/);
   assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
   assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);
@@ -107,7 +104,7 @@ test("the automation menu reuses the Linear switch and keeps form focus chrome s
 test("unavailable automation state has one notice, clears stale errors, and cannot change", () => {
   assert.match(menuSource, /error && error !== unavailableReason/);
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
-  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 4);
+  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 5);
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),
     appSource.indexOf("const saveProjectAutomation"),
@@ -148,11 +145,14 @@ test("pending completion reconciles the optimistic draft to confirmed host state
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {
-  assert.match(appSource, /sendAutomationRequest\("list", options, stored\?\.automationId\)/);
-  assert.match(appSource, /items\.find\(\(item\) => item\.id === stored\?\.automationId\)/);
+  assert.match(appSource, /sendAutomationRequest\(\s*stored \? "apply-policy" : "list",\s*options,\s*stored\?\.automationId,\s*\)/);
+  assert.match(appSource, /const policy = isAutomationHostPolicy\(response\.policy\) \? response\.policy : null/);
+  assert.match(appSource, /items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
   assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
-  assert.match(appSource, /status: item\.status/);
-  assert.match(appSource, /automationId: undefined/);
-  assert.match(appSource, /options\.status === "PAUSED" && !stored\?\.automationId/);
+  assert.match(appSource, /automationId: item\?\.id \?\? policy\.automationId/);
+  assert.match(appSource, /status: item\?\.status \?\? "PAUSED"/);
+  assert.match(appSource, /enabledByUser: policy\.enabledByUser/);
+  assert.match(appSource, /quotaAware: policy\.quotaAware/);
+  assert.match(appSource, /automationId: undefined,[\s\S]*?status: "PAUSED"/);
   assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
 });

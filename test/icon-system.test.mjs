@@ -13,7 +13,14 @@ const iconSource = await readFile(new URL("../web/src/components/LinearIcon.tsx"
 test("product UI uses the reverse-engineered Linear icon system", async () => {
   for (const file of productFiles) {
     const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /<svg\b/, `${file.pathname} contains a hand-drawn SVG`);
+    const sourceWithoutDashboardChart = file.pathname.endsWith("/DashboardView.tsx")
+      ? source.replace(/<svg\s+className="dashboard-progress-chart"[\s\S]*?<\/svg>/, "")
+      : source;
+    assert.doesNotMatch(
+      sourceWithoutDashboardChart,
+      /<svg\b/,
+      `${file.pathname} contains a hand-drawn SVG outside the dashboard progress chart`,
+    );
     assert.doesNotMatch(source, /[★✓☼☾⌕›▣↻]|•••|···/, `${file.pathname} contains a text glyph used as an icon`);
   }
 });

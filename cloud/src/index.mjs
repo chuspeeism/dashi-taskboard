@@ -185,10 +185,10 @@ function parseSortOrder(value) {
   return value;
 }
 
-function parseDueDate(value) {
-  const date = stringField(value, "dueDate", { nullable: true, maxLength: 10 });
+function parseDueDate(value, name = "dueDate") {
+  const date = stringField(value, name, { nullable: true, maxLength: 10 });
   if (date !== null && date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new ApiError(400, "INVALID_FIELD", "'dueDate' must use YYYY-MM-DD");
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must use YYYY-MM-DD`);
   }
   return date;
 }
@@ -241,6 +241,7 @@ function parseDevelopmentContext(value) {
     }
     return {
       type: "worktree",
+      path: null,
       branch: stringField(value.branch ?? null, "developmentContext.branch", {
         nullable: true,
         maxLength: 512,
@@ -502,6 +503,119 @@ function developmentContextFromRow(row) {
   return null;
 }
 
+function commentConversationTitle(body) {
+  const firstLine = String(body ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) return "评论";
+  const compact = firstLine.replace(/\s+/g, " ");
+  return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
+}
+
+function attachTaskActivity(task, comments, activities, previewImage = null) {
+  const orderedComments = [...comments].sort((left, right) => left.id.localeCompare(right.id));
+  const orderedActivities = [...activities].sort((left, right) => left.id.localeCompare(right.id));
+  const participants = [];
+  const participantIds = new Set();
+  const addParticipant = (actor) => {
+    const key = `${actor.type}:${actor.id}`;
+    if (participantIds.has(key)) return;
+    participantIds.add(key);
+    participants.push(actor);
+  };
+  addParticipant({
+    type: task.creatorType,
+    id: task.creatorId,
+    name: task.creatorName,
+    avatarUrl: task.creatorAvatarUrl,
+  });
+  addParticipant(task.assignee);
+  for (const comment of orderedComments) {
+    addParticipant({
+      type: comment.author_type,
+      id: comment.author_id,
+      name: comment.author_name,
+      avatarUrl: comment.author_avatar_url,
+    });
+  }
+  for (const activity of orderedActivities) {
+    addParticipant({
+      type: activity.actor_type,
+      id: activity.actor_id,
+      name: activity.actor_name,
+      avatarUrl: activity.actor_avatar_url,
+    });
+  }
+  const conversationRefs = [];
+  if (task.threadId) {
+    conversationRefs.push({
+      threadId: task.threadId,
+      source: "task",
+      sourceId: task.id,
+      title: task.title,
+      updatedAt: task.updatedAt,
+    });
+  }
+  for (const comment of orderedComments) {
+    if (!comment.thread_id) continue;
+    conversationRefs.push({
+      threadId: comment.thread_id,
+      source: "comment",
+      sourceId: comment.id,
+      title: commentConversationTitle(comment.body),
+      updatedAt: comment.updated_at,
+    });
+  }
+  task.conversationRefs = conversationRefs;
+  task.participants = participants;
+  task.previewImage = previewImage;
+  task.activityKey = JSON.stringify({
+    version: 1,
+    task: [task.id, task.version, task.updatedAt],
+    comments: orderedComments.map((comment) => [comment.id, comment.version, comment.updated_at]),
+    changes: orderedActivities.map((activity) => [activity.id, activity.created_at]),
+  });
+  task.activityUpdatedAt = [...orderedComments, ...orderedActivities].reduce(
+    (latest, activity) => {
+      const updatedAt = activity.updated_at ?? activity.created_at;
+      return updatedAt > latest ? updatedAt : latest;
+    },
+    task.updatedAt,
+  );
+  return task;
+}
+
+function taskActivityFromRow(row) {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+    actorName: row.actor_name,
+    actorAvatarUrl: row.actor_avatar_url,
+    changes: JSON.parse(row.changes),
+    createdAt: row.created_at,
+  };
+}
+
+function taskFieldChanges(task, changes) {
+  return Object.entries(changes).flatMap(([field, after]) => {
+    const before = task[field];
+    return JSON.stringify(before) === JSON.stringify(after)
+      ? []
+      : [{ field, before, after }];
+  });
+}
+
+function relationActivityValue(type, task) {
+  return {
+    type,
+    identifier: task.identifier,
+    title: task.title,
+  };
+}
+
 function taskFromRow(row) {
   return {
     id: row.id,
@@ -526,6 +640,7 @@ function taskFromRow(row) {
     },
     workflowId: row.workflow_id,
     developmentContext: developmentContextFromRow(row),
+    startDate: row.start_date,
     dueDate: row.due_date,
     recurrence: row.recurrence_interval && row.recurrence_unit
       ? { interval: row.recurrence_interval, unit: row.recurrence_unit }
@@ -595,6 +710,30 @@ function changed(result) {
   return result.meta.changes > 0;
 }
 
+function taskActivityStatement(env, taskId, actor, changes, timestamp, version) {
+  return env.DB.prepare(`
+    INSERT INTO task_activities (
+      id, task_id, actor_type, actor_id, actor_name, actor_avatar_url, changes, created_at
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM tasks WHERE id = ? AND version = ? AND updated_at = ?
+    )
+  `).bind(
+    uuid(),
+    taskId,
+    actor.type,
+    actor.id,
+    actor.name,
+    actor.avatarUrl,
+    JSON.stringify(changes),
+    timestamp,
+    taskId,
+    version,
+    timestamp,
+  );
+}
+
 async function requireProject(env, id) {
   const row = await env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();
   if (!row) {
@@ -640,9 +779,9 @@ async function hydrateComment(env, row) {
   return commentFromRow(row, await attachmentsForComment(env, row.id));
 }
 
-async function hydrateTask(env, row) {
+async function hydrateTask(env, row, activityComments = null, activityChanges = null) {
   const task = taskFromRow(row);
-  const [parent, subIssues, blockedBy, blocks, related] = await Promise.all([
+  const [parent, subIssues, blockedBy, blocks, related, previewImageRow] = await Promise.all([
     env.DB.prepare(`
       SELECT tasks.*
       FROM task_relations
@@ -688,6 +827,14 @@ async function hydrateTask(env, row) {
         )
       ORDER BY tasks.sort_order, tasks.created_at, tasks.id
     `).bind(task.id, task.id, task.id)),
+    env.DB.prepare(`
+      SELECT * FROM attachments
+      WHERE task_id = ?
+        AND comment_id IS NULL
+        AND content_type LIKE 'image/%'
+      ORDER BY created_at, id
+      LIMIT 1
+    `).bind(task.id).first(),
   ]);
   task.relations = {
     parent: parent ? taskRelationSummaryFromRow(parent) : null,
@@ -696,7 +843,29 @@ async function hydrateTask(env, row) {
     blocks: blocks.map(taskRelationSummaryFromRow),
     related: related.map(taskRelationSummaryFromRow),
   };
-  return task;
+  const comments = activityComments ?? await all(env.DB.prepare(`
+    SELECT
+      id, task_id,
+      CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
+      thread_id, author_type, author_id, author_name,
+      author_avatar_url, version, updated_at
+    FROM comments
+    WHERE task_id = ?
+    ORDER BY id
+  `).bind(task.id));
+  const activities = activityChanges ?? await all(env.DB.prepare(`
+    SELECT
+      id, task_id, actor_type, actor_id, actor_name, actor_avatar_url, created_at
+    FROM task_activities
+    WHERE task_id = ?
+    ORDER BY created_at, id
+  `).bind(task.id));
+  return attachTaskActivity(
+    task,
+    comments,
+    activities,
+    previewImageRow ? attachmentFromRow(previewImageRow) : null,
+  );
 }
 
 async function getTask(env, id) {
@@ -1034,6 +1203,51 @@ async function setContextArchived(env, id, expectedVersion, authContext, archive
   return contextEntryFromRow(await requireContextEntryRow(env, id));
 }
 
+async function taskActivityComments(env, taskIds) {
+  const commentsByTask = new Map(taskIds.map((taskId) => [taskId, []]));
+  const batches = [];
+  for (let offset = 0; offset < taskIds.length; offset += 80) {
+    const chunk = taskIds.slice(offset, offset + 80);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(`
+      SELECT
+        id, task_id,
+        CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
+        thread_id, author_type, author_id, author_name,
+        author_avatar_url, version, updated_at
+      FROM comments
+      WHERE task_id IN (${placeholders})
+      ORDER BY task_id, id
+    `).bind(...chunk)));
+  }
+  for (const rows of await Promise.all(batches)) {
+    for (const row of rows) commentsByTask.get(row.task_id)?.push(row);
+  }
+  return commentsByTask;
+}
+
+async function taskActivitiesForTasks(env, taskIds) {
+  const activitiesByTask = new Map(taskIds.map((taskId) => [taskId, []]));
+  const batches = [];
+  for (let offset = 0; offset < taskIds.length; offset += 80) {
+    const chunk = taskIds.slice(offset, offset + 80);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(`
+      SELECT
+        id, task_id, actor_type, actor_id, actor_name, actor_avatar_url, created_at
+      FROM task_activities
+      WHERE task_id IN (${placeholders})
+      ORDER BY task_id, created_at, id
+    `).bind(...chunk)));
+  }
+  for (const rows of await Promise.all(batches)) {
+    for (const row of rows) activitiesByTask.get(row.task_id)?.push(row);
+  }
+  return activitiesByTask;
+}
+
 function parseProjectCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
@@ -1065,6 +1279,7 @@ function parseTaskCreate(body) {
     "assigneeTarget",
     "workflowId",
     "developmentContext",
+    "startDate",
     "dueDate",
     "recurrence",
   ]));
@@ -1080,6 +1295,7 @@ function parseTaskCreate(body) {
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     workflowId: parseWorkflowId(body.workflowId ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
+    startDate: parseDueDate(body.startDate ?? null, "startDate"),
     dueDate: parseDueDate(body.dueDate ?? null),
     recurrence: parseRecurrence(body.recurrence ?? null),
   };
@@ -1093,6 +1309,7 @@ function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "version",
+    "projectId",
     "title",
     "description",
     "status",
@@ -1102,10 +1319,12 @@ function parseTaskPatch(body) {
     "assigneeTarget",
     "workflowId",
     "developmentContext",
+    "startDate",
     "dueDate",
     "recurrence",
   ]));
   const changes = {};
+  if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
   if (body.title !== undefined) {
     changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
   }
@@ -1119,6 +1338,7 @@ function parseTaskPatch(body) {
   if (body.developmentContext !== undefined) {
     changes.developmentContext = parseDevelopmentContext(body.developmentContext);
   }
+  if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
   if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
   if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);
   const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
@@ -1550,6 +1770,28 @@ async function createProject(env, input) {
   return getProject(env, input.id);
 }
 
+async function deleteProject(env, id) {
+  const project = await getProject(env, id);
+  if (!project) {
+    throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${id}' does not exist`);
+  }
+  if (!id.startsWith("temp-")) {
+    throw new ApiError(403, "PROJECT_DELETE_FORBIDDEN", "Only manually created projects can be deleted");
+  }
+  const result = await env.DB.prepare(`
+    DELETE FROM projects
+    WHERE id = ?
+      AND NOT EXISTS (SELECT 1 FROM tasks WHERE project_id = ?)
+  `).bind(id, id).run();
+  if (!changed(result)) {
+    const issueCount = Number(await env.DB.prepare(`
+      SELECT COUNT(*) AS issue_count FROM tasks WHERE project_id = ?
+    `).bind(id).first("issue_count"));
+    throw new ApiError(409, "PROJECT_NOT_EMPTY", "Project still contains issues", { issueCount });
+  }
+  return project;
+}
+
 async function listTasks(env, filters) {
   const where = [];
   const values = [];
@@ -1585,7 +1827,17 @@ async function listTasks(env, filters) {
         id
     `).bind(...values),
   );
-  return Promise.all(rows.map((row) => hydrateTask(env, row)));
+  const taskIds = rows.map((row) => row.id);
+  const [commentsByTask, activitiesByTask] = await Promise.all([
+    taskActivityComments(env, taskIds),
+    taskActivitiesForTasks(env, taskIds),
+  ]);
+  return Promise.all(rows.map((row) => hydrateTask(
+    env,
+    row,
+    commentsByTask.get(row.id) ?? [],
+    activitiesByTask.get(row.id) ?? [],
+  )));
 }
 
 async function createTask(env, input, actor) {
@@ -1609,7 +1861,7 @@ async function createTask(env, input, actor) {
         sort_order, thread_id, creator_type, creator_id, creator_name, creator_avatar_url,
         assignee_type, assignee_id, assignee_name, assignee_avatar_url,
         workflow_id, development_context_type, development_branch,
-        due_date, recurrence_interval, recurrence_unit,
+        start_date, due_date, recurrence_interval, recurrence_unit,
         archived_at, version, created_at, updated_at
       )
       SELECT
@@ -1617,7 +1869,7 @@ async function createTask(env, input, actor) {
         ? || '-' || CAST(next_task_number AS TEXT),
         projects.id,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         NULL, 1, ?, ?
       FROM projects
       WHERE projects.id = ?
@@ -1642,6 +1894,7 @@ async function createTask(env, input, actor) {
       input.workflowId,
       input.developmentContext?.type ?? null,
       input.developmentContext?.branch ?? null,
+      input.startDate,
       input.dueDate,
       input.recurrence?.interval ?? null,
       input.recurrence?.unit ?? null,
@@ -1669,6 +1922,26 @@ async function updateTask(env, id, input, actor) {
   const current = await requireTaskRow(env, id);
   assertTaskVersion(current, input.version);
   const currentTask = taskFromRow(current);
+  const targetProject = Object.hasOwn(input.changes, "projectId")
+    ? await requireProject(env, input.changes.projectId)
+    : null;
+  const projectChanged = Boolean(targetProject && targetProject.id !== currentTask.projectId);
+  if (projectChanged) {
+    const relation = await env.DB.prepare(`
+      SELECT 1
+      FROM task_relations
+      WHERE source_task_id = ? OR target_task_id = ?
+      LIMIT 1
+    `).bind(current.id, current.id).first();
+    if (relation) {
+      throw new ApiError(
+        409,
+        "CROSS_PROJECT_RELATION",
+        "Remove issue relations before moving the issue to another project",
+      );
+    }
+  }
+  const activityValues = { ...input.changes };
   const dueDate = Object.hasOwn(input.changes, "dueDate")
     ? input.changes.dueDate
     : currentTask.dueDate;
@@ -1682,12 +1955,14 @@ async function updateTask(env, id, input, actor) {
   const assignments = [];
   const values = [];
   const columns = {
+    projectId: "project_id",
     title: "title",
     description: "description",
     status: "status",
     priority: "priority",
     labels: "labels",
     workflowId: "workflow_id",
+    startDate: "start_date",
     dueDate: "due_date",
   };
   for (const [key, value] of Object.entries(input.changes)) {
@@ -1702,8 +1977,21 @@ async function updateTask(env, id, input, actor) {
       values.push(key === "labels" ? JSON.stringify(value) : value);
     }
   }
+  const statusChanged = Object.hasOwn(input.changes, "status")
+    && input.changes.status !== currentTask.status;
+  if (statusChanged) {
+    const placementProjectId = projectChanged ? targetProject.id : currentTask.projectId;
+    const row = await env.DB.prepare(`
+      SELECT MIN(sort_order) AS minimum
+      FROM tasks
+      WHERE project_id = ? AND status = ? AND archived_at IS NULL AND id != ?
+    `).bind(placementProjectId, input.changes.status, current.id).first();
+    assignments.push("sort_order = ?");
+    values.push(row?.minimum == null ? 1000 : row.minimum - 1000);
+  }
   if (input.assigneeTarget !== undefined) {
     const assignee = resolveAssignee(input.assigneeTarget, actor);
+    activityValues.assignee = assignee;
     assignments.push(
       "assignee_type = ?",
       "assignee_id = ?",
@@ -1712,18 +2000,67 @@ async function updateTask(env, id, input, actor) {
     );
     values.push(assignee.type, assignee.id, assignee.name, assignee.avatarUrl);
   }
-  if (input.threadId !== undefined) {
+  if (input.threadId !== undefined && !Object.hasOwn(input.changes, "projectId")) {
     assignments.push("thread_id = ?");
     values.push(input.threadId);
   }
   assignments.push("version = version + 1", "updated_at = ?");
-  values.push(now(), current.id, input.version);
-  const result = await env.DB.prepare(`
+  const timestamp = now();
+  values.push(timestamp, current.id, input.version);
+  if (projectChanged) values.push(current.id, current.id);
+  const relationGuard = projectChanged
+    ? " AND NOT EXISTS (SELECT 1 FROM task_relations WHERE source_task_id = ? OR target_task_id = ?)"
+    : "";
+  const statements = [env.DB.prepare(`
     UPDATE tasks
     SET ${assignments.join(", ")}
-    WHERE id = ? AND version = ?
-  `).bind(...values).run();
-  if (!changed(result)) {
+    WHERE id = ? AND version = ?${relationGuard}
+  `).bind(...values)];
+  const activityChanges = taskFieldChanges(currentTask, activityValues);
+  if (activityChanges.length > 0) {
+    statements.push(taskActivityStatement(
+      env,
+      current.id,
+      actor,
+      activityChanges,
+      timestamp,
+      input.version + 1,
+    ));
+  }
+  if (projectChanged) {
+    statements.push(env.DB.prepare(`
+      UPDATE projects
+      SET updated_at = ?
+      WHERE id IN (?, ?)
+        AND EXISTS (
+          SELECT 1 FROM tasks WHERE id = ? AND version = ? AND updated_at = ?
+        )
+    `).bind(
+      timestamp,
+      currentTask.projectId,
+      targetProject.id,
+      current.id,
+      input.version + 1,
+      timestamp,
+    ));
+  }
+  const results = await env.DB.batch(statements);
+  if (!changed(results[0])) {
+    if (projectChanged) {
+      const relation = await env.DB.prepare(`
+        SELECT 1
+        FROM task_relations
+        WHERE source_task_id = ? OR target_task_id = ?
+        LIMIT 1
+      `).bind(current.id, current.id).first();
+      if (relation) {
+        throw new ApiError(
+          409,
+          "CROSS_PROJECT_RELATION",
+          "Remove issue relations before moving the issue to another project",
+        );
+      }
+    }
     const latest = await requireTaskRow(env, current.id);
     throw new ApiError(
       409,
@@ -1735,14 +2072,21 @@ async function updateTask(env, id, input, actor) {
   return getTask(env, current.id);
 }
 
-async function moveTask(env, id, input) {
+async function moveTask(env, id, input, actor) {
   const current = await requireTaskRow(env, id);
   assertTaskVersion(current, input.version);
   if (current.archived_at !== null) {
     throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
   }
   let sortOrder = input.sortOrder;
-  if (sortOrder === undefined) {
+  if (input.status !== current.status && sortOrder === undefined) {
+    const row = await env.DB.prepare(`
+      SELECT MIN(sort_order) AS minimum
+      FROM tasks
+      WHERE project_id = ? AND status = ? AND archived_at IS NULL AND id != ?
+    `).bind(current.project_id, input.status, current.id).first();
+    sortOrder = row?.minimum == null ? 1000 : row.minimum - 1000;
+  } else if (sortOrder === undefined) {
     const row = await env.DB.prepare(`
       SELECT COALESCE(MAX(sort_order), 0) AS maximum
       FROM tasks
@@ -1750,7 +2094,8 @@ async function moveTask(env, id, input) {
     `).bind(current.project_id, input.status, current.id).first();
     sortOrder = row.maximum + 1000;
   }
-  const result = await env.DB.prepare(`
+  const timestamp = now();
+  const statements = [env.DB.prepare(`
     UPDATE tasks
     SET
       status = ?,
@@ -1763,11 +2108,23 @@ async function moveTask(env, id, input) {
     input.status,
     sortOrder,
     input.threadId ?? null,
-    now(),
+    timestamp,
     current.id,
     input.version,
-  ).run();
-  if (!changed(result)) {
+  )];
+  const activityChanges = taskFieldChanges(taskFromRow(current), { status: input.status });
+  if (activityChanges.length > 0) {
+    statements.push(taskActivityStatement(
+      env,
+      current.id,
+      actor,
+      activityChanges,
+      timestamp,
+      input.version + 1,
+    ));
+  }
+  const results = await env.DB.batch(statements);
+  if (!changed(results[0])) {
     const latest = await requireTaskRow(env, current.id);
     throw new ApiError(
       409,
@@ -1779,11 +2136,11 @@ async function moveTask(env, id, input) {
   return getTask(env, current.id);
 }
 
-async function archiveTask(env, id, input) {
+async function archiveTask(env, id, input, actor) {
   const current = await requireTaskRow(env, id);
   assertTaskVersion(current, input.version);
   const timestamp = now();
-  const result = await env.DB.prepare(`
+  const results = await env.DB.batch([env.DB.prepare(`
     UPDATE tasks
     SET
       archived_at = ?,
@@ -1791,8 +2148,16 @@ async function archiveTask(env, id, input) {
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
-  `).bind(timestamp, input.threadId ?? null, timestamp, current.id, input.version).run();
-  if (!changed(result)) {
+  `).bind(timestamp, input.threadId ?? null, timestamp, current.id, input.version),
+  taskActivityStatement(
+    env,
+    current.id,
+    actor,
+    [{ field: "archivedAt", before: current.archived_at, after: timestamp }],
+    timestamp,
+    input.version + 1,
+  )]);
+  if (!changed(results[0])) {
     const latest = await requireTaskRow(env, current.id);
     throw new ApiError(
       409,
@@ -1804,13 +2169,14 @@ async function archiveTask(env, id, input) {
   return getTask(env, current.id);
 }
 
-async function restoreTask(env, id, input) {
+async function restoreTask(env, id, input, actor) {
   const current = await requireTaskRow(env, id);
   assertTaskVersion(current, input.version);
   if (current.archived_at === null) {
     throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be restored");
   }
-  const result = await env.DB.prepare(`
+  const timestamp = now();
+  const results = await env.DB.batch([env.DB.prepare(`
     UPDATE tasks
     SET
       archived_at = NULL,
@@ -1818,8 +2184,16 @@ async function restoreTask(env, id, input) {
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
-  `).bind(input.threadId ?? null, now(), current.id, input.version).run();
-  if (!changed(result)) {
+  `).bind(input.threadId ?? null, timestamp, current.id, input.version),
+  taskActivityStatement(
+    env,
+    current.id,
+    actor,
+    [{ field: "archivedAt", before: current.archived_at, after: null }],
+    timestamp,
+    input.version + 1,
+  )]);
+  if (!changed(results[0])) {
     const latest = await requireTaskRow(env, current.id);
     throw new ApiError(
       409,
@@ -1881,7 +2255,7 @@ async function assertRelationTasks(env, taskId, relatedTaskId, expectedVersion) 
   return { task, relatedTask };
 }
 
-async function addRelation(env, taskId, type, relatedTaskId, input) {
+async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
   const { task, relatedTask } = await assertRelationTasks(
     env,
     taskId,
@@ -1889,6 +2263,8 @@ async function addRelation(env, taskId, type, relatedTaskId, input) {
     input.version,
   );
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
+  const timestamp = now();
+  let previousRelation = null;
   const statements = [];
   if (endpoints.relationType === "parent") {
     const cycle = await env.DB.prepare(`
@@ -1916,6 +2292,8 @@ async function addRelation(env, taskId, type, relatedTaskId, input) {
       throw new ApiError(409, "RELATION_EXISTS", "This parent relation already exists");
     }
     if (existing) {
+      const previousParent = await requireTaskRow(env, existing.source_task_id);
+      previousRelation = relationActivityValue(type, taskFromRow(previousParent));
       statements.push(
         env.DB.prepare(`
           DELETE FROM task_relations
@@ -1954,7 +2332,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input) {
       endpoints.relationType,
       endpoints.sourceTaskId,
       endpoints.targetTaskId,
-      now(),
+      timestamp,
       task.id,
       input.version,
     ),
@@ -1965,13 +2343,33 @@ async function addRelation(env, taskId, type, relatedTaskId, input) {
         version = version + 1,
         updated_at = ?
       WHERE id = ? AND version = ?
-    `).bind(input.threadId ?? null, now(), task.id, input.version),
+    `).bind(input.threadId ?? null, timestamp, task.id, input.version),
   );
+  const taskUpdateIndex = statements.length - 1;
+  statements.push(taskActivityStatement(
+    env,
+    task.id,
+    actor,
+    [{
+      field: "relation",
+      before: previousRelation,
+      after: relationActivityValue(type, taskFromRow(relatedTask)),
+    }],
+    timestamp,
+    input.version + 1,
+  ));
   let results;
   try {
     results = await env.DB.batch(statements);
   } catch (error) {
     const message = String(error.message);
+    if (message.includes("CROSS_PROJECT_RELATION")) {
+      throw new ApiError(
+        400,
+        "CROSS_PROJECT_RELATION",
+        "Issue relations must stay within one project",
+      );
+    }
     if (message.includes("RELATION_CYCLE")) {
       throw new ApiError(409, "RELATION_CYCLE", "This parent would create a cycle");
     }
@@ -1983,7 +2381,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input) {
     }
     throw error;
   }
-  if (!changed(results.at(-1))) {
+  if (!changed(results[taskUpdateIndex])) {
     const latest = await requireTaskRow(env, task.id);
     throw new ApiError(
       409,
@@ -1998,7 +2396,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input) {
   };
 }
 
-async function removeRelation(env, taskId, type, relatedTaskId, input) {
+async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
   const { task, relatedTask } = await assertRelationTasks(
     env,
     taskId,
@@ -2018,6 +2416,7 @@ async function removeRelation(env, taskId, type, relatedTaskId, input) {
   if (!exists) {
     throw new ApiError(404, "RELATION_NOT_FOUND", "This issue relation does not exist");
   }
+  const timestamp = now();
   const results = await env.DB.batch([
     env.DB.prepare(`
       DELETE FROM task_relations
@@ -2041,9 +2440,21 @@ async function removeRelation(env, taskId, type, relatedTaskId, input) {
         version = version + 1,
         updated_at = ?
       WHERE id = ? AND version = ?
-    `).bind(input.threadId ?? null, now(), task.id, input.version),
+    `).bind(input.threadId ?? null, timestamp, task.id, input.version),
+    taskActivityStatement(
+      env,
+      task.id,
+      actor,
+      [{
+        field: "relation",
+        before: relationActivityValue(type, taskFromRow(relatedTask)),
+        after: null,
+      }],
+      timestamp,
+      input.version + 1,
+    ),
   ]);
-  if (!changed(results.at(-1))) {
+  if (!changed(results[1])) {
     const latest = await requireTaskRow(env, task.id);
     throw new ApiError(
       409,
@@ -2134,6 +2545,16 @@ async function saveWorkflow(env, projectId, expectedVersion, workspace) {
     }
   }
   return getWorkflow(env, projectId);
+}
+
+async function listTaskActivities(env, taskId) {
+  const task = await requireTaskRow(env, taskId);
+  const rows = await all(env.DB.prepare(`
+    SELECT * FROM task_activities
+    WHERE task_id = ?
+    ORDER BY created_at, id
+  `).bind(task.id));
+  return rows.map(taskActivityFromRow);
 }
 
 async function listComments(env, taskId) {
@@ -2464,6 +2885,15 @@ async function routeApi(request, env, actor, url) {
     methodNotAllowed(["GET", "POST"]);
   }
 
+  const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);
+  if (projectMatch) {
+    requireNoQuery(url, "Project routes");
+    const projectId = validateProjectId(decodePathPart(projectMatch[1], "Project id"));
+    if (request.method !== "DELETE") methodNotAllowed(["DELETE"]);
+    await deleteProject(env, projectId);
+    return empty(204);
+  }
+
   const workflowMatch = pathname.match(
     /^\/api\/projects\/([^/]+)\/workflow-workspace$/,
   );
@@ -2590,12 +3020,22 @@ async function routeApi(request, env, actor, url) {
     const relatedTaskId = decodePathPart(relationMatch[3], "Related task id");
     const input = parseVersionMutation(await readJson(request));
     if (request.method === "POST") {
-      return json(200, await addRelation(env, taskId, type, relatedTaskId, input));
+      return json(200, await addRelation(env, taskId, type, relatedTaskId, input, actor));
     }
     if (request.method === "DELETE") {
-      return json(200, await removeRelation(env, taskId, type, relatedTaskId, input));
+      return json(200, await removeRelation(env, taskId, type, relatedTaskId, input, actor));
     }
     methodNotAllowed(["POST", "DELETE"]);
+  }
+
+  const taskActivitiesMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/activities$/);
+  if (taskActivitiesMatch) {
+    requireNoQuery(url, "Activity routes");
+    const taskId = decodePathPart(taskActivitiesMatch[1], "Task id");
+    if (request.method === "GET") {
+      return json(200, { activities: await listTaskActivities(env, taskId) });
+    }
+    methodNotAllowed(["GET"]);
   }
 
   const taskCommentsMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/);
@@ -2727,7 +3167,7 @@ async function routeApi(request, env, actor, url) {
     }
     if (action === "move" && request.method === "POST") {
       return json(200, {
-        task: await moveTask(env, taskId, parseMove(await readJson(request))),
+        task: await moveTask(env, taskId, parseMove(await readJson(request)), actor),
       });
     }
     if (action === "archive" && request.method === "POST") {
@@ -2736,6 +3176,7 @@ async function routeApi(request, env, actor, url) {
           env,
           taskId,
           parseVersionMutation(await readJson(request)),
+          actor,
         ),
       });
     }
@@ -2745,6 +3186,7 @@ async function routeApi(request, env, actor, url) {
           env,
           taskId,
           parseVersionMutation(await readJson(request)),
+          actor,
         ),
       });
     }

@@ -7,7 +7,7 @@ import {
   type AutomationModel,
   type AutomationReasoningEffort,
 } from "../../../shared/taskboard-automation-options.mjs";
-import { LinearIcon } from "./LinearIcon";
+import { TaskboardIcon } from "./TaskboardIcon";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
@@ -257,11 +257,11 @@ export function ProjectAutomationMenu({
         ref={triggerRef}
         type="button"
         className={`project-automation-trigger no-drag ${status === "ACTIVE" ? "is-active" : "is-paused"}`}
-        aria-label={status === "ACTIVE" ? "自动认领" : "无自动化"}
+        aria-label={status === "ACTIVE" ? "自动认领中" : "自动化"}
         aria-busy={pending}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={status === "ACTIVE" ? "自动认领" : "无自动化"}
+        title={status === "ACTIVE" ? "自动认领中" : "自动化"}
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
@@ -270,8 +270,8 @@ export function ProjectAutomationMenu({
           setOpen((current) => !current);
         }}
       >
-        <LinearIcon name={status === "ACTIVE" ? "play" : "pause"} />
-        <span>{status === "ACTIVE" ? "自动认领" : "无自动化"}</span>
+        <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
+        <span>{status === "ACTIVE" ? "自动认领中" : "自动化"}</span>
       </button>
       {menu}
     </>

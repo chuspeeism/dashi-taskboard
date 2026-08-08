@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <style>
+    .dot {
+      fill: #00a558;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: wave 1200ms linear infinite;
+      animation-delay: calc(var(--phase) * -150ms);
+    }
+
+    @keyframes wave {
+      0%, 100% { transform: scale(0); }
+      12.5%, 87.5% { transform: scale(.25); }
+      25%, 75% { transform: scale(.5); }
+      37.5%, 62.5% { transform: scale(.75); }
+      50% { transform: scale(1); }
+    }
+  </style>
+  <rect class="dot" style="--phase:0" x="2" y="2" width="2" height="2"/>
+  <rect class="dot" style="--phase:1" x="5.333333" y="2" width="2" height="2"/>
+  <rect class="dot" style="--phase:2" x="8.666667" y="2" width="2" height="2"/>
+  <rect class="dot" style="--phase:3" x="12" y="2" width="2" height="2"/>
+  <rect class="dot" style="--phase:1" x="2" y="5.333333" width="2" height="2"/>
+  <rect class="dot" style="--phase:2" x="5.333333" y="5.333333" width="2" height="2"/>
+  <rect class="dot" style="--phase:3" x="8.666667" y="5.333333" width="2" height="2"/>
+  <rect class="dot" style="--phase:4" x="12" y="5.333333" width="2" height="2"/>
+  <rect class="dot" style="--phase:2" x="2" y="8.666667" width="2" height="2"/>
+  <rect class="dot" style="--phase:3" x="5.333333" y="8.666667" width="2" height="2"/>
+  <rect class="dot" style="--phase:4" x="8.666667" y="8.666667" width="2" height="2"/>
+  <rect class="dot" style="--phase:5" x="12" y="8.666667" width="2" height="2"/>
+  <rect class="dot" style="--phase:3" x="2" y="12" width="2" height="2"/>
+  <rect class="dot" style="--phase:4" x="5.333333" y="12" width="2" height="2"/>
+  <rect class="dot" style="--phase:5" x="8.666667" y="12" width="2" height="2"/>
+  <rect class="dot" style="--phase:6" x="12" y="12" width="2" height="2"/>
+</svg>

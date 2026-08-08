@@ -15,3 +15,26 @@ export const DEFAULT_LABELS = [
 export function labelColor(name: string): string {
   return DEFAULT_LABELS.find((label) => label.name === name)?.color ?? "#8b8d92";
 }
+
+export type LabelTone = "bug" | "feature" | null;
+
+export function labelDisplayName(name: string): string {
+  if (name === "缺陷" || name.toLocaleUpperCase() === "BUG") return "BUG";
+  if (name === "特性" || name === "新功能") return "新功能";
+  return name;
+}
+
+export function labelTone(name: string): LabelTone {
+  if (name === "缺陷" || name.toLocaleUpperCase() === "BUG") return "bug";
+  if (name === "特性" || name === "新功能") return "feature";
+  return null;
+}
+
+export function labelPresentation(name: string) {
+  const tone = labelTone(name);
+  return {
+    name: labelDisplayName(name),
+    tone,
+    color: tone === "bug" ? "#eb5757" : tone === "feature" ? "#bb87fc" : labelColor(name),
+  };
+}

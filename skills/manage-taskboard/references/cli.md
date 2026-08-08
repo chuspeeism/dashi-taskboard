@@ -34,7 +34,7 @@ Every successful command writes one JSON object with `schemaVersion` to stdout. 
 ## Read issues
 
 ```bash
-taskctl issue list [--project PROJECT_ID] [--status STATUS] [--json]
+taskctl issue list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--json]
 taskctl issue get ID [--json]
 ```
 
@@ -52,6 +52,7 @@ taskctl issue create \
   [--git-branch BRANCH] \
   [--worktree-path PATH] \
   [--worktree-branch BRANCH] \
+  [--start-date YYYY-MM-DD] \
   [--due-date YYYY-MM-DD] \
   [--recurrence-interval N --recurrence-unit day|week|month|year] \
   [--json]
@@ -67,6 +68,7 @@ Read the issue immediately before a write and pass its `version` with `--if-vers
 
 ```bash
 taskctl issue update ID \
+  [--project PROJECT_ID] \
   [--title TITLE] \
   [--description TEXT | --description-file FILE] \
   [--status STATUS] \
@@ -76,6 +78,7 @@ taskctl issue update ID \
   [--git-branch BRANCH] \
   [--worktree-path PATH] \
   [--worktree-branch BRANCH] \
+  [--start-date YYYY-MM-DD] \
   [--due-date YYYY-MM-DD] \
   [--recurrence-interval N --recurrence-unit day|week|month|year] \
   [--if-version N] \
@@ -89,6 +92,8 @@ taskctl issue restore ID [--thread-id ID] [--if-version N] [--json]
 Use `issue move` to set `in_progress` before implementation and `in_review` after implementation and self-verification. Codex must not move work directly from `in_progress` to `done`; use `done` only after the user explicitly confirms acceptance or explicitly asks to mark the issue complete. Use `blocked` when work cannot continue and `canceled` when it will not continue. On a version conflict, fetch the issue again and reconcile before retrying.
 
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` is the Codex conversation that most recently created or changed the issue itself. Recurrence requires a due date.
+
+Changing only `--project` preserves the issue's existing linked conversation.
 
 ## Issue relations
 
@@ -117,7 +122,7 @@ taskctl issue relation remove ISSUE_ID \
   [--json]
 ```
 
-For `--type parent`, `ISSUE_ID` is the child and `PARENT_ISSUE_ID` is its parent. Adding another parent replaces the child's current parent atomically. To add an existing issue as a sub-issue of `LOCAL-6`, anchor the command on the child and pass `--issue LOCAL-6`.
+For `--type parent`, `ISSUE_ID` is the child and `PARENT_ISSUE_ID` is its parent. Adding another parent replaces the child's current parent atomically. To add an existing issue as a sub-issue, anchor the command on the child and pass the exact parent identifier with `--issue PARENT_ISSUE_ID`.
 
 For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the related issue blocks the anchor. `related` is symmetric. Self-relations, duplicates, parent cycles, and relations between different projects are rejected.
 

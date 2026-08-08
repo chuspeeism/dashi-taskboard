@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { ApiError } from "../api";
 import {
   TASK_PRIORITIES,
@@ -12,7 +12,6 @@ import {
   type TaskDraft,
   type TaskPriority,
   type TaskStatus,
-  type WorkflowOption,
 } from "../types";
 import {
   CODEX_AGENT_ACTOR,
@@ -20,9 +19,9 @@ import {
   assigneeTargetForActor,
 } from "../actors";
 import { ActorAvatar } from "./ActorAvatar";
-import { STATUS_DETAILS } from "./BoardColumn";
+import { STATUS_DETAILS, StatusIcon } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
-import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
+import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
 import {
   fileKey,
   MAX_ATTACHMENT_SIZE,
@@ -33,9 +32,11 @@ import {
   InlineMediaComposer,
   inlineMediaImages,
   serializeInlineMedia,
+  type InlineMediaComposerHandle,
   type InlineMediaSegment,
   type PendingInlineImage,
 } from "./InlineMediaComposer";
+import { TaskPropertyPicker } from "./TaskPropertyPicker";
 
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
   none: "无优先级",
@@ -52,15 +53,29 @@ const RECURRENCE_UNITS: Record<Recurrence["unit"], string> = {
   year: "年",
 };
 
+export interface NewTaskEditorDraft {
+  title: string;
+  descriptionSegments: InlineMediaSegment[];
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee: ActorIdentity;
+  selectedLabels: string[];
+  developmentContext: DevelopmentContext | null;
+  startDate: string;
+  dueDate: string;
+  recurrence: Recurrence | null;
+  attachments: File[];
+}
+
 interface TaskEditorProps {
   task: Task | null;
   initialStatus: TaskStatus;
+  initialDraft: NewTaskEditorDraft | null;
   labels: string[];
-  workflows: WorkflowOption[];
   currentUser: ActorIdentity;
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
-  onCancel: () => void;
+  onCancel: (draft: NewTaskEditorDraft | null) => void;
   onSave: (
     draft: TaskDraft,
     attachments: File[],
@@ -104,8 +119,8 @@ function contextLabel(context: DevelopmentContext): string {
 export function TaskEditor({
   task,
   initialStatus,
+  initialDraft,
   labels: availableLabels,
-  workflows,
   currentUser,
   developmentScan,
   developmentScanLoading,
@@ -114,26 +129,28 @@ export function TaskEditor({
 }: TaskEditorProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
+  const createSubmitIntentRef = useRef(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const [title, setTitle] = useState(task?.title ?? "");
+  const [title, setTitle] = useState(task?.title ?? initialDraft?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [descriptionSegments, setDescriptionSegments] = useState<InlineMediaSegment[]>(
-    () => createInlineMediaSegments(),
+    () => initialDraft?.descriptionSegments ?? createInlineMediaSegments(),
   );
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? initialStatus);
-  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "none");
-  const [assignee, setAssignee] = useState<ActorIdentity>(task?.assignee ?? currentUser);
-  const [selectedLabels, setSelectedLabels] = useState<string[]>(task?.labels ?? []);
-  const [workflowId, setWorkflowId] = useState(task?.workflowId ?? "");
-  const [developmentContext, setDevelopmentContext] = useState<DevelopmentContext | null>(task?.developmentContext ?? null);
-  const [dueDate, setDueDate] = useState(task?.dueDate ?? "");
-  const [recurrence, setRecurrence] = useState<Recurrence | null>(task?.recurrence ?? null);
-  const [menu, setMenu] = useState<"labels" | "more" | "due" | "recurrence" | null>(null);
+  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? initialDraft?.priority ?? "none");
+  const [assignee, setAssignee] = useState<ActorIdentity>(task?.assignee ?? initialDraft?.assignee ?? currentUser);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>(task?.labels ?? initialDraft?.selectedLabels ?? []);
+  const [developmentContext, setDevelopmentContext] = useState<DevelopmentContext | null>(task?.developmentContext ?? initialDraft?.developmentContext ?? null);
+  const [startDate] = useState(task?.startDate ?? initialDraft?.startDate ?? "");
+  const [dueDate, setDueDate] = useState(task?.dueDate ?? initialDraft?.dueDate ?? "");
+  const [recurrence, setRecurrence] = useState<Recurrence | null>(task?.recurrence ?? initialDraft?.recurrence ?? null);
+  const [menu, setMenu] = useState<"status" | "priority" | "assignee" | "labels" | "more" | "due" | "recurrence" | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [attachments, setAttachments] = useState<File[]>([]);
+  const [attachments, setAttachments] = useState<File[]>(initialDraft?.attachments ?? []);
 
   const developmentOptions = useMemo(() => {
     const options = [...developmentScan.contexts];
@@ -143,7 +160,6 @@ export function TaskEditor({
     return options;
   }, [developmentContext, developmentScan.contexts]);
 
-  const workflowAvailable = !workflowId || workflows.some((workflow) => workflow.id === workflowId);
   const assigneeOptions = [task?.assignee, currentUser, CODEX_AGENT_ACTOR]
     .filter((actor): actor is ActorIdentity => actor !== undefined)
     .filter((actor, index, actors) => (
@@ -160,6 +176,10 @@ export function TaskEditor({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!task) {
+      if (!createSubmitIntentRef.current) return;
+      createSubmitIntentRef.current = false;
+    }
     const cleanTitle = title.trim();
     if (!cleanTitle) {
       setError("请为议题填写一个简短、明确的标题。");
@@ -187,8 +207,8 @@ export function TaskEditor({
         priority,
         labels: selectedLabels,
         ...(assigneeTarget ? { assigneeTarget } : {}),
-        workflowId: workflowId || null,
         developmentContext,
+        startDate: startDate || null,
         dueDate: dueDate || null,
         recurrence,
       }, attachments, inlineMediaImages(descriptionSegments));
@@ -200,6 +220,20 @@ export function TaskEditor({
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLFormElement>) {
+    if (task || event.key !== "Enter") return;
+    if (event.metaKey || event.ctrlKey) {
+      event.preventDefault();
+      createSubmitIntentRef.current = true;
+      event.currentTarget.requestSubmit();
+      return;
+    }
+    if (event.target === titleRef.current) {
+      event.preventDefault();
+      descriptionComposerRef.current?.focus();
     }
   }
 
@@ -222,6 +256,22 @@ export function TaskEditor({
     setMenu(null);
   }
 
+  function cancelEditor() {
+    onCancel(task ? null : {
+      title,
+      descriptionSegments,
+      status,
+      priority,
+      assignee,
+      selectedLabels,
+      developmentContext,
+      startDate,
+      dueDate,
+      recurrence,
+      attachments,
+    });
+  }
+
   return (
     <dialog
       ref={dialogRef}
@@ -229,13 +279,13 @@ export function TaskEditor({
       aria-labelledby="task-dialog-title"
       onCancel={(event) => {
         event.preventDefault();
-        if (!saving) onCancel();
+        if (!saving) cancelEditor();
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) onCancel();
+        if (event.target === event.currentTarget && !saving) cancelEditor();
       }}
     >
-      <form className="task-form" onSubmit={handleSubmit}>
+      <form className="task-form" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
         <header className="dialog-header">
           <div className="dialog-context">
             <strong id="task-dialog-title">{task ? task.identifier : "新建议题"}</strong>
@@ -244,7 +294,7 @@ export function TaskEditor({
             <button type="button" className="icon-button dialog-expand" aria-label={expanded ? "收起编辑器" : "展开编辑器"} onClick={() => setExpanded((current) => !current)}>
               <LinearIcon name="expand" />
             </button>
-            <button type="button" className="icon-button dialog-close" onClick={onCancel} disabled={saving} aria-label="关闭编辑器">
+            <button type="button" className="icon-button dialog-close" onClick={cancelEditor} disabled={saving} aria-label="关闭编辑器">
               <LinearIcon name="close" />
             </button>
           </div>
@@ -262,6 +312,7 @@ export function TaskEditor({
             </label>
           ) : (
             <InlineMediaComposer
+              ref={descriptionComposerRef}
               className="composer-description inline-media-description"
               segments={descriptionSegments}
               placeholder="Add description…"
@@ -285,37 +336,50 @@ export function TaskEditor({
 
         <div className="task-form-dock">
           <div className="property-row">
-            <label className="property-control property-status">
-              <LinearStatusIcon status={status} className={`status-icon-${STATUS_DETAILS[status].tone}`} />
-              <span className="sr-only">状态</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value as TaskStatus)}>
-                {TASK_STATUSES.map((value) => <option value={value} key={value}>{STATUS_DETAILS[value].label}</option>)}
-              </select>
-            </label>
-            <label className={`property-control property-priority priority-${priority}`}>
-              <LinearPriorityIcon priority={priority} />
-              <span className="sr-only">优先级</span>
-              <select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}>
-                {TASK_PRIORITIES.map((value) => <option value={value} key={value}>{PRIORITY_LABELS[value]}</option>)}
-              </select>
-            </label>
-            <label className="property-control property-assignee">
-              <ActorAvatar actor={assignee} className="property-assignee-avatar" />
-              <select
-                aria-label="负责人"
-                value={actorKey(assignee)}
-                onChange={(event) => {
-                  const selected = assigneeOptions.find((actor) => actorKey(actor) === event.target.value);
-                  if (selected) setAssignee(selected);
-                }}
-              >
-                {assigneeOptions.map((actor) => (
-                  <option value={actorKey(actor)} key={actorKey(actor)}>
-                    {actor.id === currentUser.id ? `${actor.name}（我）` : actor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <TaskPropertyPicker
+              value={status}
+              options={TASK_STATUSES.map((value) => ({
+                value,
+                label: STATUS_DETAILS[value].label,
+                icon: <StatusIcon status={value} />,
+                className: `status-icon-${STATUS_DETAILS[value].tone}`,
+              }))}
+              open={menu === "status"}
+              triggerClassName="property-control property-status"
+              ariaLabel="状态"
+              onOpenChange={(open) => setMenu(open ? "status" : null)}
+              onChange={setStatus}
+            />
+            <TaskPropertyPicker
+              value={priority}
+              options={TASK_PRIORITIES.map((value) => ({
+                value,
+                label: PRIORITY_LABELS[value],
+                icon: <LinearPriorityIcon priority={value} />,
+                className: `priority-${value}`,
+              }))}
+              open={menu === "priority"}
+              triggerClassName={`property-control property-priority priority-${priority}`}
+              ariaLabel="优先级"
+              onOpenChange={(open) => setMenu(open ? "priority" : null)}
+              onChange={setPriority}
+            />
+            <TaskPropertyPicker
+              value={actorKey(assignee)}
+              options={assigneeOptions.map((actor) => ({
+                value: actorKey(actor),
+                label: actor.id === currentUser.id ? `${actor.name}（我）` : actor.name,
+                icon: <ActorAvatar actor={actor} className="task-property-assignee-avatar" />,
+              }))}
+              open={menu === "assignee"}
+              triggerClassName="property-control property-assignee"
+              ariaLabel="负责人"
+              onOpenChange={(open) => setMenu(open ? "assignee" : null)}
+              onChange={(value) => {
+                const selected = assigneeOptions.find((actor) => actorKey(actor) === value);
+                if (selected) setAssignee(selected);
+              }}
+            />
             <LabelPicker
               availableLabels={availableLabels}
               selectedLabels={selectedLabels}
@@ -325,18 +389,6 @@ export function TaskEditor({
               onOpenChange={(open) => setMenu(open ? "labels" : null)}
               onChange={setSelectedLabels}
             />
-
-            <label className="property-control property-workflow">
-              <LinearIcon name="dashboard" />
-              <span className="sr-only">工作流</span>
-              <select value={workflowId} onChange={(event) => setWorkflowId(event.target.value)}>
-                <option value="">工作流</option>
-                {!workflowAvailable && <option value={workflowId}>当前设备未找到此流程</option>}
-                {workflows.map((workflow) => (
-                  <option value={workflow.id} key={workflow.id}>{workflow.name}</option>
-                ))}
-              </select>
-            </label>
 
             <label className="property-control property-development" title={developmentScan.workspacePath ?? undefined}>
               <LinearIcon name="branch" />
@@ -402,7 +454,16 @@ export function TaskEditor({
             {task && <span aria-hidden="true" />}
             <div className="dialog-actions">
               {task && <span className="dialog-updated">编辑 {task.identifier}</span>}
-              <button className="button primary" type="submit" disabled={saving}>{saving ? "正在保存…" : task ? "保存更改" : "创建议题"}</button>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={saving}
+                onClick={() => {
+                  if (!task) createSubmitIntentRef.current = true;
+                }}
+              >
+                {saving ? "正在保存…" : task ? "保存更改" : "创建议题"}
+              </button>
             </div>
           </footer>
         </div>

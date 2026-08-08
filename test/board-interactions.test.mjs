@@ -44,8 +44,10 @@ test("text selection is reserved for editable fields", () => {
   assert.match(styles, /input,[\s\S]*?textarea,[\s\S]*?\[contenteditable="true"\][\s\S]*?user-select: text/);
 });
 
-test("issue cards omit redundant metadata and keep three compact, well-spaced rows", () => {
-  assert.doesNotMatch(cardSource, /task\.createdAt|创建于|card-footer|created-at|projectName|project-chip/);
+test("main issue cards stay compact while sidebar cards show ownership and creation time", () => {
+  assert.doesNotMatch(cardSource, /projectName|project-chip/);
+  assert.match(cardSource, /variant === "sidebar" && \([\s\S]*?className="sidebar-card-creator"/);
+  assert.match(cardSource, /<AssigneeControl[\s\S]*?<span>\{createdDate\(task\.createdAt\)\}<\/span>/);
   assert.doesNotMatch(styles, /\.card-footer|\.created-at|\.project-chip/);
   assert.match(styles, /\.task-card \{[\s\S]*?min-height: 80px;[\s\S]*?gap: 6px;[\s\S]*?padding: 7px 8px/);
   assert.match(detailSource, /currentTask\.createdAt/);
@@ -86,10 +88,13 @@ test("the complete Linear-style workflow shares one ordered status source", () =
     "done",
     "canceled",
   ]);
-  assert.match(boardColumnSource, /in_review: \{ label: "审核中", tone: "review" \}/);
-  assert.match(boardColumnSource, /blocked: \{ label: "已阻塞", tone: "blocked" \}/);
-  assert.match(boardColumnSource, /canceled: \{ label: "已取消", tone: "canceled" \}/);
-  assert.match(cardSource, /import \{ TASK_STATUSES,/);
+  assert.match(boardColumnSource, /backlog: \{ label: "待立项", tone: "backlog" \}/);
+  assert.match(boardColumnSource, /todo: \{ label: "等待认领", tone: "todo" \}/);
+  assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
+  assert.match(boardColumnSource, /in_review: \{ label: "等你确认", tone: "review" \}/);
+  assert.match(boardColumnSource, /blocked: \{ label: "遇到阻碍", tone: "blocked" \}/);
+  assert.match(boardColumnSource, /done: \{ label: "完成", tone: "done" \}/);
+  assert.match(boardColumnSource, /canceled: \{ label: "取消", tone: "canceled" \}/);
   assert.doesNotMatch(cardSource, /STATUS_ORDER/);
   assert.match(detailSource, /TASK_STATUSES\.map\(\(status\) =>/);
   assert.match(editorSource, /TASK_STATUSES\.map\(\(value\) =>/);
@@ -120,10 +125,11 @@ test("common issue mutations enter a Linear-style undo queue", () => {
   assert.match(appSource, /event\.key\.toLowerCase\(\) === "z"/);
   assert.match(appSource, /event\.metaKey \|\| event\.ctrlKey/);
   assert.match(appSource, /function pushUndo/);
-  assert.match(appSource, /setUndoNotice\(showNotice \? \{ id: operation\.id, message \} : null\)/);
+  assert.match(appSource, /function performUndo[\s\S]*?await operation\.undo\(\)/);
+  assert.match(appSource, /void performUndo\(\)/);
   assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true\)/);
-  assert.doesNotMatch(appSource, /setAnnouncement\(`已撤回：/);
   assert.match(appSource, /className="toast undo-toast"/);
+  assert.match(appSource, />\s*撤回 <kbd>\{undoShortcut\}<\/kbd>/);
   assert.match(appSource, /restoreTaskRequest\(archived\)/);
   assert.match(apiSource, /export async function restoreTask/);
 });
@@ -152,18 +158,22 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
-test("issues bind one workflow from the current project's workflow tabs", () => {
+test("issue editing leaves workflow configuration on the project workflow board", () => {
   assert.match(typesSource, /export interface Task \{[\s\S]*?workflowId: string \| null/);
-  assert.match(typesSource, /export interface TaskDraft \{[\s\S]*?workflowId: string \| null/);
-  assert.match(appSource, /function taskToDraft[\s\S]*?workflowId: task\.workflowId/);
+  const taskDraftSource = typesSource.slice(
+    typesSource.indexOf("export interface TaskDraft"),
+    typesSource.indexOf("export interface TaskEvent"),
+  );
+  const taskToDraftSource = appSource.slice(
+    appSource.indexOf("function taskToDraft"),
+    appSource.indexOf("function isEditableTarget"),
+  );
+  assert.doesNotMatch(taskDraftSource, /workflowId/);
+  assert.doesNotMatch(taskToDraftSource, /workflowId/);
   assert.match(appSource, /const \[workflowOptions, setWorkflowOptions\] = useState<WorkflowOption\[\]>/);
   assert.match(appSource, /workflowOptionsFromWorkspace\(record\.workspace\)/);
-  assert.match(editorSource, /workflows: WorkflowOption\[\]/);
-  assert.match(editorSource, /workflowId: workflowId \|\| null/);
-  assert.match(editorSource, /<span className="sr-only">工作流<\/span>/);
-  assert.match(detailSource, /<span className="detail-property-label">工作流<\/span>/);
-  assert.match(detailSource, /workflowId: event\.target\.value \|\| null/);
-  assert.match(detailSource, /当前设备未找到此流程/);
+  assert.doesNotMatch(editorSource, /WorkflowOption|workflowId|工作流/);
+  assert.doesNotMatch(detailSource, /detail-property-label">工作流|workflowId: event\.target\.value/);
 });
 
 test("comments stage, upload, render and delete their own attachments", () => {
@@ -171,7 +181,7 @@ test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
   assert.match(detailSource, /pendingCommentFiles/);
   assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\)/);
-  assert.match(detailSource, /comment\.attachments\.map/);
+  assert.match(detailSource, /comment\.attachments[\s\S]*?\.filter\([\s\S]*?\.map\(\(attachment\) =>/);
   assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
 });
 
@@ -185,7 +195,7 @@ test("issue creation and detail share one searchable, creatable label picker", (
   assert.match(labelPickerSource, /availableLabels\.filter/);
   assert.match(labelPickerSource, /selectedLabels\.includes\(label\)/);
   assert.match(labelPickerSource, /创建 “\{normalizedSearch\}”/);
-  assert.match(labelPickerSource, /labelColor\(normalizedSearch\)/);
+  assert.match(labelPickerSource, /labelPresentation\(normalizedSearch\)\.color/);
   assert.match(labelPickerSource, /aria-multiselectable="true"/);
   assert.match(styles, /\.detail-label-picker \.label-popover/);
 });

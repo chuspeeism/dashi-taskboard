@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import os from "node:os";
@@ -23,8 +23,10 @@ import {
   CONTEXT_SOURCE_TYPES,
   decodeContextCursor,
 } from "../shared/project-context.mjs";
+import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
+import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
   CloudProxyError,
@@ -32,6 +34,7 @@ import {
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
 import { ApiError, TaskboardDatabase } from "./database.mjs";
+import { ProjectSummaryService } from "./project-summary.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -40,6 +43,8 @@ const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_TURN_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_ATTACHMENT_LIMIT = 10;
 const AI_CHAT_SKILL_MARKER = "\uFFFC";
+const HOST_RUNTIME_TTL_MS = 3_000;
+const CODEX_PLAN_TAIL_BYTES = 16 * 1024 * 1024;
 const INLINE_ATTACHMENT_TYPES = new Set([
   "application/pdf",
   "image/avif",
@@ -575,7 +580,7 @@ function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId",
-    "assigneeTarget", "workflowId", "developmentContext", "dueDate", "recurrence",
+    "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
   const task = {
@@ -590,6 +595,7 @@ function parseTaskCreate(body) {
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     workflowId: parseWorkflowId(body.workflowId ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
+    startDate: parseDueDate(body.startDate ?? null, "startDate"),
     dueDate: parseDueDate(body.dueDate ?? null),
     recurrence: parseRecurrence(body.recurrence ?? null),
   };
@@ -602,13 +608,14 @@ function parseTaskCreate(body) {
 function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "version", "title", "description", "status", "priority", "labels", "threadId",
-    "assigneeTarget", "workflowId", "developmentContext", "dueDate", "recurrence",
+    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId",
+    "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
   const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
   const changes = {};
+  if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
   if (body.title !== undefined) changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
   if (body.description !== undefined) changes.description = stringField(body.description, "description", { maxLength: 100_000 });
   if (body.status !== undefined) changes.status = parseStatus(body.status);
@@ -616,6 +623,7 @@ function parseTaskPatch(body) {
   if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
   if (body.workflowId !== undefined) changes.workflowId = parseWorkflowId(body.workflowId);
   if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
+  if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
   if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
   if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);
   if (changes.recurrence && body.dueDate === null) {
@@ -1462,7 +1470,7 @@ export function resolveServerOptions(options = {}) {
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
     skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-taskboard", "SKILL.md"),
-    codexExecutable: options.codexExecutable ?? process.env.CODEX_EXECUTABLE ?? "codex",
+    codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
     codexProcessesPath: options.codexProcessesPath
@@ -1506,14 +1514,236 @@ export function createTaskboardServer(options = {}) {
         candidate.type === "worktree" && candidate.branch === context.branch
       )) ?? null;
     },
+    assertTaskProjectMoveAllowed: (taskId, targetProjectId) => {
+      if (!database.hasAiChatThreadProjectConflict(taskId, targetProjectId)) return;
+      throw new CloudProxyError(
+        409,
+        "AI_CHAT_PROJECT_MOVE_BLOCKED",
+        "Delete issue-linked AI conversations before moving the issue to another project",
+      );
+    },
   });
+  async function readCloudJson(pathname) {
+    const upstream = await cloudProxy.forward(new Request(`http://127.0.0.1${pathname}`, {
+      headers: { accept: "application/json" },
+    }));
+    let payload;
+    try {
+      payload = await upstream.json();
+    } catch {
+      throw new ApiError(
+        upstream.ok ? 502 : upstream.status,
+        "INVALID_CLOUD_RESPONSE",
+        "Cloud taskboard returned an invalid JSON response",
+      );
+    }
+    if (!upstream.ok) {
+      throw new ApiError(
+        upstream.status,
+        payload?.error?.code ?? "CLOUD_REQUEST_FAILED",
+        payload?.error?.message ?? "Cloud taskboard request failed",
+        payload?.error?.details,
+      );
+    }
+    return payload;
+  }
+
+  async function resolveAiChatContext(projectId, issueId) {
+    const config = await cloudConfig.read();
+    if (!config.remoteUrl) {
+      let resolvedWorkspace;
+      try {
+        resolvedWorkspace = await resolveAiWorkspace(
+          projectId,
+          resolved.codexStatePath,
+          database,
+        );
+      } catch (error) {
+        if (
+          !(error instanceof ApiError)
+          || error.code !== "PROJECT_WORKSPACE_UNAVAILABLE"
+          || projectId !== DEFAULT_PROJECT_ID
+        ) {
+          throw error;
+        }
+        resolvedWorkspace = {
+          workspacePath: PROJECT_ROOT,
+          addDirectories: [],
+          project: database.getProject(projectId),
+        };
+      }
+      let issue;
+      if (issueId !== undefined) {
+        issue = database.getTask(issueId);
+        if (!issue || issue.projectId !== projectId || issue.archivedAt != null) {
+          throw new ApiError(
+            404,
+            "AI_CHAT_ISSUE_NOT_FOUND",
+            `Task '${issueId}' is not an active task in project '${projectId}'`,
+          );
+        }
+      }
+      return { ...resolvedWorkspace, issue };
+    }
+
+    const projectPayload = await readCloudJson("/api/projects");
+    const project = Array.isArray(projectPayload.projects)
+      ? projectPayload.projects.find((candidate) => candidate?.id === projectId)
+      : null;
+    if (!project) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+
+    let issue;
+    if (issueId !== undefined) {
+      const issuePayload = await readCloudJson(`/api/tasks/${encodeURIComponent(issueId)}`);
+      issue = issuePayload.task;
+      if (!issue || issue.projectId !== projectId || issue.archivedAt != null) {
+        throw new ApiError(
+          404,
+          "AI_CHAT_ISSUE_NOT_FOUND",
+          `Task '${issueId}' is not an active task in project '${projectId}'`,
+        );
+      }
+    }
+
+    const resolvedWorkspace = await resolveMappedAiWorkspace(
+      projectId,
+      project,
+      config.projectMappings,
+    );
+    return { ...resolvedWorkspace, issue };
+  }
+
   const aiChat = new AiChatService({
     database,
     codexExecutable: resolved.codexExecutable,
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
+    resolveContext: resolveAiChatContext,
+  });
+  const projectSummary = new ProjectSummaryService({
+    database,
+    codexExecutable: resolved.codexExecutable,
+    workspacePath: PROJECT_ROOT,
   });
   const aiEventResponses = new Set();
+  const codexSessionSearches = new Map();
+  const codexSessionStateCache = new Map();
+  const codexSessionsDirectory = path.join(path.dirname(resolved.codexStatePath), "sessions");
+  let hostRuntime = null;
+
+  async function findCodexSession(threadId) {
+    const cached = codexSessionSearches.get(threadId);
+    if (cached && (cached.path || Date.now() - cached.checkedAt < 5_000)) return cached.path;
+
+    const suffix = `-${threadId}.jsonl`;
+    const directories = [codexSessionsDirectory];
+    while (directories.length > 0) {
+      const directory = directories.pop();
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        throw error;
+      }
+      for (const entry of entries) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          directories.push(entryPath);
+        } else if (entry.isFile() && entry.name.endsWith(suffix)) {
+          codexSessionSearches.set(threadId, { path: entryPath, checkedAt: Date.now() });
+          return entryPath;
+        }
+      }
+    }
+
+    codexSessionSearches.set(threadId, { path: null, checkedAt: Date.now() });
+    return null;
+  }
+
+  async function readCodexSessionState(threadId) {
+    const sessionPath = await findCodexSession(threadId);
+    if (!sessionPath) return null;
+
+    const sessionStat = await stat(sessionPath);
+    const cached = codexSessionStateCache.get(sessionPath);
+    if (cached?.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+      return cached.state;
+    }
+
+    const length = Math.min(sessionStat.size, CODEX_PLAN_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    const handle = await open(sessionPath, "r");
+    try {
+      await handle.read(buffer, 0, length, sessionStat.size - length);
+    } finally {
+      await handle.close();
+    }
+
+    const lines = buffer.toString("utf8").split("\n");
+    if (length < sessionStat.size) lines.shift();
+    const records = [];
+    for (const line of lines) {
+      try {
+        records.push(JSON.parse(line));
+      } catch {}
+    }
+
+    const turnStates = new Map();
+    for (const record of records) {
+      const payload = record?.payload;
+      if (record?.type !== "event_msg" || typeof payload?.turn_id !== "string") continue;
+      if (payload.type === "task_started") turnStates.set(payload.turn_id, true);
+      if (payload.type === "task_complete" || payload.type === "turn_aborted") {
+        turnStates.set(payload.turn_id, false);
+      }
+    }
+
+    let progress = null;
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const record = records[index];
+      const payload = record?.payload;
+      if (payload?.type !== "custom_tool_call" || typeof payload.input !== "string") continue;
+
+      let statuses = [];
+      if (payload.name === "update_plan") {
+        try {
+          const input = JSON.parse(payload.input);
+          statuses = Array.isArray(input.plan)
+            ? input.plan.map((item) => item?.status).filter(Boolean)
+            : [];
+        } catch {}
+      } else if (payload.name === "exec") {
+        const callIndex = payload.input.lastIndexOf("tools.update_plan(");
+        if (callIndex < 0) continue;
+        statuses = [...payload.input.slice(callIndex).matchAll(
+          /["']?status["']?\s*:\s*["'](completed|in_progress|pending)["']/g,
+        )].map((match) => match[1]);
+      }
+
+      if (statuses.length > 0) {
+        progress = {
+          completed: statuses.filter((status) => status === "completed").length,
+          total: statuses.length,
+        };
+        break;
+      }
+    }
+
+    const state = {
+      completed: progress?.completed ?? null,
+      total: progress?.total ?? null,
+      running: [...turnStates.values()].some(Boolean),
+    };
+    codexSessionStateCache.set(sessionPath, {
+      size: sessionStat.size,
+      mtimeMs: sessionStat.mtimeMs,
+      state,
+    });
+    return state;
+  }
 
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
@@ -1540,6 +1770,61 @@ export function createTaskboardServer(options = {}) {
       if (pathname === "/health") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         return sendJson(response, 200, { status: "ok" });
+      }
+
+      if (pathname === "/api/local/codex-thread-progress") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if ([...url.searchParams.keys()].some((key) => key !== "threadId")) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Only 'threadId' is supported");
+        }
+        const threadIds = [...new Set(url.searchParams.getAll("threadId").map((value) => (
+          value.trim().replace(/^(?:local|cloud):/i, "")
+        )))];
+        if (threadIds.length > 64 || threadIds.some((threadId) => (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)
+        ))) {
+          throw new ApiError(400, "INVALID_FIELD", "'threadId' must contain valid Codex thread IDs");
+        }
+        const entries = await Promise.all(threadIds.map(async (threadId) => (
+          [threadId, await readCodexSessionState(threadId)]
+        )));
+        return sendJson(response, 200, { progress: Object.fromEntries(entries) });
+      }
+
+      if (pathname === "/api/local/host-runtime") {
+        if (request.method === "GET") {
+          const runtime = hostRuntime && Date.now() - hostRuntime.updatedAt <= HOST_RUNTIME_TTL_MS
+            ? hostRuntime
+            : null;
+          return sendJson(response, 200, { runtime });
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["threadId", "threadRunning", "threadTodoProgress"]));
+          const threadId = stringField(body.threadId, "threadId", { required: true, maxLength: 256 });
+          if (typeof body.threadRunning !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "'threadRunning' must be a boolean");
+          }
+          let threadTodoProgress = null;
+          if (body.threadTodoProgress != null) {
+            assertPlainObject(body.threadTodoProgress);
+            assertAllowedKeys(body.threadTodoProgress, new Set(["completed", "total"]));
+            const { completed, total } = body.threadTodoProgress;
+            if (!Number.isInteger(completed) || !Number.isInteger(total) || completed < 0 || total < 1) {
+              throw new ApiError(400, "INVALID_FIELD", "'threadTodoProgress' is invalid");
+            }
+            threadTodoProgress = { completed: Math.min(completed, total), total };
+          }
+          hostRuntime = {
+            threadId,
+            threadRunning: body.threadRunning,
+            threadTodoProgress,
+            updatedAt: Date.now(),
+          };
+          return sendJson(response, 200, { runtime: hostRuntime });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
       if (pathname === "/api/local/cloud-session") {
@@ -1631,6 +1916,16 @@ export function createTaskboardServer(options = {}) {
         assertAllowedQuery(url.searchParams, new Set(["projectId"]), "GET /api/local/ai/catalog");
         const projectId = validateProjectId(url.searchParams.get("projectId") ?? undefined);
         return sendJson(response, 200, await aiChat.getCatalog(projectId));
+      }
+
+      const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);
+      if (projectSummaryRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/projects/:id/summary");
+        const projectId = validateProjectId(
+          decodeRouteSegment(projectSummaryRoute[1], "Project id"),
+        );
+        return sendJson(response, 200, projectSummary.get(projectId));
       }
 
       if (pathname === "/api/local/ai/threads") {
@@ -1772,7 +2067,13 @@ export function createTaskboardServer(options = {}) {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/projects does not accept query parameters");
           }
-          return sendJson(response, 200, { projects: database.listProjects() });
+          const projects = database.listProjects().map((project) => ({
+            ...project,
+            workspacePath: project.id === DEFAULT_PROJECT_ID
+              ? null
+              : currentCloudConfig?.projectMappings[project.id] ?? project.workspacePath,
+          }));
+          return sendJson(response, 200, { projects });
         }
         if (request.method === "POST") {
           const project = database.createProject(parseProjectCreate(await readJson(request)));
@@ -1780,6 +2081,25 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 201, { project });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const projectRoute = pathname.match(/^\/api\/projects\/([^/]+)$/);
+      if (projectRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method === "DELETE") {
+          database.deleteProject(projectId);
+          return sendEmpty(response, 204);
+        }
+        return methodNotAllowed(response, ["DELETE"]);
       }
 
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);
@@ -1864,7 +2184,9 @@ export function createTaskboardServer(options = {}) {
         const project = currentCloudConfig.remoteUrl
           ? {
             id: projectId,
-            workspacePath: currentCloudConfig.projectMappings[projectId] ?? null,
+            workspacePath: projectId === DEFAULT_PROJECT_ID
+              ? null
+              : currentCloudConfig.projectMappings[projectId] ?? null,
           }
           : database.getProject(projectId);
         if (!project) throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
@@ -2003,6 +2325,7 @@ export function createTaskboardServer(options = {}) {
             relationType,
             relatedTaskId,
             threadId,
+            actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
@@ -2015,11 +2338,32 @@ export function createTaskboardServer(options = {}) {
             relationType,
             relatedTaskId,
             threadId,
+            actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
         return methodNotAllowed(response, ["POST", "DELETE"]);
+      }
+
+      const taskActivitiesRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/activities$/);
+      if (taskActivitiesRoute) {
+        let taskId;
+        try {
+          taskId = decodeURIComponent(taskActivitiesRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if (taskId.length === 0 || taskId.length > 128) {
+          throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Activity routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { activities: database.listTaskActivities(taskId) });
+        }
+        return methodNotAllowed(response, ["GET"]);
       }
 
       const taskCommentsRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/);
@@ -2252,29 +2596,37 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "PATCH") {
+          const actor = actorFromRequest(request);
           const { version, changes, threadId, assigneeTarget } = parseTaskPatch(await readJson(request));
           if (assigneeTarget !== undefined) {
-            changes.assignee = resolveAssignee(assigneeTarget, actorFromRequest(request));
+            changes.assignee = resolveAssignee(assigneeTarget, actor);
           }
-          const task = database.updateTask(id, version, changes, threadId);
+          const task = database.updateTask(id, version, changes, threadId, actor);
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "move" && request.method === "POST") {
           const move = parseMove(await readJson(request));
-          const task = database.moveTask(id, move.version, move.status, move.sortOrder, move.threadId);
+          const task = database.moveTask(
+            id,
+            move.version,
+            move.status,
+            move.sortOrder,
+            move.threadId,
+            actorFromRequest(request),
+          );
           events.emit("task.moved", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "archive" && request.method === "POST") {
           const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.archiveTask(id, version, threadId);
+          const task = database.archiveTask(id, version, threadId, actorFromRequest(request));
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "restore" && request.method === "POST") {
           const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.restoreTask(id, version, threadId);
+          const task = database.restoreTask(id, version, threadId, actorFromRequest(request));
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }
@@ -2344,6 +2696,7 @@ export function createTaskboardServer(options = {}) {
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();
       await aiChat.close();
+      await projectSummary.close();
       await serverClosed;
       listening = false;
       database.close();

@@ -15,6 +15,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../types";
+import { labelPresentation } from "../labels";
 import { STATUS_DETAILS } from "./BoardColumn";
 import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
 
@@ -333,11 +334,18 @@ export function TaskContextMenu({
             <div className="context-submenu labels-submenu" role="menu" data-submenu-panel="labels" style={{ "--submenu-shift": `${submenuShift}px` } as CSSProperties}>
               {labels.length ? labels.map((label) => {
                 const selected = task.labels.includes(label);
+                const presentation = labelPresentation(label);
                 return (
                   <MenuItem
                     key={label}
-                    label={label}
-                    icon={<LinearIcon name="label" />}
+                    label={presentation.name}
+                    icon={presentation.tone ? (
+                      <span
+                        className="context-label-glyph"
+                        style={{ "--label-color": presentation.color } as CSSProperties}
+                        aria-hidden="true"
+                      />
+                    ) : null}
                     checked={selected}
                     onClick={() => closeThen(() => onLabelsChange(
                       task,

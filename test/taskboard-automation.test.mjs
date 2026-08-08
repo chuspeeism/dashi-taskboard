@@ -24,6 +24,8 @@ const baseRequest = {
   projectName: "PPT Skill",
   workspacePath: "/Users/example/Documents/ppt-skill",
   skillPath: "/Users/example/taskboard/skills/manage-taskboard/SKILL.md",
+  enabledByUser: true,
+  quotaAware: false,
   intervalMinutes: 5,
   model: "gpt-5.5",
   reasoningEffort: "high",

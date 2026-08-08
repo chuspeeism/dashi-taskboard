@@ -11,10 +11,11 @@
     "dashi-taskboard-mcp": "./mcp/server.mjs"
   },
   "scripts": {
-    "codex": "node scripts/codex-injector.mjs --launch --watch --open",
+    "codex": "node scripts/codex-injector.mjs --launch --watch --open --port 9231",
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
     "codex:refresh": "node scripts/codex-injector.mjs --refresh",
+    "app:codex": "npm run build:web && node scripts/build-codex-launcher-app.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch server/index.mjs --dev",
     "dev:web": "vite --config web/vite.config.ts",
@@ -38,6 +39,7 @@
     "@lobehub/icons-static-svg": "^1.94.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@xyflow/react": "^12.11.2",
+    "dhtmlx-gantt": "^10.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",

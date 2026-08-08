@@ -435,7 +435,8 @@ function cloudRows(table, rows) {
 
 function insertTableSql(table) {
   const columns = CLOUD_COLUMNS[table];
-  return `INSERT INTO "${table}" (${columns.map((column) => `"${column}"`).join(", ")})
+  const operation = table === "projects" ? "INSERT OR REPLACE" : "INSERT";
+  return `${operation} INTO "${table}" (${columns.map((column) => `"${column}"`).join(", ")})
        SELECT ${columns.map((column) => `json_extract(value, '$.${column}')`).join(", ")}
        FROM json_each(?)`;
 }
@@ -635,7 +636,14 @@ export async function importCloudMigrationBundle(bundle, { d1, r2 }) {
   validateBundle(bundle);
 
   const existingCounts = await d1.countByProject();
-  if (Object.keys(existingCounts).length > 0) {
+  const existingProjects = Object.keys(existingCounts);
+  const localCounts = existingCounts.local;
+  const hasOnlyGlobalBaseline = existingProjects.length === 1
+    && existingProjects[0] === "local"
+    && TABLE_ORDER.every((table) => (
+      Number(localCounts?.[table]) === (table === "projects" ? 1 : 0)
+    ));
+  if (existingProjects.length > 0 && !hasOnlyGlobalBaseline) {
     throw new Error("Cloud migration target D1 is not empty");
   }
   for (const attachment of bundle.attachments) {

@@ -20,18 +20,12 @@ test("the resident injector supervises the fixed local Taskboard service", () =>
   assert.match(source, /AbortSignal\.timeout\(1_500\)/);
 });
 
-test("the CDP bridge accepts only service ensure and native Skill composer prefill actions", () => {
+test("the CDP bridge accepts service ensure and native instruction composer prefill actions", () => {
   assert.match(source, /const hostBindingName = "__codexTaskboardHostV1"/);
   assert.match(runtimeSource, /request\.action === "ensure"/);
   assert.match(runtimeSource, /request\.action === "prefill-task-composer"/);
   assert.match(runtimeSource, /request\.instruction\.length <= 1_024/);
-  assert.match(runtimeSource, /request\.skillPath\.length <= 1_024/);
   assert.match(source, /function prefillTaskComposerViaCdp/);
-  assert.match(source, /cdp\.send\("Input\.insertText", \{ text: "\$" \}\)/);
-  assert.match(source, /data-composer-overlay-floating-ui/);
-  assert.match(source, /button\[data-list-navigation-item="true"\]/);
-  assert.match(source, /\[skill-mention-name\]/);
-  assert.match(source, /skill-mention-path/);
   assert.match(source, /cdp\.send\("Input\.insertText", \{ text: instruction \}\)/);
   assert.match(source, /Runtime\.bindingCalled/);
   assert.match(runtimeSource, /params\.executionContextId/);

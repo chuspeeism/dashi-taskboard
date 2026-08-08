@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { labelColor } from "../labels";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { labelDisplayName, labelPresentation } from "../labels";
 import { LinearIcon } from "./LinearIcon";
 
 interface LabelPickerProps {
@@ -10,7 +10,9 @@ interface LabelPickerProps {
   className?: string;
   triggerClassName: string;
   showIcon?: boolean;
+  showSelectedAsChips?: boolean;
   placeholder?: string;
+  triggerContent?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onChange: (labels: string[]) => void;
 }
@@ -23,7 +25,9 @@ export function LabelPicker({
   className = "",
   triggerClassName,
   showIcon = false,
+  showSelectedAsChips = false,
   placeholder = "标签",
+  triggerContent,
   onOpenChange,
   onChange,
 }: LabelPickerProps) {
@@ -32,9 +36,14 @@ export function LabelPicker({
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim();
   const filteredLabels = availableLabels.filter((label) => (
-    !normalizedSearch || label.toLocaleLowerCase().includes(normalizedSearch.toLocaleLowerCase())
+    !normalizedSearch
+    || label.toLocaleLowerCase().includes(normalizedSearch.toLocaleLowerCase())
+    || labelDisplayName(label).toLocaleLowerCase().includes(normalizedSearch.toLocaleLowerCase())
   ));
-  const canCreateLabel = Boolean(normalizedSearch) && !availableLabels.includes(normalizedSearch);
+  const canCreateLabel = Boolean(normalizedSearch) && !availableLabels.some((label) => (
+    label === normalizedSearch
+    || labelDisplayName(label).toLocaleLowerCase() === normalizedSearch.toLocaleLowerCase()
+  ));
 
   useEffect(() => {
     if (!open) {
@@ -80,8 +89,24 @@ export function LabelPicker({
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
       >
-        {showIcon && <LinearIcon name="label" />}
-        <span>{selectedLabels.length > 0 ? selectedLabels.join(", ") : placeholder}</span>
+        {triggerContent ?? <>
+          {showIcon && <LinearIcon name="label" />}
+          {selectedLabels.length > 0 && showSelectedAsChips ? (
+            <span className="label-trigger-chips">
+              {selectedLabels.map((label) => {
+                const presentation = labelPresentation(label);
+                return (
+                  <span className="label-trigger-chip" key={label}>
+                    {presentation.tone && <i style={{ background: presentation.color }} />}
+                    {presentation.name}
+                  </span>
+                );
+              })}
+            </span>
+          ) : (
+            <span>{selectedLabels.length > 0 ? selectedLabels.map(labelDisplayName).join(", ") : placeholder}</span>
+          )}
+        </>}
       </button>
       {open && (
         <div className="composer-popover label-popover" role="dialog" aria-label="选择或创建标签">
@@ -93,20 +118,23 @@ export function LabelPicker({
             aria-label="搜索标签"
           />
           <div className="label-options" role="listbox" aria-label="可用标签" aria-multiselectable="true">
-            {filteredLabels.map((label) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected={selectedLabels.includes(label)}
-                disabled={disabled}
-                key={label}
-                onClick={() => toggleLabel(label)}
-              >
-                <i style={{ background: labelColor(label) }} />
-                <span>{label}</span>
-                {selectedLabels.includes(label) && <b><LinearIcon name="check" /></b>}
-              </button>
-            ))}
+            {filteredLabels.map((label) => {
+              const presentation = labelPresentation(label);
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selectedLabels.includes(label)}
+                  disabled={disabled}
+                  key={label}
+                  onClick={() => toggleLabel(label)}
+                >
+                  <i style={{ background: presentation.tone ? presentation.color : "transparent" }} />
+                  <span>{presentation.name}</span>
+                  {selectedLabels.includes(label) && <b><LinearIcon name="check" /></b>}
+                </button>
+              );
+            })}
             {canCreateLabel && (
               <button
                 type="button"
@@ -116,7 +144,11 @@ export function LabelPicker({
                   setSearch("");
                 }}
               >
-                <i style={{ background: labelColor(normalizedSearch) }} />
+                <i style={{
+                  background: labelPresentation(normalizedSearch).tone
+                    ? labelPresentation(normalizedSearch).color
+                    : "transparent",
+                }} />
                 <span>创建 “{normalizedSearch}”</span>
               </button>
             )}

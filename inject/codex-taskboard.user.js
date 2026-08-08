@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.8";
+  const VERSION = "0.6.12";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -28,6 +28,7 @@
   const PLUGIN_LABELS = ["插件", "plugins"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
+    "新对话",
     "new task",
     "new chat",
     "拉取请求",
@@ -65,12 +66,15 @@
   let hostRequestSequence = 0;
   let observer = null;
   let reattachTimer = null;
+  let hostContextTimer = null;
   let lastFocusedElement = null;
   let hostContextSnapshot = null;
   let mutedNativeSelections = new Map();
   let openGeneration = 0;
   let pendingThreadCreation = null;
   let lastNativeThreadId = "";
+  let lastNativeProjectId = "";
+  let suspendedNativeBrowserPanel = null;
   let active = false;
   let destroyed = false;
 
@@ -305,13 +309,10 @@
     const viewport = document.querySelector("[data-app-shell-main-content-layout]");
     if (!viewport) return null;
     const viewportRect = viewport.getBoundingClientRect();
-    const headerBottom = document.querySelector("main > header")?.getBoundingClientRect().bottom
-      ?? viewportRect.top;
     return Array.from(viewport.children).find((candidate) => {
       const rect = candidate.getBoundingClientRect();
       return rect.width >= viewportRect.width * 0.8
-        && rect.height >= viewportRect.height * 0.7
-        && rect.top >= headerBottom - 1;
+        && rect.height >= viewportRect.height * 0.7;
     }) || null;
   }
 
@@ -385,6 +386,13 @@
       || null;
   }
 
+  async function selectedNativeProjectId() {
+    const bootstrap = await window.electronBridge?.getInitialSidebarBootstrap?.();
+    const selectedProject = bootstrap?.globalStateEntries
+      ?.find((entry) => entry.key === "selected-project")?.value;
+    return typeof selectedProject?.projectId === "string" ? selectedProject.projectId : "";
+  }
+
   function readCodexProjects() {
     const seen = new Set();
     return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
@@ -421,6 +429,9 @@
   }
 
   async function captureHostContext() {
+    const todoProgress = nativeTodoProgress();
+    const selectedProjectId = await selectedNativeProjectId();
+    if (selectedProjectId) lastNativeProjectId = selectedProjectId;
     let projects = readCodexProjects();
     let section = findProjectsSection();
     const sectionDeadline = Date.now() + 1_200;
@@ -442,7 +453,8 @@
         projects = readCodexProjects();
       } while ((projects.length === 0 || !activeThreadRow()) && Date.now() < deadline);
     }
-    const context = readHostContext(projects);
+    const context = readHostContext(projects, lastNativeProjectId);
+    if (context.threadRunning && todoProgress) context.threadTodoProgress = todoProgress;
     expandedSections.forEach((candidate) => {
       if (candidate.isConnected && candidate.getAttribute("data-app-action-sidebar-section-collapsed") === "false") {
         candidate.querySelector("[data-app-action-sidebar-section-toggle]")?.click();
@@ -480,6 +492,71 @@
   function nativeSidebarCollapsed() {
     const label = normalizedLabel(nativeSidebarTrigger()?.getAttribute("aria-label"));
     return label.startsWith("显示") || label.startsWith("show ");
+  }
+
+  function sidebarThreadRow(threadId) {
+    const normalizedThreadId = normalizeThreadId(threadId);
+    if (!normalizedThreadId) return null;
+    return Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
+      .find((candidate) => normalizeThreadId(
+        candidate.getAttribute("data-app-action-sidebar-thread-id"),
+      ) === normalizedThreadId) || null;
+  }
+
+  function nativeRunningThreadRow(preferredThreadId, preferredProjectId) {
+    const rows = Array.from(document.querySelectorAll(".sidebar-item .animate-spin"))
+      .map((spinner) => spinner.closest("[data-app-action-sidebar-thread-id]"))
+      .filter(Boolean);
+    const normalizedPreferredThreadId = normalizeThreadId(preferredThreadId);
+    if (normalizedPreferredThreadId) {
+      return rows.find((candidate) => normalizeThreadId(
+        candidate.getAttribute("data-app-action-sidebar-thread-id"),
+      ) === normalizedPreferredThreadId) || null;
+    }
+    if (preferredProjectId) {
+      const projectRows = rows.filter((candidate) => (
+        candidate.closest("[data-app-action-sidebar-project-list-id]")
+          ?.getAttribute("data-app-action-sidebar-project-list-id") === preferredProjectId
+      ));
+      if (projectRows.length === 1) return projectRows[0];
+    }
+    return rows.length === 1 ? rows[0] : null;
+  }
+
+  function nativeThreadRunning(threadId) {
+    const normalizedThreadId = normalizeThreadId(threadId);
+    const threadRow = sidebarThreadRow(normalizedThreadId);
+    if (threadRow?.querySelector(".animate-spin")) return true;
+    const running = Array.from(document.querySelectorAll("button[aria-label]")).some((button) => {
+      const label = normalizedLabel(button.getAttribute("aria-label"));
+      return ["停止", "停止生成", "stop", "stop generating"].includes(label);
+    });
+    const activeThreadId = normalizeThreadId(
+      activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"),
+    );
+    if (running && (!normalizedThreadId || activeThreadId === normalizedThreadId)) return true;
+    if (threadRow) return false;
+    const composer = document.querySelector(
+      "[contenteditable='true'][role='textbox'], textarea",
+    );
+    return composer ? false : undefined;
+  }
+
+  function nativeTodoProgress() {
+    const indicator = Array.from(
+      document.querySelectorAll('[data-in-progress-fixed-content="true"]'),
+    ).at(-1);
+    const label = Array.from(indicator?.querySelectorAll("span") ?? [])
+      .map((element) => element.textContent?.trim() ?? "")
+      .find((text) => /\d+\s*\/\s*\d+/.test(text));
+    const match = label?.match(/(\d+)\s*\/\s*(\d+)/);
+    if (!match) return null;
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    return {
+      completed: Math.max(0, Math.min(total, current - 1)),
+      total,
+    };
   }
 
   function expandNativeSidebar() {
@@ -523,19 +600,29 @@
     };
   }
 
-  function readHostContext(projects = readCodexProjects()) {
+  function readHostContext(projects = readCodexProjects(), preferredProjectId = lastNativeProjectId) {
     const row = activeThreadRow();
     const activeThreadId = normalizeThreadId(row?.getAttribute("data-app-action-sidebar-thread-id"));
-    if (activeThreadId) lastNativeThreadId = activeThreadId;
-    const threadId = activeThreadId || lastNativeThreadId || normalizeThreadId(threadIdFromLocation());
     const projectList = row?.closest?.("[data-app-action-sidebar-project-list-id]");
     const projectRow = row?.closest?.("[data-app-action-sidebar-project-id]")
       || document.querySelector('[data-app-action-sidebar-project-row][aria-current="page"]')
       || document.querySelector('[data-app-action-sidebar-project-row][data-app-action-sidebar-project-active="true"]');
     const projectId = projectList?.getAttribute("data-app-action-sidebar-project-list-id")
       || projectRow?.getAttribute("data-app-action-sidebar-project-id")
+      || preferredProjectId
       || "";
+    const preferredThreadId = activeThreadId || lastNativeThreadId;
+    const runningThreadId = normalizeThreadId(
+      nativeRunningThreadRow(preferredThreadId, projectId)
+        ?.getAttribute("data-app-action-sidebar-thread-id"),
+    );
+    const currentThreadId = activeThreadId || runningThreadId || lastNativeThreadId;
+    if (activeThreadId || (!lastNativeThreadId && runningThreadId)) {
+      lastNativeThreadId = currentThreadId;
+    }
+    const threadId = currentThreadId || lastNativeThreadId || normalizeThreadId(threadIdFromLocation());
     const workspacePath = workspaceFromLocation();
+    const threadRunning = nativeThreadRunning(threadId);
     const payload = {
       theme: currentTheme(),
       projects,
@@ -543,6 +630,11 @@
       titlebarLeftInset: titlebarLeftInset(),
       sidebarCollapsed: nativeSidebarCollapsed(),
     };
+    if (threadRunning !== undefined) payload.threadRunning = threadRunning;
+    if (threadRunning) {
+      const todoProgress = nativeTodoProgress();
+      if (todoProgress) payload.threadTodoProgress = todoProgress;
+    }
     if (workspacePath) payload.workspacePath = workspacePath;
     if (projectId) payload.projectId = projectId;
     if (threadId) payload.threadId = threadId;
@@ -631,33 +723,23 @@
     }
   }
 
-  async function waitForPreparedComposer(identifier, skillPath) {
+  async function waitForPreparedComposer(identifier) {
     const deadline = Date.now() + 8_000;
     while (Date.now() < deadline) {
       const editor = document.querySelector('[data-codex-composer="true"][contenteditable="true"]');
       if (editor && editor.getClientRects().length > 0) {
         const containsIdentifier = normalizedLabel(editor.textContent).includes(normalizedLabel(identifier));
-        const skillMention = Array.from(editor.querySelectorAll("[skill-mention-name]"))
-          .find((mention) => (
-            mention.getAttribute("skill-mention-name") === "manage-taskboard"
-            && mention.getAttribute("skill-mention-path") === skillPath
-          ));
-        if (containsIdentifier && skillMention) return editor;
+        if (containsIdentifier) return editor;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
-    throw new Error("Codex 对话输入框没有生成 manage-taskboard Skill 引用");
+    throw new Error("Codex 对话输入框没有写入任务编号");
   }
 
   async function createThreadForTask(payload) {
     const taskId = typeof payload?.taskId === "string" ? payload.taskId.trim() : "";
     const identifier = typeof payload?.identifier === "string" ? payload.identifier.trim() : "";
     const instruction = typeof payload?.instruction === "string" ? payload.instruction.trim() : "";
-    const skillName = typeof payload?.skillName === "string" ? payload.skillName.trim() : "";
-    const skillDisplayName = typeof payload?.skillDisplayName === "string"
-      ? payload.skillDisplayName.trim()
-      : "";
-    const skillPath = typeof payload?.skillPath === "string" ? payload.skillPath.trim() : "";
     const workspacePath = typeof payload?.workspacePath === "string"
       ? payload.workspacePath.trim()
       : "";
@@ -665,9 +747,6 @@
       !taskId
       || !identifier
       || !instruction
-      || !skillName
-      || !skillDisplayName
-      || !skillPath
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
@@ -709,13 +788,8 @@
           focusComposerNonce: Date.now(),
         },
       });
-      await requestHostTaskComposerPrefill({
-        instruction,
-        skillDisplayName,
-        skillName,
-        skillPath,
-      });
-      await waitForPreparedComposer(identifier, skillPath);
+      await requestHostTaskComposerPrefill({ instruction });
+      await waitForPreparedComposer(identifier);
       postToFrame({ type: "taskboard:thread-prepared", payload: { taskId } });
     } catch (error) {
       postToFrame({
@@ -1031,17 +1105,9 @@
     return requestHost("ensure");
   }
 
-  function requestHostTaskComposerPrefill({
-    instruction,
-    skillDisplayName,
-    skillName,
-    skillPath,
-  }) {
+  function requestHostTaskComposerPrefill({ instruction }) {
     return requestHost("prefill-task-composer", {
       instruction,
-      skillDisplayName,
-      skillName,
-      skillPath,
     });
   }
 
@@ -1084,7 +1150,13 @@
         captureHostContext(),
       ]);
       if (!active || generation !== openGeneration) return;
-      hostContextSnapshot = context;
+      hostContextSnapshot = {
+        ...hostContextSnapshot,
+        ...context,
+        projects: context.projects.length > 0
+          ? context.projects
+          : hostContextSnapshot?.projects ?? [],
+      };
       if (!frameReady || result.restarted || !frameMatchesTaskboardUrl(taskboardUrl)) {
         showLoading();
         loadTaskboardFrame();
@@ -1107,6 +1179,42 @@
       .forEach((node) => node.removeAttribute(HIDDEN_ATTRIBUTE));
     document.querySelectorAll(`[${HOST_ATTRIBUTE}="true"]`)
       .forEach((node) => node.removeAttribute(HOST_ATTRIBUTE));
+  }
+
+  function closeNativeBrowserPanel() {
+    if (suspendedNativeBrowserPanel) return;
+    const browserPanel = Array.from(
+      document.querySelectorAll("[data-browser-sidebar-webview]"),
+    ).find((node) => window.getComputedStyle(node).visibility !== "hidden");
+    if (!browserPanel) return;
+    const webview = browserPanel.querySelector("webview");
+    suspendedNativeBrowserPanel = {
+      conversationId: webview?.getAttribute("data-browser-sidebar-conversation-id") || null,
+      browserTabId: webview?.getAttribute("data-browser-sidebar-browser-tab-id") || null,
+    };
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "toggle-browser-panel",
+        open: false,
+        source: "manual",
+        initiator: "taskboard_open",
+      },
+    }));
+  }
+
+  function restoreNativeBrowserPanel() {
+    const browserPanel = suspendedNativeBrowserPanel;
+    suspendedNativeBrowserPanel = null;
+    if (!browserPanel) return;
+    const data = {
+      type: "toggle-browser-panel",
+      open: true,
+      source: "manual",
+      initiator: "taskboard_close",
+    };
+    if (browserPanel.conversationId) data.conversationId = browserPanel.conversationId;
+    if (browserPanel.browserTabId) data.browserTabId = browserPanel.browserTabId;
+    window.dispatchEvent(new MessageEvent("message", { data }));
   }
 
   function mountActivePage() {
@@ -1138,6 +1246,7 @@
     active = false;
     if (page) page.hidden = true;
     restoreNativeContent();
+    restoreNativeBrowserPanel();
     restoreNativeSelection();
     document.documentElement.removeAttribute("data-codex-taskboard-open");
     syncEntryState();
@@ -1150,10 +1259,11 @@
     if (destroyed) return;
     if (!active) {
       lastFocusedElement = document.activeElement;
-      hostContextSnapshot = null;
+      hostContextSnapshot = readHostContext();
     }
     const generation = ++openGeneration;
     active = true;
+    closeNativeBrowserPanel();
     ensureEntry();
     mountActivePage();
     syncEntryState();
@@ -1215,6 +1325,8 @@
         "aria-current",
       ],
     });
+    hostContextTimer = window.setInterval(postHostContext, 1_000);
+    postHostContext();
   }
 
   function destroy() {
@@ -1222,6 +1334,8 @@
     destroyed = true;
     if (reattachTimer !== null) window.clearTimeout(reattachTimer);
     reattachTimer = null;
+    if (hostContextTimer !== null) window.clearInterval(hostContextTimer);
+    hostContextTimer = null;
     observer?.disconnect();
     observer = null;
     cancelFrameReadyWaiters(new Error("任务面板已关闭"));

@@ -5,6 +5,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "./types";
+import { labelDisplayName } from "./labels";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
 export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content";
@@ -81,7 +82,13 @@ export function taskFilterCount(filters: TaskFilters): number {
 export function matchesTaskSearch(task: Task, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
-  return [task.identifier, task.title, task.description, ...task.labels]
+  return [
+    task.identifier,
+    task.title,
+    task.description,
+    ...task.labels,
+    ...task.labels.map(labelDisplayName),
+  ]
     .join(" ")
     .toLowerCase()
     .includes(needle);
@@ -105,8 +112,9 @@ export function matchesTaskFilters(
   ) {
     return false;
   }
-  if (omit !== "link" && filters.link === "linked" && !task.threadId) return false;
-  if (omit !== "link" && filters.link === "unlinked" && task.threadId) return false;
+  const hasConversation = task.conversationRefs.length > 0;
+  if (omit !== "link" && filters.link === "linked" && !hasConversation) return false;
+  if (omit !== "link" && filters.link === "unlinked" && hasConversation) return false;
 
   if (omit !== "content") {
     const content = filters.content.trim().toLowerCase();

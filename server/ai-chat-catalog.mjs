@@ -51,12 +51,19 @@ export async function loadDeviceWorkspaces(codexStatePath, database) {
   return workspaces;
 }
 
-export async function resolveAiWorkspace(projectId, codexStatePath, database) {
-  const project = await database.getProject(projectId);
-  if (!project) {
+async function loadMappedWorkspaces(projectMappings) {
+  const workspaces = new Map();
+  for (const [projectId, mappedPath] of Object.entries(projectMappings)) {
+    const workspacePath = await existingDirectory(mappedPath);
+    if (workspacePath) workspaces.set(projectId, workspacePath);
+  }
+  return workspaces;
+}
+
+function resolvedWorkspace(projectId, project, workspaces) {
+  if (!project || project.id !== projectId) {
     throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
   }
-  const workspaces = await loadDeviceWorkspaces(codexStatePath, database);
   const workspacePath = workspaces.get(projectId);
   if (!workspacePath) {
     throw new ApiError(
@@ -70,6 +77,17 @@ export async function resolveAiWorkspace(projectId, codexStatePath, database) {
     addDirectories: [...new Set(workspaces.values())].filter((candidate) => candidate !== workspacePath),
     project,
   };
+}
+
+export async function resolveAiWorkspace(projectId, codexStatePath, database) {
+  const project = await database.getProject(projectId);
+  const workspaces = await loadDeviceWorkspaces(codexStatePath, database);
+  return resolvedWorkspace(projectId, project, workspaces);
+}
+
+export async function resolveMappedAiWorkspace(projectId, project, projectMappings = {}) {
+  const workspaces = await loadMappedWorkspaces(projectMappings);
+  return resolvedWorkspace(projectId, project, workspaces);
 }
 
 function sanitizeModels(value) {
@@ -231,12 +249,9 @@ function sanitizeSkills(entries) {
 
 export async function discoverAiCatalog({
   codexExecutable,
-  codexStatePath,
-  database,
-  projectId,
+  workspacePath,
   processEnv,
 }) {
-  const { workspacePath } = await resolveAiWorkspace(projectId, codexStatePath, database);
   const [modelResult, skillEntries] = await Promise.all([
     execFileAsync(codexExecutable, ["debug", "models"], {
       cwd: workspacePath,

@@ -701,7 +701,7 @@ export function WorkflowInspector({
                     aria-label="指定议题 ID"
                     type="text"
                     value={data.specificIssueId ?? ""}
-                    placeholder="例如 LOCAL-48"
+                    placeholder="输入实际议题编号"
                     onChange={(event) => onChange({ specificIssueId: event.target.value })}
                   />
                 </label>

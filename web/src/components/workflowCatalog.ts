@@ -58,7 +58,7 @@ export const ISSUE_STATUSES = [
   { value: "todo", label: "待办事项" },
   { value: "in_progress", label: "进行中" },
   { value: "in_review", label: "审核中" },
-  { value: "blocked", label: "已阻塞" },
+  { value: "blocked", label: "遇到阻碍" },
   { value: "done", label: "完成" },
   { value: "canceled", label: "已取消" },
 ] as const;

@@ -9,6 +9,7 @@ import {
   deleteComment,
   listAttachments,
   listComments,
+  listTaskActivities,
   uploadAttachment,
   uploadCommentAttachment,
   updateComment,
@@ -23,11 +24,11 @@ import type {
   IssueRelationType,
   Recurrence,
   Task,
+  TaskChangeActivity,
   TaskDraft,
   TaskPriority,
   TaskRelationSummary,
   TaskStatus,
-  WorkflowOption,
 } from "../types";
 import {
   CODEX_AGENT_ACTOR,
@@ -35,9 +36,10 @@ import {
   assigneeTargetForActor,
 } from "../actors";
 import { ActorAvatar } from "./ActorAvatar";
-import { STATUS_DETAILS } from "./BoardColumn";
+import { STATUS_DETAILS, StatusIcon } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
-import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
+import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
+import { TaskboardIcon } from "./TaskboardIcon";
 import {
   fileKey,
   MAX_ATTACHMENT_SIZE,
@@ -59,6 +61,10 @@ import {
   IssueSubIssues,
   type RelationMutationResult,
 } from "./IssueRelations";
+import { TaskPropertyPicker } from "./TaskPropertyPicker";
+import { buildIssueUrl } from "../issueRoute";
+import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
+import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
 
 const PRIORITY_DETAILS: Record<TaskPriority, { label: string; bars: number }> = {
   none: { label: "无优先级", bars: 0 },
@@ -73,7 +79,6 @@ interface TaskDetailProps {
   tasks: Task[];
   currentUser: ActorIdentity;
   availableLabels: string[];
-  workflows: WorkflowOption[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
   commentsRevision: number;
@@ -92,9 +97,9 @@ interface TaskDetailProps {
   ) => Promise<RelationMutationResult>;
   onOpenThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
+  onCopy: (text: string, announcement: string) => void;
   openingThread: boolean;
   onError: (message: string | null) => void;
-  onAnnounce: (message: string) => void;
 }
 
 function messageFor(error: unknown): string {
@@ -145,6 +150,103 @@ function contextLabel(context: DevelopmentContext): string {
   return `${context.branch ?? "detached"} · ${folder}`;
 }
 
+const ACTIVITY_FIELD_LABELS: Record<string, string> = {
+  projectId: "项目",
+  title: "标题",
+  description: "描述",
+  status: "状态",
+  priority: "优先级",
+  labels: "标签",
+  assignee: "负责人",
+  workflowId: "工作流",
+  developmentContext: "开发上下文",
+  startDate: "开始日期",
+  dueDate: "截止日期",
+  recurrence: "重复",
+  archivedAt: "归档状态",
+  relation: "关系",
+};
+
+const RELATION_LABELS: Record<IssueRelationType, string> = {
+  parent: "父议题",
+  blocks: "阻塞",
+  blocked_by: "阻塞于",
+  related: "相关议题",
+};
+
+function activityValue(field: string, value: unknown): string {
+  if (field === "archivedAt") {
+    return typeof value === "string" ? `已归档（${exactTime(value)}）` : "未归档";
+  }
+  if (value === null || value === "") return "未设置";
+  if (field === "status" && typeof value === "string" && value in STATUS_DETAILS) {
+    return STATUS_DETAILS[value as TaskStatus].label;
+  }
+  if (field === "priority" && typeof value === "string" && value in PRIORITY_DETAILS) {
+    return PRIORITY_DETAILS[value as TaskPriority].label;
+  }
+  if (field === "labels" && Array.isArray(value)) {
+    return value.length > 0 ? value.join("、") : "无标签";
+  }
+  if (field === "assignee" && typeof value === "object") {
+    const actor = value as ActorIdentity;
+    return `${actor.name} @${actor.id}`;
+  }
+  if (field === "developmentContext" && typeof value === "object") {
+    const context = value as { type: string; branch?: string | null; path?: string | null };
+    if (context.type === "branch") return context.branch ?? "未设置";
+    const folder = context.path?.split(/[\\/]/).filter(Boolean).at(-1);
+    return `${context.branch ?? "detached"}${folder ? ` · ${folder}` : ""}`;
+  }
+  if (field === "recurrence" && typeof value === "object") {
+    const recurrence = value as Recurrence;
+    const units: Record<Recurrence["unit"], string> = {
+      day: "天",
+      week: "周",
+      month: "月",
+      year: "年",
+    };
+    return recurrence.interval === 1
+      ? `每${units[recurrence.unit]}`
+      : `每 ${recurrence.interval} ${units[recurrence.unit]}`;
+  }
+  if (field === "relation" && typeof value === "object") {
+    const relation = value as { type: IssueRelationType; identifier: string; title: string };
+    return `${RELATION_LABELS[relation.type]} ${relation.identifier} · ${relation.title}`;
+  }
+  if (Array.isArray(value)) return value.join("、");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function ActivityChangeIcon({ field, before, after }: {
+  field: string;
+  before: unknown;
+  after: unknown;
+}) {
+  const value = after ?? before;
+  if (field === "status" && typeof value === "string" && value in STATUS_DETAILS) {
+    return <StatusIcon status={value as TaskStatus} />;
+  }
+  if (field === "priority" && typeof value === "string" && value in PRIORITY_DETAILS) {
+    return <LinearPriorityIcon priority={value as TaskPriority} />;
+  }
+  if (field === "relation" && typeof value === "object") {
+    const relation = value as { type?: IssueRelationType };
+    if (relation.type === "blocked_by") return <TaskboardIcon name="relationBlockedBy" />;
+    if (relation.type === "blocks") return <TaskboardIcon name="relationBlocks" />;
+    return <LinearIcon name="link" />;
+  }
+  if (field === "projectId" || field === "workflowId") return <LinearIcon name="project" />;
+  if (field === "labels") return <LinearIcon name="label" />;
+  if (field === "assignee") return <LinearIcon name="myIssues" />;
+  if (field === "developmentContext") return <LinearIcon name="branch" />;
+  if (field === "startDate" || field === "dueDate") return <LinearIcon name="calendar" />;
+  if (field === "recurrence") return <LinearIcon name="recurrence" />;
+  if (field === "archivedAt") return <LinearIcon name="trash" />;
+  return <LinearIcon name="write" />;
+}
+
 function DescriptionDocument({ value }: { value: string }) {
   return (
     <div className="issue-description-document">
@@ -174,7 +276,7 @@ function ConversationLink({
       title={`查看对话 ${threadId}`}
       onClick={() => onOpen(threadId)}
     >
-      <LinearIcon name="conversation" />
+      <TaskboardIcon name="conversation" />
       <strong>查看对话</strong>
       <span className="conversation-divider" aria-hidden="true" />
       <span className="conversation-thread-id">{threadId}</span>
@@ -187,7 +289,6 @@ export function TaskDetail({
   tasks,
   currentUser,
   availableLabels,
-  workflows,
   developmentScan,
   developmentScanLoading,
   commentsRevision,
@@ -198,15 +299,18 @@ export function TaskDetail({
   onRemoveRelation,
   onOpenThread,
   onOpenInThread,
+  onCopy,
   openingThread,
   onError,
-  onAnnounce,
 }: TaskDetailProps) {
   const [currentTask, setCurrentTask] = useState(task);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
+  const [descriptionSegments, setDescriptionSegments] = useState<InlineMediaSegment[]>(
+    () => createInlineMediaSegments(task.description),
+  );
   const [editingDescription, setEditingDescription] = useState(false);
-  const [labelMenuOpen, setLabelMenuOpen] = useState(false);
+  const [propertyMenu, setPropertyMenu] = useState<"status" | "priority" | "assignee" | "labels" | null>(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(true);
@@ -215,6 +319,7 @@ export function TaskDetail({
   const [pendingAttachmentDelete, setPendingAttachmentDelete] = useState<Attachment | null>(null);
   const [deletingAttachment, setDeletingAttachment] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [taskActivities, setTaskActivities] = useState<TaskChangeActivity[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [commentSegments, setCommentSegments] = useState<InlineMediaSegment[]>(
@@ -231,40 +336,46 @@ export function TaskDetail({
   const [pendingDelete, setPendingDelete] = useState<Comment | null>(null);
   const [deleting, setDeleting] = useState(false);
   const titleRef = useRef<HTMLTextAreaElement>(null);
-  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
   const composerRef = useRef<InlineMediaComposerHandle>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
-  const workflowAvailable = !currentTask.workflowId
-    || workflows.some((workflow) => workflow.id === currentTask.workflowId);
   const draft = serializeInlineMedia(commentSegments);
   const commentInlineImages = inlineMediaImages(commentSegments);
 
   useEffect(() => {
+    const taskChanged = currentTask.id !== task.id;
     setCurrentTask(task);
     if (document.activeElement !== titleRef.current) setTitle(task.title);
-    if (document.activeElement !== descriptionRef.current) setDescription(task.description);
+    if (taskChanged || !editingDescription) {
+      setDescription(task.description);
+      setDescriptionSegments(createInlineMediaSegments(task.description));
+    }
+    if (taskChanged) setEditingDescription(false);
   }, [task]);
 
   useEffect(() => {
     resizeTextarea(titleRef.current);
-    resizeTextarea(descriptionRef.current);
-  }, [title, description, editingDescription]);
+  }, [title]);
 
   useEffect(() => {
     if (!editingDescription) return;
     requestAnimationFrame(() => {
-      descriptionRef.current?.focus();
-      resizeTextarea(descriptionRef.current);
+      descriptionComposerRef.current?.focus();
     });
   }, [editingDescription]);
 
   useEffect(() => {
     const controller = new AbortController();
+    setCommentsLoading(true);
     setCommentsError(null);
-    void listComments(task.id, controller.signal).then(
-      (nextComments) => {
+    void Promise.all([
+      listComments(task.id, controller.signal),
+      listTaskActivities(task.id, controller.signal),
+    ]).then(
+      ([nextComments, nextActivities]) => {
         setComments(nextComments);
+        setTaskActivities(nextActivities);
         setCommentsLoading(false);
       },
       (error) => {
@@ -274,7 +385,7 @@ export function TaskDetail({
       },
     );
     return () => controller.abort();
-  }, [commentsRevision, task.id]);
+  }, [commentsRevision, task.activityKey, task.id]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -338,7 +449,6 @@ export function TaskDetail({
       setCurrentTask(saved);
       setTitle(saved.title);
       setDescription(saved.description);
-      onAnnounce(`${saved.identifier} 已更新。`);
       return saved;
     } catch (error) {
       onError(messageFor(error));
@@ -395,9 +505,39 @@ export function TaskDetail({
   }
 
   async function saveDescription() {
-    const normalized = description.trim();
-    if (normalized === currentTask.description) return;
-    await saveTask({ description: normalized }, "description");
+    if (savingProperty === "description") return;
+    const draftDescription = serializeInlineMedia(descriptionSegments).trim();
+    const inlineImages = inlineMediaImages(descriptionSegments);
+    if (draftDescription === currentTask.description && inlineImages.length === 0) {
+      setEditingDescription(false);
+      return;
+    }
+
+    setSavingProperty("description");
+    onError(null);
+    try {
+      const uploaded = await Promise.all(
+        inlineImages.map((image) => uploadAttachment(currentTask.id, image.file)),
+      );
+      const resolvedDescription = resolveInlineMediaMarkdown(
+        draftDescription,
+        inlineImages,
+        uploaded,
+      ).trim();
+      const saved = await onUpdate(currentTask, { description: resolvedDescription });
+      setCurrentTask(saved);
+      setDescription(saved.description);
+      setDescriptionSegments(createInlineMediaSegments(saved.description));
+      setAttachments((current) => [
+        ...current,
+        ...uploaded.filter((attachment) => !current.some((item) => item.id === attachment.id)),
+      ]);
+      setEditingDescription(false);
+    } catch (error) {
+      onError(messageFor(error));
+    } finally {
+      setSavingProperty(null);
+    }
   }
 
   async function submitComment() {
@@ -428,11 +568,6 @@ export function TaskDetail({
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       const failed = results.length - uploaded.length;
       if (failed > 0) setCommentsError(`评论已发布，但有 ${failed} 个附件上传失败。`);
-      else onAnnounce(
-        uploaded.length + inlineAttachments.length > 0
-          ? "评论和附件已发布。"
-          : "评论已发布。",
-      );
       requestAnimationFrame(() => composerRef.current?.focus());
     } catch (error) {
       setCommentsError(messageFor(error));
@@ -481,7 +616,6 @@ export function TaskDetail({
       const updated = await updateComment(comment, body);
       setComments((current) => current.map((item) => item.id === updated.id ? updated : item));
       setEditingId(null);
-      onAnnounce("评论已更新。");
     } catch (error) {
       setCommentsError(messageFor(error));
     } finally {
@@ -497,7 +631,6 @@ export function TaskDetail({
       await deleteComment(pendingDelete);
       setComments((current) => current.filter((comment) => comment.id !== pendingDelete.id));
       setPendingDelete(null);
-      onAnnounce("评论已删除。");
     } catch (error) {
       setCommentsError(messageFor(error));
     } finally {
@@ -517,16 +650,13 @@ export function TaskDetail({
 
     setUploadingAttachments(true);
     setAttachmentsError(null);
-    let uploaded = 0;
     try {
       for (const file of selected) {
         const attachment = await uploadAttachment(task.id, file);
         setAttachments((current) => current.some((item) => item.id === attachment.id)
           ? current
           : [...current, attachment]);
-        uploaded += 1;
       }
-      onAnnounce(uploaded === 1 ? "附件已上传。" : `${uploaded} 个附件已上传。`);
     } catch (error) {
       setAttachmentsError(messageFor(error));
     } finally {
@@ -547,7 +677,6 @@ export function TaskDetail({
         attachments: comment.attachments.filter((attachment) => attachment.id !== pendingAttachmentDelete.id),
       })));
       setPendingAttachmentDelete(null);
-      onAnnounce("附件已删除。");
     } catch (error) {
       setAttachmentsError(messageFor(error));
     } finally {
@@ -569,6 +698,23 @@ export function TaskDetail({
   const visibleTaskAttachments = attachments.filter(
     (attachment) => !description.includes(attachmentContentUrl(attachment)),
   );
+  const activityTimeline = [
+    ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
+      kind: "change" as const,
+      id: `${activity.id}-${index}`,
+      createdAt: activity.createdAt,
+      activity,
+      change,
+    }))),
+    ...comments.map((comment) => ({
+      kind: "comment" as const,
+      id: comment.id,
+      createdAt: comment.createdAt,
+      comment,
+    })),
+  ].sort((left, right) => (
+    left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+  ));
 
   return (
     <section className="issue-detail" aria-label={`${task.identifier} 议题详情`}>
@@ -603,39 +749,44 @@ export function TaskDetail({
                   )}
                 />
                 {editingDescription ? (
-                  <textarea
-                    ref={descriptionRef}
-                    className="issue-description-input"
-                    rows={1}
-                    value={description}
-                    aria-label="议题描述"
-                    placeholder="添加描述…"
-                    disabled={savingProperty === "description"}
-                    onChange={(event) => {
-                      setDescription(event.target.value);
-                      resizeTextarea(event.currentTarget);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        setDescription(currentTask.description);
-                        setEditingDescription(false);
-                      }
-                    }}
-                    onBlur={() => {
-                      setEditingDescription(false);
+                  <div
+                    className="issue-description-composer"
+                    onBlur={(event) => {
+                      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                       void saveDescription();
                     }}
-                  />
+                  >
+                    <InlineMediaComposer
+                      ref={descriptionComposerRef}
+                      segments={descriptionSegments}
+                      placeholder="添加描述…"
+                      ariaLabel="议题描述"
+                      disabled={savingProperty === "description"}
+                      onChange={setDescriptionSegments}
+                      onError={onError}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setDescriptionSegments(createInlineMediaSegments(currentTask.description));
+                          setEditingDescription(false);
+                        }
+                      }}
+                    />
+                  </div>
                 ) : (
                   <div
                     className={`issue-description-read${description ? "" : " empty"}`}
                     role="button"
                     tabIndex={0}
                     aria-label="编辑议题描述"
-                    onClick={() => setEditingDescription(true)}
+                    onClick={() => {
+                      setDescriptionSegments(createInlineMediaSegments(description));
+                      setEditingDescription(true);
+                    }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
+                        setDescriptionSegments(createInlineMediaSegments(description));
                         setEditingDescription(true);
                       }
                     }}
@@ -740,31 +891,70 @@ export function TaskDetail({
             <section className="activity-section" aria-labelledby="activity-heading">
               <header className="activity-heading">
                 <h2 id="activity-heading">活动</h2>
-                <span>{comments.length}</span>
+                <span>{activityTimeline.length}</span>
               </header>
 
               <div className="activity-stream">
                 <div className={`activity-entry activity-created is-${currentTask.creatorType}`}>
-                  <ActorAvatar
-                    className="comment-avatar"
-                    actor={{
-                      type: currentTask.creatorType,
-                      id: currentTask.creatorId,
-                      name: currentTask.creatorName,
-                      avatarUrl: currentTask.creatorAvatarUrl,
-                    }}
-                  />
+                  <span className="activity-rail-icon activity-creator-icon" aria-hidden="true">
+                    <ActorAvatar
+                      className="comment-avatar"
+                      actor={{
+                        type: currentTask.creatorType,
+                        id: currentTask.creatorId,
+                        name: currentTask.creatorName,
+                        avatarUrl: currentTask.creatorAvatarUrl,
+                      }}
+                    />
+                  </span>
                   <p>
                     <strong>{currentTask.creatorName}</strong>
-                    <span className="actor-id">@{currentTask.creatorId}</span>
-                    创建了此议题
+                    {" "}创建了此议题
                     <time title={exactTime(currentTask.createdAt)}>{relativeTime(currentTask.createdAt)}</time>
                   </p>
                 </div>
 
                 {commentsLoading ? (
-                  <div className="comments-loading" aria-label="正在加载评论" aria-busy="true"><i /><i /></div>
-                ) : comments.map((comment) => (
+                  <div className="comments-loading" aria-label="正在加载活动" aria-busy="true"><i /><i /></div>
+                ) : activityTimeline.map((item) => {
+                  if (item.kind === "change") {
+                    const { activity, change } = item;
+                    return (
+                      <article
+                        className={`activity-entry activity-change is-${activity.actorType}`}
+                        key={item.id}
+                      >
+                        <span className="activity-rail-icon" aria-hidden="true">
+                          <ActivityChangeIcon
+                            field={change.field}
+                            before={change.before}
+                            after={change.after}
+                          />
+                        </span>
+                        <p>
+                          <strong>{activity.actorName}</strong>
+                          {" "}
+                          {change.field === "description" ? (
+                            <>更新了描述</>
+                          ) : change.field === "relation" && change.before === null ? (
+                            <>添加了 <span className="activity-change-value">{activityValue(change.field, change.after)}</span></>
+                          ) : change.field === "relation" && change.after === null ? (
+                            <>移除了 <span className="activity-change-value">{activityValue(change.field, change.before)}</span></>
+                          ) : (
+                            <>
+                              将{ACTIVITY_FIELD_LABELS[change.field] ?? change.field}从
+                              <span className="activity-change-value">{activityValue(change.field, change.before)}</span>
+                              改为
+                              <span className="activity-change-value">{activityValue(change.field, change.after)}</span>
+                            </>
+                          )}
+                          <time title={exactTime(activity.createdAt)}>{relativeTime(activity.createdAt)}</time>
+                        </p>
+                      </article>
+                    );
+                  }
+                  const comment = item.comment;
+                  return (
                   <article
                     className={`comment-entry is-${comment.authorType}`}
                     key={comment.id}
@@ -820,22 +1010,27 @@ export function TaskDetail({
 
                       {editingId === comment.id ? (
                         <div className="comment-edit-form">
-                          <textarea
-                            className="comment-input"
-                            autoFocus
-                            value={editingBody}
-                            rows={3}
-                            aria-label="编辑评论"
-                            onChange={(event) => setEditingBody(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Escape") setEditingId(null);
-                              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                                event.preventDefault();
-                                void saveComment(comment);
-                              }
-                            }}
-                          />
-                          <div>
+                          <div className="inline-media-composer comment-inline-media">
+                            <textarea
+                              ref={resizeTextarea}
+                              autoFocus
+                              value={editingBody}
+                              rows={1}
+                              aria-label="编辑评论"
+                              onChange={(event) => {
+                                setEditingBody(event.target.value);
+                                resizeTextarea(event.currentTarget);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") setEditingId(null);
+                                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                                  event.preventDefault();
+                                  void saveComment(comment);
+                                }
+                              }}
+                            />
+                          </div>
+                          <div className="comment-edit-actions">
                             <button className="button secondary" type="button" onClick={() => setEditingId(null)}>取消</button>
                             <button
                               className="button primary"
@@ -888,7 +1083,8 @@ export function TaskDetail({
                       )}
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
 
               {commentsError && <div className="comments-error" role="alert">{commentsError}</div>}
@@ -963,64 +1159,105 @@ export function TaskDetail({
           </div>
 
           <aside className="issue-properties" aria-label="议题属性">
-            <button
-              className="detail-open-thread-action"
-              type="button"
-              disabled={openingThread}
-              onClick={() => onOpenInThread(currentTask)}
-            >
-              <LinearIcon name="conversation" />
-              <span>{openingThread ? "正在打开…" : "在对话中打开"}</span>
-            </button>
+            <div className="detail-primary-actions">
+              <button
+                className="detail-open-thread-action"
+                type="button"
+                disabled={openingThread}
+                onClick={() => onOpenInThread(currentTask)}
+              >
+                <ActorAvatar actor={CODEX_AGENT_ACTOR} className="detail-thread-avatar" />
+                <span>{openingThread ? "正在打开…" : "在对话中打开"}</span>
+              </button>
+              <button
+                className="detail-copy-action"
+                type="button"
+                title={`复制议题 ID ${currentTask.identifier}`}
+                onClick={() => onCopy(currentTask.identifier, `${currentTask.identifier} 已复制。`)}
+              >
+                <span className="detail-copy-action-icon" aria-hidden="true"><img src={copyIdIcon} alt="" /></span>
+                <span className="detail-copy-action-label">复制 ID</span>
+                <span className="detail-copy-identifier">{currentTask.identifier}</span>
+              </button>
+              <button
+                className="detail-copy-action"
+                type="button"
+                onClick={() => onCopy(
+                  buildIssueUrl(
+                    window.location.href,
+                    currentTask.projectId,
+                    currentTask.identifier,
+                  ).href,
+                  "议题链接已复制。",
+                )}
+              >
+                <span className="detail-copy-action-icon" aria-hidden="true"><img src={copyLinkIcon} alt="" /></span>
+                <span className="detail-copy-action-label">复制链接</span>
+              </button>
+            </div>
             <h2>属性</h2>
-            <label className="detail-property-row">
-              <span className={`detail-property-icon status-icon-${STATUS_DETAILS[currentTask.status].tone}`}><LinearStatusIcon status={currentTask.status} /></span>
+            <div className="detail-property-row">
               <span className="detail-property-label">状态</span>
-              <select
+              <TaskPropertyPicker
                 value={currentTask.status}
+                options={TASK_STATUSES.map((status) => ({
+                  value: status,
+                  label: STATUS_DETAILS[status].label,
+                  icon: <StatusIcon status={status} />,
+                  className: `status-icon-${STATUS_DETAILS[status].tone}`,
+                }))}
+                open={propertyMenu === "status"}
                 disabled={savingProperty === "status"}
-                onChange={(event) => void saveTask({ status: event.target.value as TaskStatus }, "status")}
-              >
-                {TASK_STATUSES.map((status) => (
-                  <option value={status} key={status}>{STATUS_DETAILS[status].label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="detail-property-row">
-              <span className="detail-property-icon"><LinearPriorityIcon priority={currentTask.priority} /></span>
+                className="detail-property-picker"
+                triggerClassName="detail-property-trigger"
+                ariaLabel="状态"
+                onOpenChange={(open) => setPropertyMenu(open ? "status" : null)}
+                onChange={(status) => void saveTask({ status }, "status")}
+              />
+            </div>
+            <div className="detail-property-row">
               <span className="detail-property-label">优先级</span>
-              <select
+              <TaskPropertyPicker
                 value={currentTask.priority}
+                options={(Object.keys(PRIORITY_DETAILS) as TaskPriority[]).map((priority) => ({
+                  value: priority,
+                  label: PRIORITY_DETAILS[priority].label,
+                  icon: <LinearPriorityIcon priority={priority} />,
+                  className: `priority-${priority}`,
+                }))}
+                open={propertyMenu === "priority"}
                 disabled={savingProperty === "priority"}
-                onChange={(event) => void saveTask({ priority: event.target.value as TaskPriority }, "priority")}
-              >
-                {(Object.keys(PRIORITY_DETAILS) as TaskPriority[]).map((priority) => (
-                  <option value={priority} key={priority}>{PRIORITY_DETAILS[priority].label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="detail-property-row assignee-property">
-              <ActorAvatar actor={currentTask.assignee} className="detail-assignee-avatar" />
+                className="detail-property-picker"
+                triggerClassName="detail-property-trigger"
+                ariaLabel="优先级"
+                onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
+                onChange={(priority) => void saveTask({ priority }, "priority")}
+              />
+            </div>
+            <div className="detail-property-row assignee-property">
               <span className="detail-property-label">负责人</span>
-              <select
-                aria-label="负责人"
+              <TaskPropertyPicker
                 value={actorKey(currentTask.assignee)}
+                options={assigneeOptions.map((actor) => ({
+                  value: actorKey(actor),
+                  label: actor.id === currentUser.id ? `${actor.name}（我）` : actor.name,
+                  icon: <ActorAvatar actor={actor} className="task-property-assignee-avatar" />,
+                }))}
+                open={propertyMenu === "assignee"}
                 disabled={savingProperty === "assignee"}
-                onChange={(event) => {
-                  const selected = assigneeOptions.find((actor) => actorKey(actor) === event.target.value);
+                className="detail-property-picker"
+                triggerClassName="detail-property-trigger"
+                ariaLabel="负责人"
+                onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
+                onChange={(value) => {
+                  const selected = assigneeOptions.find((actor) => actorKey(actor) === value);
                   const assigneeTarget = selected
                     ? assigneeTargetForActor(selected, currentUser)
                     : undefined;
-                  if (assigneeTarget) void saveTask({ assigneeTarget: assigneeTarget }, "assignee");
+                  if (assigneeTarget) void saveTask({ assigneeTarget }, "assignee");
                 }}
-              >
-                {assigneeOptions.map((actor) => (
-                  <option value={actorKey(actor)} key={actorKey(actor)}>
-                    {actor.id === currentUser.id ? `${actor.name}（我）` : actor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
             <div className="detail-property-row labels-property">
               <span className="detail-property-icon" aria-hidden="true">
                 <LinearIcon name="label" />
@@ -1029,36 +1266,16 @@ export function TaskDetail({
               <LabelPicker
                 availableLabels={availableLabels}
                 selectedLabels={currentTask.labels}
-                open={labelMenuOpen}
+                open={propertyMenu === "labels"}
                 disabled={savingProperty === "labels"}
                 className="detail-label-picker"
                 triggerClassName="detail-label-trigger"
+                showSelectedAsChips
                 placeholder="添加标签…"
-                onOpenChange={setLabelMenuOpen}
+                onOpenChange={(open) => setPropertyMenu(open ? "labels" : null)}
                 onChange={(nextLabels) => void saveTask({ labels: nextLabels }, "labels")}
               />
             </div>
-            <label className="detail-property-row workflow-property">
-              <span className="detail-property-icon" aria-hidden="true">
-                <LinearIcon name="dashboard" />
-              </span>
-              <span className="detail-property-label">工作流</span>
-              <select
-                value={currentTask.workflowId ?? ""}
-                disabled={savingProperty === "workflowId"}
-                onChange={(event) => void saveTask({
-                  workflowId: event.target.value || null,
-                }, "workflowId")}
-              >
-                <option value="">未绑定</option>
-                {!workflowAvailable && currentTask.workflowId && (
-                  <option value={currentTask.workflowId}>当前设备未找到此流程</option>
-                )}
-                {workflows.map((workflow) => (
-                  <option value={workflow.id} key={workflow.id}>{workflow.name}</option>
-                ))}
-              </select>
-            </label>
             <label className="detail-property-row development-property">
               <span className="detail-property-icon" aria-hidden="true">
                 <LinearIcon name="branch" />
@@ -1084,6 +1301,18 @@ export function TaskDetail({
                   ))}
                 </optgroup>
               </select>
+            </label>
+            <label className="detail-property-row">
+              <span className="detail-property-icon" aria-hidden="true"><LinearIcon name="calendar" /></span>
+              <span className="detail-property-label">开始日期</span>
+              <input
+                type="date"
+                value={currentTask.startDate ?? ""}
+                disabled={savingProperty === "startDate"}
+                onChange={(event) => void saveTask({
+                  startDate: event.target.value || null,
+                }, "startDate")}
+              />
             </label>
             <label className="detail-property-row">
               <span className="detail-property-icon" aria-hidden="true"><LinearIcon name="calendar" /></span>

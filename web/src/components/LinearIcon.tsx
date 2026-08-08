@@ -212,5 +212,5 @@ export function LinearPriorityIcon({ priority, style, ...props }: { priority: Ta
     content = <><rect x="1.5" y="8" width="3" height="6" rx="1" /><rect x="6.5" y="5" width="3" height="9" rx="1" fillOpacity={priority === "low" ? .4 : 1} /><rect x="11.5" y="2" width="3" height="12" rx="1" fillOpacity={priority === "high" ? 1 : .4} /></>;
   }
 
-  return <svg data-linear-icon={`priority-${priority}`} viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" focusable="false" aria-hidden="true" style={{ fill: "currentColor", stroke: "none", ...style }} {...props}>{content}</svg>;
+  return <svg data-linear-icon={`priority-${priority}`} viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" focusable="false" aria-hidden="true" style={{ color: `var(--priority-${priority})`, fill: "currentColor", stroke: "none", ...style }} {...props}>{content}</svg>;
 }

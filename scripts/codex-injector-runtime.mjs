@@ -36,14 +36,6 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && typeof request.instruction === "string"
     && request.instruction.length > 0
     && request.instruction.length <= 1_024
-    && typeof request.skillName === "string"
-    && /^[a-z0-9][a-z0-9-]{0,79}$/i.test(request.skillName)
-    && typeof request.skillDisplayName === "string"
-    && request.skillDisplayName.length > 0
-    && request.skillDisplayName.length <= 120
-    && typeof request.skillPath === "string"
-    && request.skillPath.length > 0
-    && request.skillPath.length <= 1_024
   ) {
     return { id, request, error: null };
   }

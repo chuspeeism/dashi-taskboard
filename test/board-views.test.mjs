@@ -16,24 +16,32 @@ const serverSource = await readFile(new URL("../server/app.mjs", import.meta.url
 const styles = await readFile(new URL("../web/src/components/workflow.css", import.meta.url), "utf8");
 const globalStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 
-test("the taskboard defaults to issues and exposes issue and node mode tabs", () => {
-  assert.match(appSource, /type BoardView = "issues" \| "workflow"/);
-  assert.match(appSource, /useState<BoardView>\("issues"\)/);
+test("the taskboard defaults to issues and exposes the current project views", () => {
+  assert.match(appSource, /type BoardView = "dashboard" \| "issues" \| "list" \| "gantt" \| "workflow"/);
+  assert.match(
+    appSource,
+    /function readProjectBoardView\(projectId: string\): BoardView \{\s*const view = [^;]+;\s*return [\s\S]*?\? view\s*: "issues";\s*\}/,
+  );
+  assert.match(appSource, /useState<BoardView>\(\(\) => readProjectBoardView\(initialProjectId\)\)/);
+  assert.match(appSource, />\s*Dashboard\s*<\/button>/);
   assert.match(appSource, />\s*议题看板\s*<\/button>/);
-  assert.match(appSource, />\s*节点模式\s*<\/button>/);
+  assert.match(appSource, />\s*列表视图\s*<\/button>/);
+  assert.match(appSource, />\s*甘特图\s*<\/button>/);
   assert.match(appSource, /aria-pressed=\{boardView === "issues"\}/);
-  assert.match(appSource, /aria-pressed=\{boardView === "workflow"\}/);
   assert.match(appSource, /onClick=\{\(\) => selectBoardView\("issues"\)\}/);
-  assert.match(appSource, /onClick=\{\(\) => selectBoardView\("workflow"\)\}/);
-  assert.match(appSource, /function changeProject[\s\S]*?setBoardView\("issues"\)/);
+  assert.match(appSource, /const SHOW_WORKFLOW_BOARD_ENTRY = false/);
+  assert.match(appSource, /SHOW_WORKFLOW_BOARD_ENTRY && \([\s\S]*?>\s*节点模式\s*<\/button>/);
+  assert.match(appSource, /function changeProject[\s\S]*?setBoardView\(readProjectBoardView\(projectId\)\)/);
   assert.doesNotMatch(appSource, /<span>活跃<\/span>|<span>积压事项<\/span>|所有议题|add-view/);
 });
 
-test("node mode lazy-loads WorkflowBoard while issue-only controls remain isolated", () => {
+test("secondary views lazy-load while issue controls remain isolated", () => {
   assert.match(appSource, /lazy\(\(\) => import\("\.\/components\/WorkflowBoard"\)/);
-  assert.match(appSource, /boardView === "issues" && <div className="toolbar-tools">/);
+  assert.match(appSource, /lazy\(\(\) => import\("\.\/components\/GanttView"\)/);
+  assert.match(appSource, /\(boardView === "issues" \|\| boardView === "list" \|\| boardView === "gantt"\) && <div className="toolbar-tools">/);
+  assert.match(appSource, /boardView === "issues" && \([\s\S]*?className=\{`other-tasks-trigger/);
   assert.match(appSource, /boardView === "workflow" \? \([\s\S]*?<Suspense[\s\S]*?<WorkflowBoard/);
-  assert.match(appSource, /projectId=\{selectedProject\?\.id \?\? "local"\}/);
+  assert.match(appSource, /projectId=\{selectedProject\?\.id \?\? GLOBAL_PROJECT_ID\}/);
   assert.match(appSource, /onWorkflowsChange=\{setWorkflowOptions\}/);
   assert.match(workflowSource, /export function WorkflowBoard\(/);
   assert.match(workflowSource, /from "@xyflow\/react"/);

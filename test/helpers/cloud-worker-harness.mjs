@@ -7,28 +7,11 @@ import { Miniflare } from "miniflare";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ENTRY_PATH = path.join(PROJECT_ROOT, "cloud", "src", "index.mjs");
-const MIGRATIONS_DIRECTORY = path.join(PROJECT_ROOT, "cloud", "migrations");
-
-async function migrationPaths() {
-  const entries = await readdir(MIGRATIONS_DIRECTORY);
-  const paths = entries
-    .filter((entry) => entry.endsWith(".sql"))
-    .sort()
-    .map((entry) => path.join(MIGRATIONS_DIRECTORY, entry));
-  if (paths.length === 0) throw new Error("Cloud implementation has no D1 migrations");
-  return paths;
-}
+const MIGRATIONS_PATH = path.join(PROJECT_ROOT, "cloud", "migrations");
 
 async function requireCloudImplementation() {
   const missing = [];
-  let migrations = [];
-  try {
-    migrations = await migrationPaths();
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    missing.push(path.relative(PROJECT_ROOT, MIGRATIONS_DIRECTORY));
-  }
-  for (const filename of [ENTRY_PATH, ...migrations]) {
+  for (const filename of [ENTRY_PATH, MIGRATIONS_PATH]) {
     try {
       await access(filename);
     } catch (error) {
@@ -39,13 +22,12 @@ async function requireCloudImplementation() {
   if (missing.length > 0) {
     throw new Error(`Cloud implementation is missing:\n${missing.join("\n")}`);
   }
-  return migrations;
 }
 
 export async function createCloudWorkerHarness({
   sharedSecret = "two-person-shared-secret",
 } = {}) {
-  const migrations = await requireCloudImplementation();
+  await requireCloudImplementation();
   const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-worker-"));
   const miniflare = new Miniflare({
     modules: true,
@@ -66,8 +48,28 @@ export async function createCloudWorkerHarness({
   try {
     await miniflare.ready;
     const db = await miniflare.getD1Database("DB");
+    const migrations = (await readdir(MIGRATIONS_PATH))
+      .filter((filename) => /^\d+.*\.sql$/.test(filename))
+      .sort();
     for (const migration of migrations) {
-      await db.exec(await readFile(migration, "utf8"));
+      const statements = [];
+      let current = [];
+      let trigger = false;
+      for (const sourceLine of (await readFile(
+        path.join(MIGRATIONS_PATH, migration),
+        "utf8",
+      )).split(/\r?\n/)) {
+        const line = sourceLine.trim();
+        if (line === "") continue;
+        if (current.length === 0) trigger = /^CREATE\s+TRIGGER\b/i.test(line);
+        current.push(line);
+        if ((trigger ? /\bEND;$/i : /;$/).test(line)) {
+          statements.push(current.join(" "));
+          current = [];
+          trigger = false;
+        }
+      }
+      await db.exec(statements.join("\n"));
     }
     const attachments = await miniflare.getR2Bucket("ATTACHMENTS");
 

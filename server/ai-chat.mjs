@@ -52,6 +52,21 @@ export class AiChatService {
     this.manageTaskboardSkillPath = options.manageTaskboardSkillPath;
     this.processEnv = options.processEnv ?? process.env;
     this.killGraceMs = options.killGraceMs ?? 1_000;
+    this.resolveContext = options.resolveContext ?? (async (projectId, issueId) => {
+      const resolved = await resolveAiWorkspace(projectId, this.codexStatePath, this.database);
+      let issue;
+      if (issueId !== undefined) {
+        issue = this.database.getTask(issueId);
+        if (!issue || issue.projectId !== projectId || issue.archivedAt != null) {
+          throw new ApiError(
+            404,
+            "AI_CHAT_ISSUE_NOT_FOUND",
+            `Task '${issueId}' is not an active task in project '${projectId}'`,
+          );
+        }
+      }
+      return { ...resolved, issue };
+    });
     this.active = new Map();
     this.listeners = new Map();
     this.completions = new Map();
@@ -103,38 +118,29 @@ export class AiChatService {
     };
   }
 
-  async getCatalog(projectId) {
+  async #catalogForWorkspace(workspacePath) {
     return discoverAiCatalog({
       codexExecutable: this.codexExecutable,
-      codexStatePath: this.codexStatePath,
-      database: this.database,
-      projectId,
+      workspacePath,
       processEnv: this.processEnv,
     });
   }
 
+  async getCatalog(projectId, resolvedContext) {
+    const resolved = resolvedContext ?? await this.resolveContext(projectId);
+    return this.#catalogForWorkspace(resolved.workspacePath);
+  }
+
   async createThread(input) {
-    const [catalog, resolved] = await Promise.all([
-      this.getCatalog(input.projectId),
-      resolveAiWorkspace(input.projectId, this.codexStatePath, this.database),
-    ]);
+    const resolved = await this.resolveContext(input.projectId, input.issueId);
+    const catalog = await this.getCatalog(input.projectId, resolved);
     const model = this.#resolveModel(catalog, input.model);
     const reasoningEffort = input.reasoningEffort ?? model.defaultReasoningEffort;
     this.#validateReasoningEffort(model, reasoningEffort);
     const sandbox = input.sandbox ?? "workspace-write";
     this.#validateSandbox(sandbox);
 
-    let issue;
-    if (input.issueId !== undefined) {
-      issue = this.database.getTask(input.issueId);
-      if (!issue || issue.projectId !== input.projectId || issue.archivedAt != null) {
-        throw new ApiError(
-          404,
-          "AI_CHAT_ISSUE_NOT_FOUND",
-          `Task '${input.issueId}' is not an active task in project '${input.projectId}'`,
-        );
-      }
-    }
+    const issue = resolved.issue;
 
     return this.database.createAiChatThread({
       title: input.title ?? issue?.identifier ?? "New conversation",
@@ -206,10 +212,11 @@ export class AiChatService {
       );
     }
 
-    const [catalog, resolved] = await Promise.all([
-      this.getCatalog(thread.origin.projectId),
-      resolveAiWorkspace(thread.origin.projectId, this.codexStatePath, this.database),
-    ]);
+    const resolved = await this.resolveContext(
+      thread.origin.projectId,
+      thread.origin.issueId,
+    );
+    const catalog = await this.getCatalog(thread.origin.projectId, resolved);
 
     thread = this.getThread(threadId);
     if (this.#threadIsActive(thread)) {

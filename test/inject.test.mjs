@@ -12,7 +12,7 @@ const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "u
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.8"/);
+  assert.match(source, /const VERSION = "0\.6\.12"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -189,9 +189,13 @@ test("complete App automation payloads cross the injected forwarder into the cur
     workspacePath: "/tmp/local-project",
     skillPath: "/tmp/manage-taskboard/SKILL.md",
     automationId: "automation-1",
+    enabledByUser: true,
+    quotaAware: true,
     intervalMinutes: 10,
     model: "gpt-5.6-sol",
     reasoningEffort: "ultra",
+    enabledByUser: true,
+    quotaAware: false,
   };
 
   for (const operation of ["list", "pause", "ensure-active"]) {
@@ -217,7 +221,7 @@ test("only a loopback Taskboard iframe can request native automation", () => {
   );
 });
 
-test("issues open an unsent native Codex composer in the exact workspace with a Skill mention", () => {
+test("issues open an unsent native Codex composer in the exact workspace with the task instruction", () => {
   assert.match(source, /function createThreadForTask\(payload\)/);
   assert.match(source, /\[data-app-action-sidebar-select-project\]/);
   assert.match(source, /data-codex-composer/);
@@ -226,9 +230,9 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.doesNotMatch(source, /prefillPrompt: prompt/);
   assert.match(source, /requestHostTaskComposerPrefill\(\{/);
   assert.match(source, /requestHost\("prefill-task-composer"/);
-  assert.match(source, /function waitForPreparedComposer\(identifier, skillPath\)/);
-  assert.match(source, /\[skill-mention-name\]/);
-  assert.match(source, /mention\.getAttribute\("skill-mention-path"\) === skillPath/);
+  assert.match(source, /function waitForPreparedComposer\(identifier\)/);
+  assert.match(source, /requestHostTaskComposerPrefill\(\{ instruction \}\)/);
+  assert.match(source, /normalizedLabel\(editor\.textContent\)\.includes\(normalizedLabel\(identifier\)\)/);
   assert.doesNotMatch(source, /submit\.click\(\)/);
   assert.match(source, /type: "taskboard:thread-prepared"/);
   assert.doesNotMatch(source, /function waitForCreatedThread/);
@@ -236,15 +240,10 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.doesNotMatch(webApp, /taskboard:thread-created/);
   assert.match(
     webApp,
-    /const instruction = `e-taskboard Addressing the issues mentioned in \$\{task\.identifier\}`/,
+    /const instruction = `e-taskboard 处理任务面板任务 \$\{task\.identifier\}，并同步进度状态。`/,
   );
-  assert.match(
-    webApp,
-    /const prompt = `\[\$manage-taskboard\]\(\$\{manageTaskboardSkillPath\}\) \$\{instruction\}`/,
-  );
-  assert.match(webApp, /skillName: "manage-taskboard"/);
-  assert.match(webApp, /skillDisplayName: "Manage Taskboard"/);
-  assert.match(webApp, /skillPath: manageTaskboardSkillPath/);
+  assert.doesNotMatch(webApp, /const prompt =/);
+  assert.doesNotMatch(webApp, /skillName: "manage-taskboard"/);
   assert.match(webApp, /instruction,/);
   assert.match(webApp, /type: "taskboard:create-thread"/);
   assert.match(webApp, /type: "taskboard:open-thread", payload: \{ threadId \}/);
@@ -275,7 +274,7 @@ test("host navigation follows Codex's renderer message bus", () => {
 test("the standalone web page opens unlinked issues as prefilled empty Codex tasks", () => {
   assert.match(webApp, /const query = new URLSearchParams\(\)/);
   assert.match(webApp, /query\.set\("path", workspacePath\)/);
-  assert.match(webApp, /query\.set\("prompt", prompt\)/);
+  assert.match(webApp, /query\.set\("prompt", instruction\)/);
   assert.match(webApp, /window\.location\.assign\(`codex:\/\/new\?/);
 });
 
@@ -290,7 +289,8 @@ test("host context captures all Codex projects even when the sidebar section is 
   assert.match(source, /requestHostEnsure\(taskboardUrl\),\s*captureHostContext\(\),/);
   assert.match(source, /let lastNativeThreadId = ""/);
   assert.match(source, /clickedThreadId.*lastNativeThreadId/s);
-  assert.match(source, /activeThreadId \|\| lastNativeThreadId \|\| normalizeThreadId\(threadIdFromLocation\(\)\)/);
+  assert.match(source, /const currentThreadId = activeThreadId \|\| runningThreadId \|\| lastNativeThreadId/);
+  assert.match(source, /const threadId = currentThreadId \|\| lastNativeThreadId \|\| normalizeThreadId\(threadIdFromLocation\(\)\)/);
   assert.match(source, /replace\(\/\^\(\?:local\|cloud\):\/i, ""\)/);
   assert.match(source, /function findTasksSection\(\)/);
 });

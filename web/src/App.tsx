@@ -24,6 +24,9 @@ import {
   archiveTask as archiveTaskRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
+  deleteProject as deleteProjectRequest,
+  getCodexThreadProgress,
+  getHostRuntime,
   getTaskboardRevision,
   getWorkflowWorkspace,
   getTaskboardMetadata,
@@ -32,6 +35,7 @@ import {
   listProjects,
   listTasks,
   moveTask as moveTaskRequest,
+  publishHostRuntime,
   removeTaskRelation,
   restoreTask as restoreTaskRequest,
   setCurrentUserActor,
@@ -39,25 +43,38 @@ import {
   updateTask as updateTaskRequest,
 } from "./api";
 import {
+  actorKey,
   actorForAssigneeTarget,
   assigneeTargetForActor,
 } from "./actors";
 import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
-import { AiChat } from "./components/AiChat";
-import { BoardSettingsMenu } from "./components/BoardSettingsMenu";
-import { HiddenColumns } from "./components/HiddenColumns";
+import { AiChat, type AiChatOpenThreadRequest } from "./components/AiChat";
+import { DashboardView } from "./components/DashboardView";
+import { IssueListView } from "./components/IssueListView";
+import { OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
   resolveInlineMediaMarkdown,
   type PendingInlineImage,
 } from "./components/InlineMediaComposer";
 import { LinearIcon } from "./components/LinearIcon";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { TaskboardIcon } from "./components/TaskboardIcon";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
-import { TaskEditor } from "./components/TaskEditor";
+import { TaskEditor, type NewTaskEditorDraft } from "./components/TaskEditor";
 import { TaskFilterMenu } from "./components/TaskFilterMenu";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
+import {
+  MAIN_STATUSES,
+  type SecondaryTaskStatus,
+} from "./issueBoardStatuses";
 import { DEFAULT_LABELS } from "./labels";
+import {
+  normalizeCodexThreadId,
+  taskCardPresentation,
+  type TaskCardPresentation,
+  type TaskConversationItem,
+} from "./taskConversations";
 import {
   EMPTY_TASK_FILTERS,
   matchesTaskFilters,
@@ -69,6 +86,7 @@ import {
 import {
   TASK_STATUSES,
   type ActorIdentity,
+  type AiChatThread,
   type DevelopmentScan,
   type HostContext,
   type IssueRelationType,
@@ -90,11 +108,16 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
-type BoardView = "issues" | "workflow";
+type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type GanttZoom = "day" | "week" | "month";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
+const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
 
 const WorkflowBoard = lazy(() => import("./components/WorkflowBoard").then((module) => ({
   default: module.WorkflowBoard,
+})));
+const GanttView = lazy(() => import("./components/GanttView").then((module) => ({
+  default: module.GanttView,
 })));
 
 interface EditorState {
@@ -116,6 +139,12 @@ interface ProjectChoice {
   persisted: boolean;
 }
 
+interface ProjectContextMenuState {
+  project: ProjectChoice;
+  x: number;
+  y: number;
+}
+
 interface UndoOperation {
   id: number;
   message: string;
@@ -127,7 +156,6 @@ interface UndoNotice {
   message: string;
 }
 
-type ColumnVisibilityByProject = Record<string, Partial<Record<TaskStatus, boolean>>>;
 type ProjectAutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
 type AutomationIntervalMinutes = 5 | 10 | 15 | 30 | 60;
@@ -191,12 +219,13 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
   avatarUrl: null,
 };
 
-const LAST_PROJECT_KEY = "taskboard.lastProjectId";
-const FAVORITE_PROJECTS_KEY = "taskboard.favoriteProjectIds";
+const GLOBAL_PROJECT_ID = "local";
+const RECENT_PROJECT_IDS_KEY = "taskboard.recentProjectIds.v1";
+const PROJECT_VIEW_KEY_PREFIX = "taskboard.project-view.v1.";
 const DEVICE_WORKSPACE_PATHS_KEY = "taskboard.deviceWorkspacePaths.v1";
-const SHOW_EMPTY_COLUMNS_KEY = "taskboard.showEmptyColumns.v1";
-const COLUMN_VISIBILITY_KEY = "taskboard.columnVisibility.v1";
 const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
+const ISSUE_READ_KEY_PREFIX = "taskboard.issue-read.v1";
+const FIRST_USE_COMPLETE_KEY = "taskboard.first-use-complete.v1";
 const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
@@ -204,6 +233,36 @@ const DEFAULT_AUTOMATION_OPTIONS = {
   model: "gpt-5.5",
   reasoningEffort: "high",
 } as const;
+
+function readIssueActivityKeys(storageKey: string): Record<string, string> {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => (
+      typeof entry[0] === "string" && typeof entry[1] === "string"
+    )));
+  } catch {
+    return {};
+  }
+}
+
+function readProjectBoardView(projectId: string): BoardView {
+  const view = window.localStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
+  return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
+    ? view
+    : "issues";
+}
+
+function readRecentProjectIds(): string[] {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(RECENT_PROJECT_IDS_KEY) ?? "[]");
+    return Array.isArray(value)
+      ? value.filter((projectId): projectId is string => typeof projectId === "string" && projectId.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 const EVENT_NAMES = [
   "task.created",
@@ -233,15 +292,6 @@ function getInitialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function readFavoriteProjectIds(): Set<string> {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(FAVORITE_PROJECTS_KEY) ?? "[]");
-    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-  } catch {
-    return new Set();
-  }
-}
-
 function readDeviceWorkspacePaths(): Record<string, string> {
   try {
     const value = JSON.parse(window.localStorage.getItem(DEVICE_WORKSPACE_PATHS_KEY) ?? "{}");
@@ -252,10 +302,6 @@ function readDeviceWorkspacePaths(): Record<string, string> {
   } catch {
     return {};
   }
-}
-
-function readShowEmptyColumns(): boolean {
-  return window.localStorage.getItem(SHOW_EMPTY_COLUMNS_KEY) === "true";
 }
 
 function readProjectAutomations(): ProjectAutomations {
@@ -339,26 +385,6 @@ function intervalMinutesFromRrule(value: string): AutomationIntervalMinutes | nu
   return match ? Number(match[1]) as AutomationIntervalMinutes : null;
 }
 
-function readColumnVisibilityByProject(): ColumnVisibilityByProject {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(COLUMN_VISIBILITY_KEY) ?? "{}");
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    const result: ColumnVisibilityByProject = {};
-    for (const [projectId, visibilityValue] of Object.entries(value)) {
-      if (!visibilityValue || typeof visibilityValue !== "object" || Array.isArray(visibilityValue)) continue;
-      const visibility: Partial<Record<TaskStatus, boolean>> = {};
-      for (const status of TASK_STATUSES) {
-        const visible = (visibilityValue as Record<string, unknown>)[status];
-        if (typeof visible === "boolean") visibility[status] = visible;
-      }
-      result[projectId] = visibility;
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
 function workspaceName(path?: string): string | null {
   if (!path) return null;
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -408,8 +434,8 @@ function taskToDraft(task: Task): TaskDraft {
     status: task.status,
     priority: task.priority,
     labels: task.labels,
-    workflowId: task.workflowId,
     developmentContext: task.developmentContext,
+    startDate: task.startDate,
     dueDate: task.dueDate,
     recurrence: task.recurrence,
   };
@@ -530,7 +556,8 @@ function LocalRealtimeSync({
 
 export function App() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
-  const embedded = query.get("host") === "codex";
+  const host = query.get("host");
+  const embedded = host === "codex" || host === "workbuddy";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
@@ -539,10 +566,22 @@ export function App() {
   const [manageTaskboardSkillPath, setManageTaskboardSkillPath] = useState("");
   const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
+  const [aiThreads, setAiThreads] = useState<AiChatThread[]>([]);
+  const [aiOpenThreadRequest, setAiOpenThreadRequest] = useState<AiChatOpenThreadRequest | null>(null);
+  const [readActivityKeys, setReadActivityKeys] = useState<Record<string, string>>({});
+  const [codexThreadProgress, setCodexThreadProgress] = useState<
+    Record<string, {
+      completed: number | null;
+      total: number | null;
+      running: boolean;
+    } | null>
+  >({});
+  const [processingNow, setProcessingNow] = useState(() => Date.now());
+  const [recentProjectIds, setRecentProjectIds] = useState(readRecentProjectIds);
+  const initialProjectId = query.get("project") ?? recentProjectIds[0] ?? GLOBAL_PROJECT_ID;
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [projectsLoading, setProjectsLoading] = useState(true);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -550,10 +589,18 @@ export function App() {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
-  const [showEmptyColumns, setShowEmptyColumns] = useState(readShowEmptyColumns);
-  const [columnVisibilityByProject, setColumnVisibilityByProject] = useState(readColumnVisibilityByProject);
-  const [boardView, setBoardView] = useState<BoardView>("issues");
+  const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
+  const [dashboardSummaryAnimatedProjectId, setDashboardSummaryAnimatedProjectId] = useState<string | null>(null);
+  const [ganttZoom, setGanttZoom] = useState<GanttZoom>("week");
+  const [ganttHideCompleted, setGanttHideCompleted] = useState(false);
+  const [ganttTodayRequest, setGanttTodayRequest] = useState(0);
+  const [ganttViewMenuOpen, setGanttViewMenuOpen] = useState(false);
+  const [otherTasksOpen, setOtherTasksOpen] = useState(false);
+  const [otherTasksMounted, setOtherTasksMounted] = useState(false);
+  const [otherTasksVisible, setOtherTasksVisible] = useState(false);
+  const [otherTasksStatus, setOtherTasksStatus] = useState<SecondaryTaskStatus>("backlog");
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [newTaskDraft, setNewTaskDraft] = useState<NewTaskEditorDraft | null>(null);
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
     () => readIssueIdentifier(window.location.search),
   );
@@ -569,8 +616,15 @@ export function App() {
   const [settlingTaskId, setSettlingTaskId] = useState<string | null>(null);
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [openingThreadTaskId, setOpeningThreadTaskId] = useState<string | null>(null);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const [favoriteProjectIds, setFavoriteProjectIds] = useState(readFavoriteProjectIds);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(
+    () => window.localStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
+  );
+  const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
+  const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
@@ -596,7 +650,12 @@ export function App() {
     setAnnouncementValue(message);
   }, []);
 
+  const markDashboardSummaryAnimationStarted = useCallback((projectId: string) => {
+    setDashboardSummaryAnimatedProjectId(projectId);
+  }, []);
+
   const rememberDeviceWorkspacePath = useCallback((projectId: string, workspacePath: string) => {
+    if (projectId === GLOBAL_PROJECT_ID) return;
     const normalizedPath = workspacePath.trim();
     setDeviceWorkspacePaths((current) => {
       if (current[projectId] === normalizedPath || (!normalizedPath && !(projectId in current))) {
@@ -610,9 +669,23 @@ export function App() {
     });
   }, []);
 
+  const rememberProjectOpen = useCallback((projectId: string) => {
+    setRecentProjectIds((current) => {
+      if (current[0] === projectId) return current;
+      const next = [projectId, ...current.filter((candidate) => candidate !== projectId)];
+      window.localStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  useLayoutEffect(() => {
+    if (selectedProject) rememberProjectOpen(selectedProject.id);
+  }, [rememberProjectOpen, selectedProject]);
   const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
-  const selectedDeviceWorkspacePath = deviceWorkspacePaths[selectedProjectId];
+  const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID
+    ? undefined
+    : deviceWorkspacePaths[selectedProjectId];
   const selectedProjectAutomation = projectAutomations[selectedProjectId];
   const automationProjectContext = useMemo(() => {
     if (!embedded || window.parent === window) {
@@ -692,19 +765,60 @@ export function App() {
         persisted: true,
       });
     }
+    const recentOrder = new Map(recentProjectIds.map((projectId, index) => [projectId, index]));
     return choices.sort((left, right) => (
-      Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
+      (recentOrder.get(left.id) ?? recentProjectIds.length)
+      - (recentOrder.get(right.id) ?? recentProjectIds.length)
     ));
-  }, [favoriteProjectIds, hostContext?.projects, projects]);
-  const projectsWithIssues = useMemo(
-    () => projectChoices.filter((project) => project.issueCount > 0),
-    [projectChoices],
-  );
-  const projectsWithoutIssues = useMemo(
-    () => projectChoices.filter((project) => project.issueCount === 0),
-    [projectChoices],
-  );
+  }, [hostContext?.projects, projects, recentProjectIds]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const issueReadStorageKey = selectedProjectId
+    ? `${ISSUE_READ_KEY_PREFIX}:${taskboardMetadata?.mode ?? "local"}:${selectedProjectId}`
+    : null;
+
+  useEffect(() => {
+    let mountFrame = 0;
+    let showFrame = 0;
+    let closeTimer = 0;
+
+    if (otherTasksOpen) {
+      setOtherTasksMounted(true);
+      mountFrame = window.requestAnimationFrame(() => {
+        showFrame = window.requestAnimationFrame(() => setOtherTasksVisible(true));
+      });
+    } else {
+      setOtherTasksVisible(false);
+      closeTimer = window.setTimeout(() => setOtherTasksMounted(false), 320);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(mountFrame);
+      window.cancelAnimationFrame(showFrame);
+      window.clearTimeout(closeTimer);
+    };
+  }, [otherTasksOpen]);
+
+  useEffect(() => {
+    setReadActivityKeys(issueReadStorageKey ? readIssueActivityKeys(issueReadStorageKey) : {});
+  }, [issueReadStorageKey]);
+
+  const markTaskRead = useCallback((task: Task) => {
+    if (!issueReadStorageKey || !task.activityKey) return;
+    setReadActivityKeys((current) => {
+      if (current[task.id] === task.activityKey) return current;
+      const next = { ...current, [task.id]: task.activityKey };
+      try {
+        window.localStorage.setItem(issueReadStorageKey, JSON.stringify(next));
+      } catch {
+        // Read state remains valid for this page even when browser persistence is unavailable.
+      }
+      return next;
+    });
+  }, [issueReadStorageKey]);
+
+  useEffect(() => {
+    if (detailTask) markTaskRead(detailTask);
+  }, [detailTask?.activityKey, detailTask?.id, markTaskRead]);
 
   const writeProjectAutomation = useCallback((
     projectId: string,
@@ -913,6 +1027,8 @@ export function App() {
   ]);
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
+    const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
+    if (fullTask) markTaskRead(fullTask);
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(task.identifier);
@@ -938,13 +1054,11 @@ export function App() {
   useEffect(() => {
     function syncRouteFromLocation() {
       const url = new URL(window.location.href);
-      const routeProjectId = url.searchParams.get("project") ?? "";
+      const routeProjectId = url.searchParams.get("project") ?? GLOBAL_PROJECT_ID;
       setDetailTaskIdentifier(readIssueIdentifier(url.search));
       if (routeProjectId === selectedProjectId) return;
-      setBoardView("issues");
+      setBoardView(readProjectBoardView(routeProjectId));
       setSelectedProjectId(routeProjectId);
-      if (routeProjectId) window.localStorage.setItem(LAST_PROJECT_KEY, routeProjectId);
-      else window.localStorage.removeItem(LAST_PROJECT_KEY);
     }
 
     window.addEventListener("popstate", syncRouteFromLocation);
@@ -959,12 +1073,30 @@ export function App() {
   }, [embedded, theme]);
 
   useEffect(() => {
+    if (selectedProjectId) setBoardView(readProjectBoardView(selectedProjectId));
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setDashboardSummaryAnimatedProjectId(null);
+    } else if (boardView !== "dashboard") {
+      setDashboardSummaryAnimatedProjectId(selectedProjectId);
+    }
+  }, [boardView, selectedProjectId]);
+
+  useEffect(() => {
     writeTaskFilters(filters);
   }, [filters]);
 
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
+
+  useEffect(() => {
+    if (window.localStorage.getItem(FIRST_USE_COMPLETE_KEY) === null) {
+      window.localStorage.setItem(FIRST_USE_COMPLETE_KEY, "true");
+    }
+  }, []);
 
   useEffect(() => {
     if (!projectMenuOpen) return;
@@ -982,6 +1114,23 @@ export function App() {
       window.removeEventListener("keydown", closeProjectMenuWithEscape);
     };
   }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!projectContextMenu) return;
+    function closeProjectContextMenu(event: PointerEvent) {
+      const target = event.target as HTMLElement;
+      if (!target.closest("[data-project-context-menu]")) setProjectContextMenu(null);
+    }
+    function closeProjectContextMenuWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setProjectContextMenu(null);
+    }
+    document.addEventListener("pointerdown", closeProjectContextMenu);
+    window.addEventListener("keydown", closeProjectContextMenuWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeProjectContextMenu);
+      window.removeEventListener("keydown", closeProjectContextMenuWithEscape);
+    };
+  }, [projectContextMenu]);
 
   useEffect(() => {
     setAutomationError(null);
@@ -1031,6 +1180,7 @@ export function App() {
       setHostContext(payload);
       setCurrentUserActor(payload.user);
       if (isTheme(payload.theme)) setTheme(payload.theme);
+      if (host === "codex") void publishHostRuntime(payload);
     }
 
     window.addEventListener("message", receiveHostMessage);
@@ -1042,7 +1192,24 @@ export function App() {
       }
       pendingAutomationRequestsRef.current.clear();
     };
-  }, [embedded]);
+  }, [embedded, host]);
+
+  useEffect(() => {
+    if (host !== "workbuddy") return;
+    let disposed = false;
+    const syncRuntime = async () => {
+      try {
+        const runtime = await getHostRuntime();
+        if (!disposed) setHostContext(runtime);
+      } catch {}
+    };
+    void syncRuntime();
+    const timer = window.setInterval(syncRuntime, 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [host]);
 
   useLayoutEffect(() => {
     if (!embedded || window.parent === window || !dragRegionRef.current) return;
@@ -1066,7 +1233,6 @@ export function App() {
   }, [detailTaskId, embedded, selectedProjectId]);
 
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
-    setProjectsLoading(true);
     setLoadError(null);
     try {
       const [nextProjects, metadata, workspaces] = await Promise.all([
@@ -1088,6 +1254,7 @@ export function App() {
       setLocalAiChatAvailable(metadata.capabilities?.localAiChat === true);
       setDeviceWorkspacePaths((current) => {
         const next = { ...current, ...workspaces };
+        delete next[GLOBAL_PROJECT_ID];
         if (JSON.stringify(next) === JSON.stringify(current)) return current;
         window.localStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
         return next;
@@ -1095,16 +1262,14 @@ export function App() {
       setProjects(nextProjects);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
-        const remembered = window.localStorage.getItem(LAST_PROJECT_KEY);
         if (fromQuery && nextProjects.some((project) => project.id === fromQuery)) return fromQuery;
         if (current && nextProjects.some((project) => project.id === current)) return current;
-        if (remembered && nextProjects.some((project) => project.id === remembered)) return remembered;
-        return "";
+        return nextProjects.find((project) => project.id === GLOBAL_PROJECT_ID)?.id
+          ?? nextProjects[0]?.id
+          ?? GLOBAL_PROJECT_ID;
       });
     } catch (error) {
       if ((error as Error).name !== "AbortError") setLoadError(errorMessage(error));
-    } finally {
-      setProjectsLoading(false);
     }
   }, []);
 
@@ -1181,7 +1346,7 @@ export function App() {
       return;
     }
     const controller = new AbortController();
-    const codexProjectId = selectedProjectId === "local" ? hostContext?.projectId : selectedProjectId;
+    const codexProjectId = selectedProjectId === GLOBAL_PROJECT_ID ? hostContext?.projectId : selectedProjectId;
     const codexThreadId = hostContext?.threadId ?? detailTask?.threadId ?? undefined;
     setDevelopmentScan({ workspacePath: selectedDeviceWorkspacePath ?? null, contexts: [] });
     setDevelopmentScanLoading(true);
@@ -1254,11 +1419,11 @@ export function App() {
     refreshWorkflowOptions,
   ]);
 
-  function pushUndo(message: string, undo: () => Promise<void>, showNotice = true) {
+  function pushUndo(message: string, undo: () => Promise<void>) {
     const operation = { id: ++undoSequenceRef.current, message, undo };
     undoStackRef.current = [...undoStackRef.current.slice(-19), operation];
     setAnnouncementValue("");
-    setUndoNotice(showNotice ? { id: operation.id, message } : null);
+    setUndoNotice({ id: operation.id, message });
   }
 
   async function performUndo() {
@@ -1316,12 +1481,17 @@ export function App() {
         && !event.metaKey
         && !event.ctrlKey
         && selectedProjectId
-        && boardView === "issues"
+        && boardView !== "workflow"
       ) {
         event.preventDefault();
-        setEditor({ task: null, status: "backlog" });
+        setEditor({ task: null, status: "todo" });
       }
-      if (event.key === "/" && !detailTaskId && selectedProjectId && boardView === "issues") {
+      if (
+        event.key === "/"
+        && !detailTaskId
+        && selectedProjectId
+        && (boardView === "issues" || boardView === "list" || boardView === "gantt")
+      ) {
         event.preventDefault();
         document.getElementById("task-search")?.focus();
       }
@@ -1341,6 +1511,37 @@ export function App() {
   }, [filters, search, tasks]);
 
   const activeFilterCount = taskFilterCount(filters);
+  const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
+
+  const trackedCodexThreadIds = useMemo(() => [...new Set(tasks
+    .filter((task) => task.status === "in_progress" && task.threadId)
+    .map((task) => normalizeCodexThreadId(task.threadId))
+    .filter(Boolean))].sort(), [tasks]);
+  const trackedCodexThreadIdsKey = trackedCodexThreadIds.join(",");
+
+  useEffect(() => {
+    if (trackedCodexThreadIds.length === 0) {
+      setCodexThreadProgress({});
+      return;
+    }
+    let disposed = false;
+    const sync = async () => {
+      try {
+        const progress = await getCodexThreadProgress(trackedCodexThreadIds);
+        if (!disposed) {
+          setCodexThreadProgress((current) => (
+            JSON.stringify(current) === JSON.stringify(progress) ? current : progress
+          ));
+        }
+      } catch {}
+    };
+    void sync();
+    const timer = window.setInterval(sync, 2_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [trackedCodexThreadIdsKey]);
 
   const tasksByStatus = useMemo(() => {
     return Object.fromEntries(
@@ -1348,49 +1549,59 @@ export function App() {
     ) as Record<TaskStatus, Task[]>;
   }, [filteredTasks]);
 
-  const columnVisibility = columnVisibilityByProject[selectedProjectId];
+  const hasBlockedTasks = tasks.some((task) => task.status === "blocked");
+  const mainStatuses = hasBlockedTasks
+    ? MAIN_STATUSES
+    : MAIN_STATUSES.filter((status) => status !== "blocked");
+  const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * 24);
+  const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * 24);
+  const otherTasksColumnCount = mainStatuses.length + 1;
+  const otherTasksWidth = `clamp(300px, calc(${100 / otherTasksColumnCount}% - ${(36 + (mainStatuses.length * 24)) / otherTasksColumnCount}px), 400px)`;
 
-  const visibleStatuses = useMemo(
-    () => TASK_STATUSES.filter((status) => (
-      tasksByStatus[status].length === 0
-        ? showEmptyColumns
-        : (columnVisibility?.[status] ?? true)
-    )),
-    [columnVisibility, showEmptyColumns, tasksByStatus],
+  const taskPresentations = useMemo(() => Object.fromEntries(tasks.map((task) => {
+    const unread = (task.status === "in_review" || task.status === "blocked")
+      && readActivityKeys[task.id] !== task.activityKey;
+    const runningNativeThreadId = hostContext?.threadRunning
+      ? hostContext.threadId ?? null
+      : null;
+    const taskThreadId = normalizeCodexThreadId(task.threadId);
+    return [task.id, taskCardPresentation(
+      task,
+      aiThreads,
+      unread,
+      runningNativeThreadId,
+      hostContext?.threadTodoProgress ?? null,
+      taskThreadId ? codexThreadProgress[taskThreadId] ?? null : undefined,
+    )];
+  })) as Record<string, TaskCardPresentation>, [
+    aiThreads,
+    codexThreadProgress,
+    hostContext?.threadId,
+    hostContext?.threadRunning,
+    hostContext?.threadTodoProgress,
+    readActivityKeys,
+    tasks,
+  ]);
+  const hasRunningTask = useMemo(
+    () => Object.values(taskPresentations).some((presentation) => presentation.processing.running),
+    [taskPresentations],
   );
 
-  const hiddenStatuses = useMemo(
-    () => TASK_STATUSES.filter((status) => (
-      tasksByStatus[status].length === 0
-        ? !showEmptyColumns
-        : !(columnVisibility?.[status] ?? true)
-    )),
-    [columnVisibility, showEmptyColumns, tasksByStatus],
-  );
+  useEffect(() => {
+    setProcessingNow(Date.now());
+    if (!hasRunningTask) return;
+    const timer = window.setInterval(() => setProcessingNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasRunningTask]);
 
-  function updateShowEmptyColumns(show: boolean) {
-    window.localStorage.setItem(SHOW_EMPTY_COLUMNS_KEY, String(show));
-    setShowEmptyColumns(show);
-  }
-
-  function updateColumnVisibility(status: TaskStatus, visible: boolean) {
-    if (!selectedProjectId || tasksByStatus[status].length === 0) return;
-    setColumnVisibilityByProject((current) => {
-      const next = {
-        ...current,
-        [selectedProjectId]: {
-          ...current[selectedProjectId],
-          [status]: visible,
-        },
-      };
-      window.localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(next));
-      return next;
-    });
-  }
 
   function selectBoardView(view: BoardView) {
     closeContextMenu();
+    setGanttViewMenuOpen(false);
     setBoardView(view);
+    if (selectedProjectId) {
+      window.localStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
+    }
   }
 
   async function saveEditor(
@@ -1438,6 +1649,7 @@ export function App() {
         ...current.filter((task) => task.id !== saved.id),
         saved,
       ]));
+      if (creating) setNewTaskDraft(null);
       setEditor(null);
       if (failedAttachments > 0) {
         setActionError(`${saved.identifier} 已创建，但有 ${failedAttachments} 个附件上传失败，可在详情页重试。`);
@@ -1473,7 +1685,7 @@ export function App() {
     task: Task,
     status: TaskStatus,
     beforeTaskId: string | null = null,
-    silent = false,
+    useDropPosition = false,
   ) {
     if (movingTaskId) {
       setDropTarget(null);
@@ -1483,9 +1695,12 @@ export function App() {
     }
 
     const destination = tasks.filter((candidate) => candidate.status === status && candidate.id !== task.id);
-    const insertionIndex = beforeTaskId
-      ? destination.findIndex((candidate) => candidate.id === beforeTaskId)
-      : destination.length;
+    const statusChanged = task.status !== status;
+    const insertionIndex = statusChanged && !useDropPosition
+      ? 0
+      : beforeTaskId
+        ? destination.findIndex((candidate) => candidate.id === beforeTaskId)
+        : destination.length;
     const targetIndex = insertionIndex < 0 ? destination.length : insertionIndex;
     const desiredOrder = [...destination];
     desiredOrder.splice(targetIndex, 0, task);
@@ -1529,7 +1744,7 @@ export function App() {
         const current = candidate && candidate.version >= moved.version ? candidate : moved;
         const restored = await moveTaskRequest(current, previous.status, previous.sortOrder);
         setTasks((tasks) => sortTasks(tasks.map((item) => item.id === restored.id ? restored : item)));
-      }, !silent);
+      });
     } catch (error) {
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === previous.id ? previous : candidate,
@@ -1546,6 +1761,18 @@ export function App() {
     }
   }
 
+  function startTaskDrag(task: Task, height: number) {
+    setDraggedTaskId(task.id);
+    setDraggedTaskHeight(height);
+    setDropTarget(task.status);
+  }
+
+  function endTaskDrag() {
+    setDraggedTaskId(null);
+    setDraggedTaskHeight(0);
+    setDropTarget(null);
+  }
+
   function finishTaskDrop(destination: TaskStatus, taskId: string, beforeTaskId: string | null = null) {
     const task = tasks.find((candidate) => candidate.id === taskId);
     setDraggedTaskId(null);
@@ -1559,16 +1786,20 @@ export function App() {
     void moveTask(task, destination, beforeTaskId, true);
   }
 
-  async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>, message?: string): Promise<Task> {
+  async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>): Promise<Task> {
     const previous = task;
     const { assigneeTarget, ...taskChanges } = changes;
     const optimisticAssignee = assigneeTarget
       ? actorForAssigneeTarget(assigneeTarget, currentUser)
       : task.assignee;
+    const optimisticParticipants = assigneeTarget
+      && !task.participants.some((participant) => actorKey(participant) === actorKey(optimisticAssignee))
+      ? [...task.participants, optimisticAssignee]
+      : task.participants;
     setActionError(null);
     setTasks((current) => current.map((candidate) =>
       candidate.id === task.id
-        ? { ...candidate, ...taskChanges, assignee: optimisticAssignee }
+        ? { ...candidate, ...taskChanges, assignee: optimisticAssignee, participants: optimisticParticipants }
         : candidate,
     ));
 
@@ -1580,7 +1811,7 @@ export function App() {
       const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
       if (!assigneeTarget || previousAssigneeTarget) {
         pushUndo(
-          message ?? `${task.identifier} 已更新。`,
+          `${task.identifier} 已更新。`,
           () => restoreTaskDetails(previous, updated, previousAssigneeTarget),
         );
       }
@@ -1682,16 +1913,23 @@ export function App() {
     window.location.assign(`codex://threads/${encodeURIComponent(threadId.trim())}`);
   }
 
+  function openTaskConversation(conversation: TaskConversationItem) {
+    if (conversation.kind === "local-ai" && conversation.aiThreadId) {
+      setAiOpenThreadRequest((current) => ({
+        threadId: conversation.aiThreadId!,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      return;
+    }
+    if (conversation.nativeThreadId) openThread(conversation.nativeThreadId);
+  }
+
   function expandCodexSidebar() {
     if (!embedded || window.parent === window) return;
     window.parent.postMessage({ type: "taskboard:expand-sidebar" }, "*");
   }
 
   function openTaskInThread(task: Task) {
-    if (!manageTaskboardSkillPath) {
-      setActionError("任务面板还没有读取到 manage-taskboard Skill 路径，请刷新后重试。");
-      return;
-    }
     const worktreePath = task.developmentContext?.type === "worktree"
       ? task.developmentContext.path
       : null;
@@ -1699,13 +1937,12 @@ export function App() {
       ?? selectedDeviceWorkspacePath
       ?? developmentScan.workspacePath
       ?? hostContext?.workspacePath;
-    const instruction = `e-taskboard Addressing the issues mentioned in ${task.identifier}`;
-    const prompt = `[$manage-taskboard](${manageTaskboardSkillPath}) ${instruction}`;
+    const instruction = `e-taskboard 处理任务面板任务 ${task.identifier}，并同步进度状态。`;
 
     if (!embedded || window.parent === window) {
       const query = new URLSearchParams();
       if (workspacePath) query.set("path", workspacePath);
-      query.set("prompt", prompt);
+      query.set("prompt", instruction);
       window.location.assign(`codex://new?${query.toString().replace(/\+/g, "%20")}`);
       return;
     }
@@ -1719,10 +1956,9 @@ export function App() {
         taskId: task.id,
         identifier: task.identifier,
         instruction,
-        skillName: "manage-taskboard",
-        skillDisplayName: "Manage Taskboard",
-        skillPath: manageTaskboardSkillPath,
-        codexProjectId: codexProject?.id ?? (selectedProject?.id === "local" ? hostContext?.projectId : selectedProject?.id),
+        codexProjectId: codexProject?.id ?? (
+          selectedProject?.id === GLOBAL_PROJECT_ID ? hostContext?.projectId : selectedProject?.id
+        ),
         projectName: selectedProject?.name,
         workspacePath,
         workspaceLabel: worktreePath ? workspaceName(worktreePath) : undefined,
@@ -1732,11 +1968,12 @@ export function App() {
 
   function changeProject(projectId: string) {
     closeContextMenu();
+    setProjectContextMenu(null);
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
-    setBoardView("issues");
+    setBoardView(readProjectBoardView(projectId));
+    rememberProjectOpen(projectId);
     setSelectedProjectId(projectId);
-    window.localStorage.setItem(LAST_PROJECT_KEY, projectId);
     setSearch("");
     setFilters(EMPTY_TASK_FILTERS);
     setActionError(null);
@@ -1744,35 +1981,6 @@ export function App() {
     setUndoNotice(null);
     const url = buildIssueUrl(window.location.href, projectId, null);
     window.history.replaceState(null, "", url);
-  }
-
-  function returnToProjectHome() {
-    closeContextMenu();
-    setProjectMenuOpen(false);
-    setDetailTaskIdentifier(null);
-    setSelectedProjectId("");
-    window.localStorage.removeItem(LAST_PROJECT_KEY);
-    setSearch("");
-    setFilters(EMPTY_TASK_FILTERS);
-    setActionError(null);
-    undoStackRef.current = [];
-    setUndoNotice(null);
-    const url = buildIssueUrl(window.location.href, null, null);
-    window.history.replaceState(null, "", url);
-    void loadProjectList();
-  }
-
-  function toggleFavoriteProject() {
-    if (!selectedProjectId) return;
-    const shouldFavorite = !favoriteProjectIds.has(selectedProjectId);
-    setFavoriteProjectIds((current) => {
-      const next = new Set(current);
-      if (shouldFavorite) next.add(selectedProjectId);
-      else next.delete(selectedProjectId);
-      window.localStorage.setItem(FAVORITE_PROJECTS_KEY, JSON.stringify([...next]));
-      return next;
-    });
-    setAnnouncement(`${selectedProject?.name ?? "项目"}${shouldFavorite ? "已收藏。" : "已取消收藏。"}`);
   }
 
   async function selectProject(choice: ProjectChoice) {
@@ -1805,7 +2013,86 @@ export function App() {
     }
   }
 
-  const contextName = workspaceName(hostContext?.workspacePath);
+  function openCreateProjectDialog() {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setProjectName("");
+    setActionError(null);
+    setProjectCreateOpen(true);
+  }
+
+  function closeCreateProjectDialog() {
+    if (openingProjectId) return;
+    setProjectCreateOpen(false);
+    setActionError(null);
+  }
+
+  async function createTemporaryProject() {
+    if (openingProjectId) return;
+    const name = projectName.trim();
+    if (!name) return;
+    const projectId = `temp-${window.crypto.randomUUID()}`;
+    setOpeningProjectId(projectId);
+    setActionError(null);
+    try {
+      const project = await createProjectRequest({
+        id: projectId,
+        name,
+        workspacePath: null,
+      });
+      setProjects((current) => [...current, project]);
+      setProjectCreateOpen(false);
+      changeProject(project.id);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setOpeningProjectId(null);
+    }
+  }
+
+  function requestProjectDelete(project: ProjectChoice) {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setProjectDeleteIssueCount(null);
+    setPendingProjectDelete(project);
+  }
+
+  function closeProjectDeleteDialog() {
+    if (deletingProjectId) return;
+    setPendingProjectDelete(null);
+    setProjectDeleteIssueCount(null);
+  }
+
+  async function deletePendingProject() {
+    if (!pendingProjectDelete || deletingProjectId) return;
+    const project = pendingProjectDelete;
+    setDeletingProjectId(project.id);
+    setActionError(null);
+    try {
+      await deleteProjectRequest(project.id);
+      setProjects((current) => current.filter((candidate) => candidate.id !== project.id));
+      setRecentProjectIds((current) => {
+        const next = current.filter((candidate) => candidate !== project.id);
+        window.localStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
+        return next;
+      });
+      setPendingProjectDelete(null);
+      setProjectDeleteIssueCount(null);
+      if (selectedProjectId === project.id) changeProject(GLOBAL_PROJECT_ID);
+      setAnnouncement(`已删除项目“${project.name}”`);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "PROJECT_NOT_EMPTY") {
+        const details = error.details as { issueCount: number };
+        setProjectDeleteIssueCount(details.issueCount);
+      } else {
+        setPendingProjectDelete(null);
+        setActionError(errorMessage(error));
+      }
+    } finally {
+      setDeletingProjectId(null);
+    }
+  }
+
   const headerProjectName = selectedProject?.name ?? "任务面板";
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
@@ -1843,21 +2130,6 @@ export function App() {
             </button>
           </nav>
 
-          <div className="project-nav">
-            <span className="nav-label">项目</span>
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                className={`project-nav-item${selectedProjectId === project.id ? " active" : ""}`}
-                onClick={() => changeProject(project.id)}
-              >
-                <span className="project-dot" aria-hidden="true" />
-                <span>{project.name}</span>
-              </button>
-            ))}
-          </div>
-
           <div className="nav-spacer" />
           <div className="nav-footer">
             <div className={`connection connection-${connection}`}>
@@ -1878,8 +2150,7 @@ export function App() {
       )}
 
       <main className="workspace">
-        {selectedProjectId ? (
-          <header className="workspace-header">
+        <header className="workspace-header">
           <div className="workspace-title">
             <div className="workspace-kicker">
               {detailTask && (
@@ -1904,86 +2175,61 @@ export function App() {
                   <LinearIcon name="codexSidebarExpand" />
                 </button>
               )}
-              {selectedProjectId && (
+              <div className="header-project-switcher" data-project-switcher>
                 <button
-                  className="detail-back-button project-home-button"
+                  className="header-project-button"
                   type="button"
-                  aria-label="返回项目首页"
-                  title="返回项目首页"
-                  onClick={returnToProjectHome}
+                  aria-label="切换项目"
+                  aria-haspopup="menu"
+                  aria-expanded={projectMenuOpen}
+                  onClick={() => {
+                    setProjectContextMenu(null);
+                    setProjectMenuOpen((current) => !current);
+                  }}
                 >
-                  <LinearIcon name="home" />
-                  <span>首页</span>
-                </button>
-              )}
-              {selectedProjectId && <span className="breadcrumb-chevron" aria-hidden="true"><LinearIcon name="chevronRight" /></span>}
-              {selectedProjectId ? (
-                <div className="header-project-switcher" data-project-switcher>
-                  <button
-                    className="header-project-button"
-                    type="button"
-                    aria-label="切换项目"
-                    aria-haspopup="menu"
-                    aria-expanded={projectMenuOpen}
-                    onClick={() => setProjectMenuOpen((current) => !current)}
-                  >
-                    <span className="project-avatar" aria-hidden="true">
-                      {headerProjectName.slice(0, 1).toUpperCase()}
-                    </span>
-                    <span className="project-name">{headerProjectName}</span>
-                    <LinearIcon className="project-switcher-chevron" name="chevronDown" />
-                  </button>
-                  {projectMenuOpen && (
-                    <div className="header-project-menu" role="menu" aria-label="项目">
-                      <span>切换项目</span>
-                      {projectChoices.map((project) => (
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={project.id === selectedProjectId}
-                          disabled={openingProjectId !== null}
-                          key={project.id}
-                          onClick={() => {
-                            if (project.id === selectedProjectId) setProjectMenuOpen(false);
-                            else void selectProject(project);
-                          }}
-                        >
-                          <span className="project-avatar" aria-hidden="true">{project.name.slice(0, 1).toUpperCase()}</span>
-                          <span>{project.name}</span>
-                          {favoriteProjectIds.has(project.id) && <span className="project-menu-favorite" aria-label="已收藏"><LinearIcon name="favorite" /></span>}
-                          {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <span className="project-avatar" aria-hidden="true">
-                    {headerProjectName.slice(0, 1).toUpperCase()}
-                  </span>
                   <span className="project-name">{headerProjectName}</span>
-                </>
-              )}
-              {!selectedProjectId && (
-                <>
-                  <span className="breadcrumb-chevron" aria-hidden="true"><LinearIcon name="chevronRight" /></span>
-                  <strong>项目</strong>
-                </>
-              )}
-              {!detailTask && selectedProjectId && (
-                <button
-                  className={`favorite-button${favoriteProjectIds.has(selectedProjectId) ? " active" : ""}`}
-                  type="button"
-                  aria-label={favoriteProjectIds.has(selectedProjectId) ? "取消收藏项目" : "收藏项目"}
-                  aria-pressed={favoriteProjectIds.has(selectedProjectId)}
-                  title={favoriteProjectIds.has(selectedProjectId) ? "取消收藏" : "收藏项目"}
-                  onClick={toggleFavoriteProject}
-                >
-                  <LinearIcon className="favorite-icon" name="favorite" />
+                  <TaskboardIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
-              )}
-              {!detailTask && selectedProjectId && embedded && contextName && <span className="codex-context">{contextName}</span>}
+                {projectMenuOpen && (
+                  <div className="header-project-menu" role="menu" aria-label="项目">
+                    <span>切换项目</span>
+                    {projectChoices.map((project) => (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={project.id === selectedProjectId}
+                        disabled={openingProjectId !== null}
+                        key={project.id}
+                        onContextMenu={project.id.startsWith("temp-") ? (event) => {
+                          event.preventDefault();
+                          setProjectContextMenu({
+                            project,
+                            x: event.clientX,
+                            y: event.clientY,
+                          });
+                        } : undefined}
+                        onClick={() => {
+                          if (project.id === selectedProjectId) setProjectMenuOpen(false);
+                          else void selectProject(project);
+                        }}
+                      >
+                        <TaskboardIcon className="project-avatar" name="projectFolder" />
+                        <span>{project.name}</span>
+                        {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={openingProjectId !== null}
+                      onClick={openCreateProjectDialog}
+                    >
+                      <TaskboardIcon className="project-avatar" name="create" />
+                      <span>创建项目</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2000,25 +2246,30 @@ export function App() {
                 onChange={(options) => void saveProjectAutomation(options)}
               />
             )}
-            {selectedProjectId && boardView === "issues" && (
+            {selectedProjectId && boardView !== "workflow" && (
               <button
                 className="icon-button header-create-button"
                 type="button"
-                onClick={() => setEditor({ task: null, status: "backlog" })}
+                onClick={() => setEditor({ task: null, status: "todo" })}
                 aria-label="新建议题"
                 title="新建议题 (C)"
               >
-                <LinearIcon name="plus" />
+                <TaskboardIcon name="create" />
               </button>
             )}
           </div>
-          </header>
-        ) : (
-          <div ref={dragRegionRef} className="home-window-drag-region" aria-hidden="true" />
-        )}
+        </header>
 
         {selectedProjectId && !detailTask && <div className="board-toolbar">
           <div className="view-tabs" aria-label="看板视图">
+            <button
+              className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
+              type="button"
+              aria-pressed={boardView === "dashboard"}
+              onClick={() => selectBoardView("dashboard")}
+            >
+              Dashboard
+            </button>
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
               type="button"
@@ -2026,6 +2277,22 @@ export function App() {
               onClick={() => selectBoardView("issues")}
             >
               议题看板
+            </button>
+            <button
+              className={`view-tab${boardView === "list" ? " active" : ""}`}
+              type="button"
+              aria-pressed={boardView === "list"}
+              onClick={() => selectBoardView("list")}
+            >
+              列表视图
+            </button>
+            <button
+              className={`view-tab${boardView === "gantt" ? " active" : ""}`}
+              type="button"
+              aria-pressed={boardView === "gantt"}
+              onClick={() => selectBoardView("gantt")}
+            >
+              甘特图
             </button>
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
@@ -2038,9 +2305,9 @@ export function App() {
               </button>
             )}
           </div>
-          {boardView === "issues" && <div className="toolbar-tools">
+          {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
             <label className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
-              <LinearIcon className="search-icon" name="search" />
+              <TaskboardIcon className="search-icon" name="search" />
               <span className="sr-only">搜索议题</span>
               <input
                 id="task-search"
@@ -2051,6 +2318,31 @@ export function App() {
               />
               {!search && <kbd>/</kbd>}
             </label>
+            {boardView === "gantt" && (
+              <div className="gantt-toolbar-controls">
+                <label className="gantt-hide-completed">
+                  <input type="checkbox" checked={ganttHideCompleted} onChange={(event) => setGanttHideCompleted(event.target.checked)} />
+                  <i><LinearIcon name="check" /></i>
+                  <span>隐藏已完成</span>
+                </label>
+                <button type="button" className="gantt-today-button" onClick={() => setGanttTodayRequest((current) => current + 1)}>今天</button>
+                <div className="gantt-view-menu-wrap">
+                  <button type="button" className="gantt-view-menu-trigger" aria-label="时间轴视图选项" aria-expanded={ganttViewMenuOpen} onClick={() => setGanttViewMenuOpen((current) => !current)}>
+                    <LinearIcon name="more" />
+                  </button>
+                  {ganttViewMenuOpen && (
+                    <div className="gantt-view-menu" role="menu">
+                      {GANTT_ZOOM_OPTIONS.map((value) => (
+                        <button type="button" role="menuitemradio" aria-checked={ganttZoom === value} className={ganttZoom === value ? "active" : ""} onClick={() => { setGanttZoom(value); setGanttViewMenuOpen(false); }} key={value}>
+                          <span>{{ day: "日视图", week: "周视图", month: "月视图" }[value]}</span>
+                          {ganttZoom === value && <LinearIcon name="check" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <TaskFilterMenu
               tasks={tasks}
               search={search}
@@ -2058,19 +2350,17 @@ export function App() {
               filters={filters}
               onChange={setFilters}
             />
-            <BoardSettingsMenu
-              showEmptyColumns={showEmptyColumns}
-              onShowEmptyColumnsChange={updateShowEmptyColumns}
-            />
-            {(search || activeFilterCount > 0) && (
+            {boardView === "issues" && (
               <button
-                className="clear-filter"
+                className={`other-tasks-trigger${otherTasksOpen ? " is-open" : ""}`}
                 type="button"
-                aria-label="清除筛选"
-                title="清除筛选"
-                onClick={() => { setSearch(""); setFilters(EMPTY_TASK_FILTERS); }}
+                aria-controls="other-tasks-panel"
+                aria-expanded={otherTasksOpen}
+                aria-label={otherTasksOpen ? "关闭其他任务" : "打开其他任务"}
+                title="其他任务"
+                onClick={() => setOtherTasksOpen((current) => !current)}
               >
-                <LinearIcon name="close" />
+                <TaskboardIcon name="panel" />
               </button>
             )}
           </div>}
@@ -2093,92 +2383,13 @@ export function App() {
           </div>
         )}
 
-        {!selectedProjectId ? (
-          <section className="project-home">
-            <div className="project-home-heading">
-              <span>任务面板</span>
-              <h1>选择项目</h1>
-              <p>从 Codex 项目开始，或继续使用之前保存的项目。</p>
-            </div>
-            {projectsLoading ? (
-              <div className="project-grid project-grid-loading" aria-label="正在加载项目" aria-busy="true">
-                <span /><span /><span />
-              </div>
-            ) : projectChoices.length > 0 ? (
-              <div className="project-home-groups">
-                {[
-                  { id: "with-issues", title: "已有议题", projects: projectsWithIssues },
-                  { id: "without-issues", title: "尚未添加议题", projects: projectsWithoutIssues },
-                ].map((group) => (
-                  <section className="project-home-group" key={group.id} aria-labelledby={`project-group-${group.id}`}>
-                    <div className="project-group-heading">
-                      <h2 id={`project-group-${group.id}`}>{group.title}</h2>
-                      <span>{group.projects.length}</span>
-                    </div>
-                    {group.projects.length > 0 ? (
-                      <div className="project-grid">
-                        {group.projects.map((project) => (
-                          <div className="project-card" key={project.id}>
-                            <button
-                              className="project-card-open"
-                              type="button"
-                              disabled={openingProjectId !== null}
-                              onClick={() => void selectProject(project)}
-                            >
-                              <span className="project-card-avatar" aria-hidden="true">
-                                {project.name.slice(0, 1).toUpperCase()}
-                              </span>
-                              <span className="project-card-copy">
-                                <strong>{project.name}</strong>
-                                <span>
-                                  {project.inCodex ? "Codex 项目" : "已保存的项目"}
-                                  {project.issueCount > 0 ? ` · ${project.issueCount} 个议题` : ""}
-                                </span>
-                              </span>
-                              {favoriteProjectIds.has(project.id) && <span className="project-card-favorite" aria-label="已收藏"><LinearIcon name="favorite" /></span>}
-                              <span className="project-card-action" aria-hidden="true">
-                                {openingProjectId === project.id ? "正在打开…" : <LinearIcon name="chevronRight" />}
-                              </span>
-                            </button>
-                            <label className="project-card-directory">
-                              <LinearIcon name="folder" />
-                              <input
-                                key={deviceWorkspacePaths[project.id] ?? ""}
-                                type="text"
-                                defaultValue={deviceWorkspacePaths[project.id] ?? ""}
-                                placeholder="设置此设备的项目目录"
-                                aria-label={`${project.name} 在此设备上的项目目录`}
-                                onBlur={(event) => rememberDeviceWorkspacePath(project.id, event.currentTarget.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") event.currentTarget.blur();
-                                }}
-                              />
-                            </label>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="project-group-empty">暂无项目</p>
-                    )}
-                  </section>
-                ))}
-              </div>
-            ) : (
-              <div className="project-home-empty">
-                <span className="empty-orbit" aria-hidden="true"><i /><i /></span>
-                <h2>还没有项目</h2>
-                <p>在 Codex 中创建项目后，再打开任务面板。</p>
-              </div>
-            )}
-          </section>
-        ) : detailTask && selectedProject ? (
+        {detailTask && selectedProject ? (
           <TaskDetail
             key={detailTask.id}
             task={detailTask}
             tasks={tasks}
             currentUser={currentUser}
             availableLabels={availableLabels}
-            workflows={workflowOptions}
             developmentScan={developmentScan}
             developmentScanLoading={developmentScanLoading}
             commentsRevision={commentsRevision}
@@ -2193,15 +2404,51 @@ export function App() {
             )}
             onOpenThread={openThread}
             onOpenInThread={openTaskInThread}
+            onCopy={(text, message) => void copyText(text, message)}
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
-            onAnnounce={setAnnouncement}
           />
+        ) : boardView === "dashboard" ? (
+          <DashboardView
+            key={selectedProjectId}
+            projectId={selectedProjectId}
+            projectCreatedAt={selectedProject?.createdAt ?? null}
+            tasks={tasks}
+            presentations={taskPresentations}
+            currentUser={currentUser}
+            animateSummary={dashboardSummaryAnimatedProjectId !== selectedProjectId}
+            onSummaryAnimationStart={markDashboardSummaryAnimationStarted}
+            onOpenTask={openTaskDetail}
+            onOpenConversation={openTaskConversation}
+          />
+        ) : boardView === "list" ? (
+          <IssueListView
+            tasks={filteredTasks}
+            presentations={taskPresentations}
+            currentUser={currentUser}
+            hasActiveFilters={hasActiveTaskFilters}
+            onOpenTask={openTaskDetail}
+            onOpenConversation={openTaskConversation}
+            onUpdate={updateTaskProperties}
+          />
+        ) : boardView === "gantt" ? (
+          <Suspense fallback={<div className="workflow-board-loading">正在打开甘特图…</div>}>
+            <GanttView
+              tasks={filteredTasks}
+              presentations={taskPresentations}
+              hasActiveFilters={hasActiveTaskFilters}
+              zoom={ganttZoom}
+              hideCompleted={ganttHideCompleted}
+              todayRequest={ganttTodayRequest}
+              onOpenTask={openTaskDetail}
+              onUpdate={updateTaskProperties}
+            />
+          </Suspense>
         ) : boardView === "workflow" ? (
           <Suspense fallback={<div className="workflow-board-loading">正在打开节点模式…</div>}>
             <WorkflowBoard
-              key={selectedProject?.id ?? "local"}
-              projectId={selectedProject?.id ?? "local"}
+              key={selectedProject?.id ?? GLOBAL_PROJECT_ID}
+              projectId={selectedProject?.id ?? GLOBAL_PROJECT_ID}
               projectName={selectedProject?.name ?? "当前项目"}
               workspacePath={
                 selectedDeviceWorkspacePath
@@ -2212,91 +2459,236 @@ export function App() {
               onWorkflowsChange={setWorkflowOptions}
             />
           </Suspense>
-        ) : tasksLoading && !hasLoadedTasks ? (
-          <div className="loading-board" aria-label="Loading issues" aria-busy="true">
-            {TASK_STATUSES.map((status) => (
-              <div className="loading-column" key={status}>
-                <span /><div /><div />
-              </div>
-            ))}
-          </div>
         ) : (
-          <div className="board-scroll" aria-label="Issue board">
-            <div className="board">
-              {filteredTasks.length === 0 && tasks.length > 0 && !showEmptyColumns && (
-                <section className="page-empty filter-empty board-filter-empty">
-                  <span className="empty-search" aria-hidden="true"><LinearIcon name="search" /></span>
-                  <h2>没有匹配的议题</h2>
-                  <p>请更换搜索词，或移除一个筛选条件。</p>
-                  <button
-                    className="button secondary"
-                    type="button"
-                    onClick={() => { setSearch(""); setFilters(EMPTY_TASK_FILTERS); }}
-                  >
-                    清除筛选
-                  </button>
-                </section>
-              )}
-              {visibleStatuses.map((status) => (
-                <BoardColumn
-                  key={status}
-                  status={status}
-                  statusIndex={TASK_STATUSES.indexOf(status)}
-                  tasks={tasksByStatus[status]}
-                  isDropTarget={dropTarget === status}
-                  draggedTaskId={draggedTaskId}
-                  draggedTaskHeight={draggedTaskHeight}
-                  movingTaskId={movingTaskId}
-                  settlingTaskId={settlingTaskId}
-                  contextMenuTaskId={contextMenu?.taskId ?? null}
-                  onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
-                  onEdit={openTaskDetail}
-                  onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
-                  onMove={(task, destination) => void moveTask(task, destination)}
-                  onDragStart={(task, height) => {
-                    setDraggedTaskId(task.id);
-                    setDraggedTaskHeight(height);
-                    setDropTarget(task.status);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedTaskId(null);
-                    setDraggedTaskHeight(0);
-                    setDropTarget(null);
-                  }}
-                  onDragEnter={setDropTarget}
-                  onDrop={finishTaskDrop}
-                  onOpenThread={openThread}
-                  onHide={(hiddenStatus) => updateColumnVisibility(hiddenStatus, false)}
-                />
-              ))}
-              {hiddenStatuses.length > 0 && (
-                <HiddenColumns
-                  statuses={hiddenStatuses}
-                  counts={Object.fromEntries(
-                    TASK_STATUSES.map((status) => [status, tasksByStatus[status].length]),
-                  ) as Record<TaskStatus, number>}
-                  dropTarget={dropTarget}
-                  onDragTargetChange={setDropTarget}
-                  onDrop={(destination, taskId) => finishTaskDrop(destination, taskId)}
-                  onShow={(shownStatus) => updateColumnVisibility(shownStatus, true)}
-                />
-              )}
-            </div>
+          <div
+            className={`issue-board-layout${otherTasksVisible ? " has-other-tasks" : ""}`}
+            data-main-columns={mainStatuses.length}
+            style={{
+              "--main-column-count": mainStatuses.length,
+              "--main-board-min-width": `${mainBoardMinWidth}px`,
+              "--main-board-max-width": `${mainBoardMaxWidth}px`,
+              "--other-tasks-width": otherTasksWidth,
+            } as CSSProperties}
+          >
+            {tasksLoading && !hasLoadedTasks ? (
+              <div className="loading-board" aria-label="Loading issues" aria-busy="true">
+                {mainStatuses.map((status) => (
+                  <div className="loading-column" key={status}>
+                    <span /><div /><div />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="board-scroll" aria-label="Issue board">
+                  <div className="board">
+                    {mainStatuses.map((status) => (
+                      <BoardColumn
+                        key={status}
+                        status={status}
+                        tasks={tasksByStatus[status]}
+                        presentations={taskPresentations}
+                        now={processingNow}
+                        emptyMessage={hasActiveTaskFilters ? "当前筛选下无匹配议题" : "暂无议题"}
+                        isDropTarget={dropTarget === status}
+                        draggedTaskId={draggedTaskId}
+                        draggedTaskHeight={draggedTaskHeight}
+                        movingTaskId={movingTaskId}
+                        settlingTaskId={settlingTaskId}
+                        contextMenuTaskId={contextMenu?.taskId ?? null}
+                        availableLabels={availableLabels}
+                        currentUser={currentUser}
+                        onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                        onEdit={openTaskDetail}
+                        onUpdate={updateTaskProperties}
+                        onComplete={(task) => void moveTask(task, "done")}
+                        onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
+                        onDragStart={startTaskDrag}
+                        onDragEnd={endTaskDrag}
+                        onDragEnter={setDropTarget}
+                        onDrop={finishTaskDrop}
+                        onOpenConversation={openTaskConversation}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {otherTasksMounted && (
+                  <OtherTasksPanel
+                    open={otherTasksVisible}
+                    activeStatus={otherTasksStatus}
+                    tasksByStatus={tasksByStatus}
+                    presentations={taskPresentations}
+                    now={processingNow}
+                    hasActiveFilters={hasActiveTaskFilters}
+                    isDropTarget={dropTarget === otherTasksStatus}
+                    draggedTaskId={draggedTaskId}
+                    draggedTaskHeight={draggedTaskHeight}
+                    movingTaskId={movingTaskId}
+                    settlingTaskId={settlingTaskId}
+                    contextMenuTaskId={contextMenu?.taskId ?? null}
+                    availableLabels={availableLabels}
+                    currentUser={currentUser}
+                    onStatusChange={setOtherTasksStatus}
+                    onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                    onEdit={openTaskDetail}
+                    onUpdate={updateTaskProperties}
+                    onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
+                    onDragStart={startTaskDrag}
+                    onDragEnd={endTaskDrag}
+                    onDragEnter={setDropTarget}
+                    onDrop={finishTaskDrop}
+                    onOpenConversation={openTaskConversation}
+                  />
+                )}
+              </>
+            )}
           </div>
         )}
       </main>
+
+      {projectContextMenu && (
+        <div
+          className="task-context-menu project-context-menu"
+          data-project-context-menu
+          role="menu"
+          aria-label={`项目“${projectContextMenu.project.name}”`}
+          style={{ left: projectContextMenu.x, top: projectContextMenu.y }}
+        >
+          <button
+            className="context-menu-item is-danger"
+            type="button"
+            role="menuitem"
+            onClick={() => requestProjectDelete(projectContextMenu.project)}
+          >
+            <span className="context-menu-icon" aria-hidden="true"><LinearIcon name="trash" /></span>
+            <span className="context-menu-label">删除项目</span>
+          </button>
+        </div>
+      )}
+
+      {projectCreateOpen && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) closeCreateProjectDialog();
+          }}
+        >
+          <form
+            className="delete-dialog project-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-create-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createTemporaryProject();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeCreateProjectDialog();
+            }}
+          >
+            <h2 id="project-create-title">创建项目</h2>
+            <label>
+              <span>项目名称</span>
+              <input
+                autoFocus
+                maxLength={120}
+                required
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+              />
+            </label>
+            {actionError && <p className="project-dialog-error">{actionError}</p>}
+            <div>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={openingProjectId !== null}
+                onClick={closeCreateProjectDialog}
+              >
+                取消
+              </button>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={!projectName.trim() || openingProjectId !== null}
+              >
+                {openingProjectId ? "创建中…" : "创建"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {pendingProjectDelete && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) closeProjectDeleteDialog();
+          }}
+        >
+          <div
+            className="delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="project-delete-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeProjectDeleteDialog();
+            }}
+          >
+            {projectDeleteIssueCount === null ? (
+              <>
+                <h2 id="project-delete-title">删除项目“{pendingProjectDelete.name}”？</h2>
+                <p>仅空项目可以删除。删除后无法恢复。</p>
+                <div>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={deletingProjectId !== null}
+                    onClick={closeProjectDeleteDialog}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="button danger"
+                    type="button"
+                    disabled={deletingProjectId !== null}
+                    onClick={() => void deletePendingProject()}
+                  >
+                    {deletingProjectId ? "删除中…" : "删除项目"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 id="project-delete-title">无法删除项目“{pendingProjectDelete.name}”</h2>
+                <p>
+                  该项目还有 {projectDeleteIssueCount} 个议题（包含已归档议题）。请先移动或删除这些议题。
+                </p>
+                <div>
+                  <button className="button primary" type="button" onClick={closeProjectDeleteDialog}>
+                    知道了
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {editor && (
         <TaskEditor
           key={editor.task?.id ?? `new-${editor.status}`}
           task={editor.task}
           initialStatus={editor.status}
+          initialDraft={editor.task ? null : newTaskDraft}
           labels={availableLabels}
-          workflows={workflowOptions}
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
-          onCancel={() => setEditor(null)}
+          onCancel={(draft) => {
+            if (!editor.task) setNewTaskDraft(draft);
+            setEditor(null);
+          }}
           onSave={saveEditor}
         />
       )}
@@ -2312,12 +2704,10 @@ export function App() {
           onPriorityChange={(task, nextPriority) => void updateTaskProperties(
             task,
             { priority: nextPriority },
-            `${task.identifier} 优先级已更新。`,
           ).catch(() => {})}
           onLabelsChange={(task, labels) => void updateTaskProperties(
             task,
             { labels },
-            `${task.identifier} 标签已更新。`,
           ).catch(() => {})}
           onDuplicate={(task) => void duplicateTask(task)}
           onCopy={(text, message) => void copyText(text, message)}
@@ -2330,6 +2720,8 @@ export function App() {
         available={localAiChatAvailable}
         projectId={selectedProjectId || null}
         issueId={detailTaskId}
+        onThreadsChange={setAiThreads}
+        openThreadRequest={aiOpenThreadRequest}
       />
 
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
@@ -2339,7 +2731,7 @@ export function App() {
           role="status"
           onAnimationEnd={() => setUndoNotice((current) => current?.id === undoNotice.id ? null : current)}
         >
-          <span className="toast-check" aria-hidden="true"><LinearIcon name="check" /></span>
+          <span aria-hidden="true"><LinearIcon name="check" /></span>
           <span className="undo-toast-message">{undoNotice.message}</span>
           <button type="button" onClick={() => void performUndo()}>
             撤回 <kbd>{undoShortcut}</kbd>
@@ -2351,7 +2743,6 @@ export function App() {
           <span aria-hidden="true"><LinearIcon name="check" /></span>{announcement}
         </div>
       )}
-      {draggedTaskId && <div className="drag-hint" aria-hidden="true">拖到目标位置后松开</div>}
     </div>
   );
 }
