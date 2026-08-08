@@ -24,6 +24,12 @@ npm run dev
 
 The Vite UI runs at <http://127.0.0.1:5173> and proxies API requests to the local service.
 
+To run several checkouts side by side, give each one its own pair of ports so the UI keeps proxying to its own backend:
+
+```bash
+TASKBOARD_WEB_PORT=5174 CODEX_TASKBOARD_PORT=47901 npm run dev
+```
+
 ## Use the CLI
 
 Run it from the project:
@@ -107,7 +113,8 @@ To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the us
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CODEX_TASKBOARD_HOST` | `0.0.0.0` | HTTP bind address; use `127.0.0.1` to disable LAN access |
-| `CODEX_TASKBOARD_PORT` | `47823` | Local HTTP port |
+| `CODEX_TASKBOARD_PORT` | `47823` | Local HTTP port; the Vite dev proxy targets it too |
+| `TASKBOARD_WEB_PORT` | `5173` | Vite dev server port |
 | `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite data directory |
 | `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API origin |
 

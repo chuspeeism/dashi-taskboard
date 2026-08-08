@@ -11,10 +11,12 @@ export default defineConfig({
   },
   server: {
     host: "127.0.0.1",
-    port: 5173,
+    // Keep several worktrees running side by side: override both ports per instance,
+    // e.g. TASKBOARD_WEB_PORT=5174 CODEX_TASKBOARD_PORT=47901 npm run dev
+    port: Number(process.env.TASKBOARD_WEB_PORT ?? 5173),
     strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:47823",
+      "/api": `http://127.0.0.1:${Number(process.env.CODEX_TASKBOARD_PORT ?? 47823)}`,
     },
   },
 });
