@@ -129,6 +129,8 @@ export function createWranglerCloudAdapters({
           task_relations: Number(row.task_relations),
           attachments: Number(row.attachments),
           workflow_workspaces: Number(row.workflow_workspaces),
+          project_context_entries: Number(row.project_context_entries),
+          project_context_revisions: Number(row.project_context_revisions),
         },
       ]));
     },

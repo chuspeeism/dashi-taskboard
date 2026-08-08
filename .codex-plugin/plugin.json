@@ -1,0 +1,37 @@
+{
+  "name": "dashi-taskboard",
+  "version": "0.1.0",
+  "description": "Manage taskboard issues and share durable project context through a local companion.",
+  "author": {
+    "name": "chuspeeism",
+    "url": "https://github.com/chuspeeism"
+  },
+  "homepage": "https://github.com/chuspeeism/dashi-taskboard",
+  "repository": "https://github.com/chuspeeism/dashi-taskboard",
+  "license": "UNLICENSED",
+  "keywords": [
+    "codex",
+    "taskboard",
+    "project-context"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Dashi Taskboard",
+    "shortDescription": "Manage issues and durable shared project context.",
+    "longDescription": "Use taskboard issue workflows and a local stdio MCP server to read and publish shared project context through the companion HTTP API.",
+    "developerName": "chuspeeism",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/chuspeeism/dashi-taskboard",
+    "defaultPrompt": [
+      "Review the current taskboard issue and its shared project context.",
+      "Search this project's durable decisions and constraints.",
+      "Publish a concise handoff after completing the issue."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

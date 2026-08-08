@@ -7,7 +7,8 @@
     "node": ">=22.5"
   },
   "bin": {
-    "taskctl": "./cli/taskctl.mjs"
+    "taskctl": "./cli/taskctl.mjs",
+    "dashi-taskboard-mcp": "./mcp/server.mjs"
   },
   "scripts": {
     "codex": "node scripts/codex-injector.mjs --launch --watch --open --port 9231",
@@ -24,8 +25,9 @@
     "typecheck": "tsc -p web/tsconfig.json --noEmit",
     "start": "node server/index.mjs",
     "taskctl": "node cli/taskctl.mjs",
+    "plugin:validate": "node scripts/validate-plugin.mjs",
     "test": "node --test",
-    "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
+    "test:cloud": "node --test test/cloud-shared-worker.test.mjs test/cloud-project-context.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
     "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",
     "cloud:deploy:dry-run": "npm run build:web && wrangler deploy --dry-run",
@@ -35,14 +37,17 @@
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "^1.94.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",

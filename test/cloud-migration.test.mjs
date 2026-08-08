@@ -26,6 +26,7 @@ import {
   runCli,
   writeCloudMigrationBundle,
 } from "../scripts/migrate-to-cloud.mjs";
+import { TaskboardDatabase } from "../server/database.mjs";
 import { createCloudWorkerHarness } from "./helpers/cloud-worker-harness.mjs";
 
 const fixtures = [];
@@ -373,6 +374,8 @@ function expectedProjectCounts() {
       attachments: 2,
       task_relations: 1,
       workflow_workspaces: 1,
+      project_context_entries: 0,
+      project_context_revisions: 0,
     },
     beta: {
       projects: 1,
@@ -381,6 +384,8 @@ function expectedProjectCounts() {
       attachments: 1,
       task_relations: 0,
       workflow_workspaces: 0,
+      project_context_entries: 0,
+      project_context_revisions: 0,
     },
   };
 }
@@ -394,6 +399,8 @@ function expectedCloudBaselineCounts() {
       attachments: 0,
       task_relations: 0,
       workflow_workspaces: 0,
+      project_context_entries: 0,
+      project_context_revisions: 0,
     },
   };
 }
@@ -575,6 +582,8 @@ test("cloud import calls D1 and R2 adapters, then verifies project counts and ob
     "task_relations",
     "attachments",
     "workflow_workspaces",
+    "project_context_entries",
+    "project_context_revisions",
   ]);
   assert.deepEqual(result.counts.byProject, expectedProjectCounts());
   assert.equal(result.attachments.verified, 3);
@@ -584,6 +593,82 @@ test("cloud import calls D1 and R2 adapters, then verifies project counts and ob
     assert.deepEqual(object.bytes, Buffer.from(attachment.body));
     assert.equal(object.size, attachment.size);
     assert.equal(object.customMetadata.sha256, attachment.sha256);
+  }
+});
+
+test("context entries and revisions survive a local-to-D1 migration round trip", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "project-context-cloud-migration-"));
+  const databasePath = path.join(directory, "taskboard.sqlite");
+  const attachmentsDirectory = path.join(directory, "attachments");
+  await mkdir(attachmentsDirectory, { recursive: true });
+  const actor = { type: "user", id: "alice", name: "Alice" };
+  let database;
+  try {
+    database = new TaskboardDatabase(databasePath);
+    database.createProject({ id: "context-project", name: "Context project", workspacePath: null });
+    const created = database.createContextEntry("context-project", {
+      kind: "decision",
+      title: "Use D1",
+      body: "Context body",
+      tags: ["migration"],
+      sourceType: "manual",
+      sourceId: null,
+      sourceThreadId: null,
+      pinned: true,
+      idempotencyKey: "migration-context",
+    }, actor).entry;
+    const updated = database.updateContextEntry(created.id, 1, {
+      body: "Updated context body",
+      tags: ["migration", "cloud"],
+    }, actor);
+    const archived = database.archiveContextEntry(updated.id, 2, actor);
+    database.close();
+    database = null;
+
+    const bundle = await createCloudMigrationBundle({
+      databasePath,
+      attachmentsDirectory,
+    });
+    assert.equal(bundle.counts.byProject["context-project"].project_context_entries, 1);
+    assert.equal(bundle.counts.byProject["context-project"].project_context_revisions, 3);
+    assert.equal(bundle.tables.project_context_entries[0].version, 3);
+    assert.equal(bundle.tables.project_context_entries[0].archived_at, archived.archivedAt);
+    assert.deepEqual(
+      bundle.tables.project_context_revisions.map((revision) => revision.version),
+      [1, 2, 3],
+    );
+
+    const cloud = await createCloudWorkerHarness();
+    try {
+      const result = await importCloudMigrationBundle(bundle, createCloudBindingMigrationAdapters({
+        d1: cloud.db,
+        r2: cloud.attachments,
+      }));
+      assert.equal(result.counts.byProject["context-project"].project_context_entries, 1);
+      const entry = await cloud.db.prepare(`
+        SELECT id, version, archived_at, body, tags
+        FROM project_context_entries
+        WHERE project_id = ?
+      `).bind("context-project").first();
+      assert.equal(entry.version, 3);
+      assert.equal(entry.archived_at, archived.archivedAt);
+      assert.equal(entry.body, "Updated context body");
+      assert.deepEqual(JSON.parse(entry.tags), ["migration", "cloud"]);
+      const revisions = await cloud.db.prepare(`
+        SELECT version, body FROM project_context_revisions
+        WHERE entry_id = ? ORDER BY version
+      `).bind(entry.id).all();
+      assert.deepEqual(revisions.results, [
+        { version: 1, body: "Context body" },
+        { version: 2, body: "Updated context body" },
+        { version: 3, body: "Updated context body" },
+      ]);
+    } finally {
+      await cloud.dispose();
+    }
+  } finally {
+    database?.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -683,7 +768,7 @@ test("D1 binding import uses one JSON statement per table for 100+ rows", async 
   await adapters.d1.importTables(tables);
 
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].length, 6);
+  assert.equal(batches[0].length, 8);
   for (const statement of batches[0]) assert.match(statement.sql, /json_each\(\?\)/);
   assert.equal(JSON.parse(batches[0][1].values[0]).length, 125);
 });
@@ -731,6 +816,126 @@ test("Wrangler D1 SQL chunks large tables below the remote statement byte limit"
     () => createCloudD1ImportSql(oversized),
     /single row.*90,?000 bytes/i,
   );
+
+  const contextTables = structuredClone(bundle.tables);
+  const contextBody = '"'.repeat(65_536);
+  const contextRevisionBody = "'".repeat(65_536);
+  contextTables.project_context_entries = [{
+    id: "context-large",
+    project_id: "alpha",
+    kind: "decision",
+    title: "Large context",
+    body: contextRevisionBody,
+    tags: "[]",
+    source_type: "manual",
+    source_id: null,
+    source_thread_id: null,
+    author_type: "user",
+    author_id: "alice",
+    author_name: "Alice",
+    pinned: 0,
+    archived_at: null,
+    version: 1,
+    idempotency_key: "context-large",
+    created_at: timestamp,
+    updated_at: timestamp,
+  }];
+  contextTables.project_context_revisions = [{
+    id: "context-large-revision",
+    entry_id: "context-large",
+    version: 1,
+    title: "Large context",
+    body: contextBody,
+    kind: "decision",
+    tags: "[]",
+    author_id: "alice",
+    author_name: "Alice",
+    created_at: timestamp,
+  }];
+  const contextSql = createCloudD1ImportSql(contextTables);
+  assert.match(contextSql, /UPDATE "project_context_entries"/);
+  assert.match(contextSql, /UPDATE "project_context_revisions"/);
+  const contextStatements = contextSql
+    .split(/;\n(?=(?:INSERT INTO|UPDATE ))/)
+    .map((statement) => statement.endsWith(";") ? statement : `${statement};`);
+  for (const statement of contextStatements) {
+    assert.ok(
+      Buffer.byteLength(statement, "utf8") < 90_000,
+      `context statement was ${Buffer.byteLength(statement, "utf8")} bytes`,
+    );
+  }
+});
+
+test("Wrangler SQL imports a maximum-size context body without truncation", async () => {
+  const body = '"'.repeat(65_536);
+  const revisionBody = "'".repeat(65_536);
+  const timestamp = "2026-07-24T12:00:00.000Z";
+  const tables = {
+    projects: [{
+      id: "context-project",
+      name: "Context project",
+      workspace_path: null,
+      next_task_number: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+    tasks: [],
+    comments: [],
+    task_relations: [],
+    attachments: [],
+    workflow_workspaces: [],
+    project_context_entries: [{
+      id: "context-large",
+      project_id: "context-project",
+      kind: "decision",
+      title: "Large context",
+      body,
+      tags: "[]",
+      source_type: "manual",
+      source_id: null,
+      source_thread_id: null,
+      author_type: "user",
+      author_id: "alice",
+      author_name: "Alice",
+      pinned: 0,
+      archived_at: null,
+      version: 1,
+      idempotency_key: "context-large",
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+    project_context_revisions: [{
+      id: "context-large-revision",
+      entry_id: "context-large",
+      version: 1,
+      title: "Large context",
+      body: revisionBody,
+      kind: "decision",
+      tags: "[]",
+      author_id: "alice",
+      author_name: "Alice",
+      created_at: timestamp,
+    }],
+  };
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec(await readFile(path.join(projectRoot, "cloud", "migrations", "0001_initial.sql"), "utf8"));
+    database.exec(await readFile(path.join(projectRoot, "cloud", "migrations", "0002_project_context.sql"), "utf8"));
+    const statements = createCloudD1ImportSql(tables)
+      .split(/;\n(?=(?:INSERT INTO|UPDATE ))/)
+      .map((statement) => statement.endsWith(";") ? statement : `${statement};`);
+    for (const statement of statements) database.exec(statement);
+    const entry = database.prepare(`
+      SELECT body FROM project_context_entries WHERE id = ?
+    `).get("context-large");
+    const revision = database.prepare(`
+      SELECT body FROM project_context_revisions WHERE id = ?
+    `).get("context-large-revision");
+    assert.equal(entry.body, body);
+    assert.equal(revision.body, revisionBody);
+  } finally {
+    database.close();
+  }
 });
 
 test("real D1 batch atomically imports a bundle containing local and maps development fields", async () => {

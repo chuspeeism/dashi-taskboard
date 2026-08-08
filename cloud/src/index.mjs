@@ -1,8 +1,21 @@
 import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mjs";
+import { PROJECT_ID_PATTERN } from "../../shared/domain.mjs";
+import {
+  buildProjectContextBrief,
+  contextEntryFromRow,
+  contextRevisionFromRow,
+  decodeContextCursor,
+  encodeContextCursor,
+  sameContextCreatePayload,
+  CONTEXT_BODY_MAX_BYTES,
+  CONTEXT_KINDS,
+  CONTEXT_LIST_DEFAULT_LIMIT,
+  CONTEXT_LIST_MAX_LIMIT,
+  CONTEXT_SOURCE_TYPES,
+} from "../../shared/project-context.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
-const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TASK_STATUSES = [
   "backlog",
   "todo",
@@ -385,8 +398,11 @@ function resolveAssignee(target, actor) {
 }
 
 async function readJson(request) {
-  const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().startsWith("application/json")) {
+  const contentType = (request.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== "application/json") {
     throw new ApiError(
       415,
       "UNSUPPORTED_MEDIA_TYPE",
@@ -857,6 +873,336 @@ async function getTask(env, id) {
   return row ? hydrateTask(env, row) : null;
 }
 
+async function contextEntryRow(env, id) {
+  return env.DB.prepare("SELECT * FROM project_context_entries WHERE id = ?").bind(id).first();
+}
+
+async function requireContextEntryRow(env, id) {
+  const row = await contextEntryRow(env, id);
+  if (!row) throw new ApiError(404, "CONTEXT_NOT_FOUND", `Context entry '${id}' does not exist`);
+  return row;
+}
+
+function assertContextVersion(row, expectedVersion) {
+  if (row.version !== expectedVersion) {
+    throw new ApiError(409, "VERSION_CONFLICT", "Context entry was changed by another client", {
+      expectedVersion,
+      actualVersion: row.version,
+    });
+  }
+}
+
+async function listProjectContext(env, projectId, filters) {
+  await requireProject(env, projectId);
+  const where = ["project_context_entries.project_id = ?"];
+  const values = [projectId];
+  if (filters.archived === "false") where.push("project_context_entries.archived_at IS NULL");
+  else if (filters.archived === "true") where.push("project_context_entries.archived_at IS NOT NULL");
+  if (filters.kind !== undefined) {
+    where.push("project_context_entries.kind = ?");
+    values.push(filters.kind);
+  }
+  if (filters.tag !== undefined) {
+    where.push(`EXISTS (
+      SELECT 1 FROM json_each(project_context_entries.tags)
+      WHERE json_each.value = ?
+    )`);
+    values.push(filters.tag);
+  }
+  if (filters.pinned !== undefined) {
+    where.push("project_context_entries.pinned = ?");
+    values.push(filters.pinned ? 1 : 0);
+  }
+  if (filters.query !== undefined) {
+    const escaped = filters.query
+      .replaceAll("\\", "\\\\")
+      .replaceAll("%", "\\%")
+      .replaceAll("_", "\\_");
+    const pattern = `%${escaped}%`;
+    where.push(`(
+      project_context_entries.title LIKE ? ESCAPE '\\'
+      OR project_context_entries.body LIKE ? ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1 FROM json_each(project_context_entries.tags)
+        WHERE json_each.value LIKE ? ESCAPE '\\'
+      )
+    )`);
+    values.push(pattern, pattern, pattern);
+  }
+  if (filters.cursor) {
+    where.push(`(
+      project_context_entries.created_at < ?
+      OR (project_context_entries.created_at = ? AND project_context_entries.id < ?)
+    )`);
+    values.push(filters.cursor[0], filters.cursor[0], filters.cursor[1]);
+  }
+  const rows = await all(env.DB.prepare(`
+    SELECT * FROM project_context_entries
+    WHERE ${where.join(" AND ")}
+    ORDER BY project_context_entries.created_at DESC, project_context_entries.id DESC
+    LIMIT ?
+  `).bind(...values, filters.limit + 1));
+  const hasMore = rows.length > filters.limit;
+  const entries = rows.slice(0, filters.limit).map(contextEntryFromRow);
+  return {
+    entries,
+    nextCursor: hasMore
+      ? encodeContextCursor([rows[filters.limit - 1].created_at, rows[filters.limit - 1].id])
+      : null,
+  };
+}
+
+async function getProjectContextBrief(env, projectId) {
+  await requireProject(env, projectId);
+  const rows = await all(env.DB.prepare(`
+    SELECT * FROM project_context_entries
+    WHERE project_id = ?
+      AND archived_at IS NULL
+      AND (pinned = 1 OR kind IN ('requirement', 'constraint', 'decision', 'risk', 'handoff', 'summary'))
+    ORDER BY
+      CASE
+        WHEN pinned = 1 THEN 0
+        WHEN kind IN ('requirement', 'constraint', 'decision') THEN 1
+        WHEN kind IN ('risk', 'handoff') THEN 2
+        ELSE 3
+      END,
+      updated_at DESC,
+      id ASC
+    LIMIT 1000
+  `).bind(projectId));
+  return buildProjectContextBrief(rows.map(contextEntryFromRow));
+}
+
+async function listContextRevisions(env, id) {
+  const entry = await requireContextEntryRow(env, id);
+  const rows = await all(env.DB.prepare(`
+    SELECT * FROM project_context_revisions
+    WHERE entry_id = ?
+    ORDER BY version ASC, id ASC
+  `).bind(entry.id));
+  return rows.map(contextRevisionFromRow);
+}
+
+function contextRevisionValues(entry, version, actor, timestamp, id = crypto.randomUUID()) {
+  return [
+    id,
+    entry.id,
+    version,
+    entry.title,
+    entry.body,
+    entry.kind,
+    JSON.stringify(entry.tags),
+    actor.id,
+    actor.name,
+    timestamp,
+  ];
+}
+
+async function sameContextCreatePayloadForExistingEntry(env, entry, input) {
+  if (entry.version <= 1) return sameContextCreatePayload(entry, input);
+  const originalRow = await env.DB.prepare(`
+    SELECT *
+    FROM project_context_revisions
+    WHERE entry_id = ? AND version = 1
+  `).bind(entry.id).first();
+  if (!originalRow) return sameContextCreatePayload(entry, input);
+  const original = contextRevisionFromRow(originalRow);
+  // Revision snapshots intentionally follow the public schema and do not carry
+  // the mutable pinned flag. Compare the original create fields, not later edits.
+  return sameContextCreatePayload(
+    {
+      ...entry,
+      kind: original.kind,
+      title: original.title,
+      body: original.body,
+      tags: original.tags,
+    },
+    input,
+    { ignorePinned: true },
+  );
+}
+
+async function createContextEntry(env, projectId, input, authContext) {
+  await requireProject(env, projectId);
+  if (input.idempotencyKey !== null) {
+    const existingRow = await env.DB.prepare(`
+      SELECT * FROM project_context_entries
+      WHERE project_id = ? AND idempotency_key = ?
+    `).bind(projectId, input.idempotencyKey).first();
+    if (existingRow) {
+      const existing = contextEntryFromRow(existingRow);
+      if (!(await sameContextCreatePayloadForExistingEntry(env, existing, input))) {
+        throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used with different context content");
+      }
+      return { entry: existing, created: false };
+    }
+  }
+  const id = crypto.randomUUID();
+  const timestamp = now();
+  const actor = authContext.actor;
+  try {
+    const results = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO project_context_entries (
+          id, project_id, kind, title, body, tags,
+          source_type, source_id, source_thread_id,
+          author_type, author_id, author_name, pinned, archived_at,
+          version, idempotency_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?)
+      `).bind(
+        id,
+        projectId,
+        input.kind,
+        input.title,
+        input.body,
+        JSON.stringify(input.tags),
+        input.sourceType,
+        input.sourceId,
+        input.sourceThreadId,
+        actor.type,
+        actor.id,
+        actor.name,
+        input.pinned ? 1 : 0,
+        input.idempotencyKey,
+        timestamp,
+        timestamp,
+      ),
+      env.DB.prepare(`
+        INSERT INTO project_context_revisions (
+          id, entry_id, version, title, body, kind, tags,
+          author_id, author_name, created_at
+        )
+        SELECT ?, id, 1, title, body, kind, tags, ?, ?, ?
+        FROM project_context_entries
+        WHERE id = ? AND version = 1
+      `).bind(
+        crypto.randomUUID(),
+        actor.id,
+        actor.name,
+        timestamp,
+        id,
+      ),
+    ]);
+    if (!changed(results[0])) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    return { entry: contextEntryFromRow(await requireContextEntryRow(env, id)), created: true };
+  } catch (error) {
+    if (!String(error?.message).includes("UNIQUE constraint failed")) throw error;
+    const existingRow = await env.DB.prepare(`
+      SELECT * FROM project_context_entries
+      WHERE project_id = ? AND idempotency_key = ?
+    `).bind(projectId, input.idempotencyKey).first();
+    if (!existingRow) throw error;
+    const existing = contextEntryFromRow(existingRow);
+    if (!(await sameContextCreatePayloadForExistingEntry(env, existing, input))) {
+      throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used with different context content");
+    }
+    return { entry: existing, created: false };
+  }
+}
+
+async function updateContextEntry(env, id, expectedVersion, changes, authContext) {
+  const currentRow = await requireContextEntryRow(env, id);
+  assertContextVersion(currentRow, expectedVersion);
+  const current = contextEntryFromRow(currentRow);
+  const next = { ...current, ...changes, version: expectedVersion + 1 };
+  const timestamp = now();
+  const actor = authContext.actor;
+  const assignments = [];
+  const values = [];
+  const columns = { kind: "kind", title: "title", body: "body", tags: "tags", pinned: "pinned" };
+  for (const [key, column] of Object.entries(columns)) {
+    if (!Object.hasOwn(changes, key)) continue;
+    assignments.push(`${column} = ?`);
+    values.push(key === "tags" ? JSON.stringify(changes[key]) : key === "pinned" ? (changes[key] ? 1 : 0) : changes[key]);
+  }
+  values.push(timestamp, id, expectedVersion);
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO project_context_revisions (
+        id, entry_id, version, title, body, kind, tags,
+        author_id, author_name, created_at
+      )
+      SELECT ?, id, ?, ?, ?, ?, ?, ?, ?, ?
+      FROM project_context_entries
+      WHERE id = ? AND version = ?
+    `).bind(
+      crypto.randomUUID(),
+      next.version,
+      next.title,
+      next.body,
+      next.kind,
+      JSON.stringify(next.tags),
+      actor.id,
+      actor.name,
+      timestamp,
+      id,
+      expectedVersion,
+    ),
+    env.DB.prepare(`
+      UPDATE project_context_entries
+      SET ${assignments.concat(["version = version + 1", "updated_at = ?"]).join(", ")}
+      WHERE id = ? AND version = ?
+    `).bind(...values),
+  ]);
+  if (!changed(results[1])) {
+    const latest = await requireContextEntryRow(env, id);
+    throw new ApiError(409, "VERSION_CONFLICT", "Context entry was changed by another client", {
+      expectedVersion,
+      actualVersion: latest.version,
+    });
+  }
+  return contextEntryFromRow(await requireContextEntryRow(env, id));
+}
+
+async function setContextArchived(env, id, expectedVersion, authContext, archived) {
+  const currentRow = await requireContextEntryRow(env, id);
+  assertContextVersion(currentRow, expectedVersion);
+  const current = contextEntryFromRow(currentRow);
+  if (archived && current.archivedAt !== null) {
+    throw new ApiError(409, "CONTEXT_ALREADY_ARCHIVED", "Context entry is already archived");
+  }
+  if (!archived && current.archivedAt === null) {
+    throw new ApiError(409, "CONTEXT_NOT_ARCHIVED", "Only archived context entries can be restored");
+  }
+  const nextVersion = expectedVersion + 1;
+  const timestamp = now();
+  const actor = authContext.actor;
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO project_context_revisions (
+        id, entry_id, version, title, body, kind, tags,
+        author_id, author_name, created_at
+      )
+      SELECT ?, id, ?, title, body, kind, tags, ?, ?, ?
+      FROM project_context_entries
+      WHERE id = ? AND version = ?
+    `).bind(
+      crypto.randomUUID(),
+      nextVersion,
+      actor.id,
+      actor.name,
+      timestamp,
+      id,
+      expectedVersion,
+    ),
+    env.DB.prepare(`
+      UPDATE project_context_entries
+      SET archived_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ? AND version = ?
+    `).bind(archived ? timestamp : null, timestamp, id, expectedVersion),
+  ]);
+  if (!changed(results[1])) {
+    const latest = await requireContextEntryRow(env, id);
+    throw new ApiError(409, "VERSION_CONFLICT", "Context entry was changed by another client", {
+      expectedVersion,
+      actualVersion: latest.version,
+    });
+  }
+  return contextEntryFromRow(await requireContextEntryRow(env, id));
+}
+
 async function taskActivityComments(env, taskIds) {
   const commentsByTask = new Map(taskIds.map((taskId) => [taskId, []]));
   const batches = [];
@@ -1025,6 +1371,172 @@ function parseVersionMutation(body) {
     version: parseVersion(body.version),
     threadId: parseThreadId(body.threadId),
   };
+}
+
+function parseContextKind(value, name = "kind") {
+  if (!CONTEXT_KINDS.includes(value)) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be one of: ${CONTEXT_KINDS.join(", ")}`);
+  }
+  return value;
+}
+
+function parseContextSourceType(value, name = "sourceType") {
+  if (!CONTEXT_SOURCE_TYPES.includes(value)) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELD",
+      `'${name}' must be one of: ${CONTEXT_SOURCE_TYPES.join(", ")}`,
+    );
+  }
+  return value;
+}
+
+function parseContextBody(value, name = "body", { required = false } = {}) {
+  if (value === undefined) {
+    if (required) throw new ApiError(400, "INVALID_FIELD", `'${name}' is required`);
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be a string`);
+  }
+  if (new TextEncoder().encode(value).byteLength > CONTEXT_BODY_MAX_BYTES) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' cannot exceed 65536 UTF-8 bytes`);
+  }
+  return value;
+}
+
+function parseContextTags(value, name = "tags") {
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be an array with at most 20 entries`);
+  }
+  const tags = value.map((tag, index) => {
+    if (typeof tag !== "string") throw new ApiError(400, "INVALID_FIELD", `'${name}[${index}]' must be a string`);
+    const normalized = tag.trim();
+    if (normalized.length === 0 || normalized.length > 64) {
+      throw new ApiError(400, "INVALID_FIELD", `'${name}[${index}]' must contain 1 to 64 characters`);
+    }
+    return normalized;
+  });
+  if (new Set(tags).size !== tags.length) {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must contain unique values`);
+  }
+  return tags;
+}
+
+function parseContextBoolean(value, name) {
+  if (value === "true" || value === true) return true;
+  if (value === "false" || value === false) return false;
+  throw new ApiError(400, "INVALID_QUERY_PARAMETER", `'${name}' must be true or false`);
+}
+
+function parseContextCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "kind", "title", "body", "tags", "sourceType", "sourceId", "sourceThreadId",
+    "pinned", "idempotencyKey",
+  ]));
+  if (body.pinned !== undefined && typeof body.pinned !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'pinned' must be a boolean");
+  }
+  return {
+    kind: parseContextKind(body.kind),
+    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
+    body: parseContextBody(body.body, "body", { required: true }),
+    tags: body.tags === undefined ? [] : parseContextTags(body.tags),
+    sourceType: body.sourceType === undefined ? "manual" : parseContextSourceType(body.sourceType),
+    sourceId: stringField(body.sourceId ?? null, "sourceId", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
+    sourceThreadId: stringField(body.sourceThreadId ?? null, "sourceThreadId", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
+    pinned: body.pinned ?? false,
+    idempotencyKey: stringField(body.idempotencyKey ?? null, "idempotencyKey", {
+      required: true,
+      nullable: true,
+      maxLength: 256,
+    }),
+  };
+}
+
+function parseContextPatch(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "kind", "title", "body", "tags", "pinned"]));
+  const version = parseVersion(body.version);
+  const changes = {};
+  if (body.kind !== undefined) changes.kind = parseContextKind(body.kind);
+  if (body.title !== undefined) changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
+  if (body.body !== undefined) changes.body = parseContextBody(body.body);
+  if (body.tags !== undefined) changes.tags = parseContextTags(body.tags);
+  if (body.pinned !== undefined) {
+    if (typeof body.pinned !== "boolean") throw new ApiError(400, "INVALID_FIELD", "'pinned' must be a boolean");
+    changes.pinned = body.pinned;
+  }
+  if (Object.keys(changes).length === 0) {
+    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one context field");
+  }
+  return { version, changes };
+}
+
+function parseContextMutation(body, routeLabel) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version"]));
+  if (body.version === undefined) throw new ApiError(400, "INVALID_FIELD", `'version' is required for ${routeLabel}`);
+  return { version: parseVersion(body.version) };
+}
+
+function parseContextListFilters(url) {
+  const allowed = new Set(["query", "kind", "tag", "pinned", "archived", "limit", "cursor"]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key)) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${key}`);
+    if (url.searchParams.getAll(key).length > 1) {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", `'${key}' cannot be repeated`);
+    }
+  }
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit === null ? CONTEXT_LIST_DEFAULT_LIMIT : Number(rawLimit);
+  if (!/^\d+$/.test(rawLimit ?? String(CONTEXT_LIST_DEFAULT_LIMIT))
+    || !Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > CONTEXT_LIST_MAX_LIMIT) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", `'limit' must be an integer from 1 to ${CONTEXT_LIST_MAX_LIMIT}`);
+  }
+  const archived = url.searchParams.get("archived") ?? "false";
+  if (!["false", "true", "all"].includes(archived)) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'archived' must be false, true, or all");
+  }
+  const query = url.searchParams.get("query");
+  if (query !== null && query.length > 256) throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'query' cannot exceed 256 characters");
+  const rawTag = url.searchParams.get("tag");
+  const tag = rawTag === null ? undefined : stringField(rawTag, "tag", { required: true, maxLength: 64 });
+  const kind = url.searchParams.get("kind");
+  if (kind !== null) parseContextKind(kind);
+  const rawCursor = url.searchParams.get("cursor");
+  let cursor;
+  if (rawCursor !== null) {
+    try {
+      cursor = decodeContextCursor(rawCursor);
+    } catch {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'cursor' is invalid");
+    }
+  }
+  return {
+    query: query === null ? undefined : query,
+    kind: kind ?? undefined,
+    tag,
+    pinned: url.searchParams.has("pinned") ? parseContextBoolean(url.searchParams.get("pinned"), "pinned") : undefined,
+    archived,
+    limit,
+    cursor,
+  };
+}
+
+function contextAuthContext(actor) {
+  return { mechanism: "basic", actor };
 }
 
 function parseCommentCreate(body) {
@@ -2241,6 +2753,19 @@ function decodePathPart(value, label) {
   return decoded;
 }
 
+function decodeContextPathPart(value, label) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new ApiError(400, "INVALID_PATH", `${label} contains invalid encoding`);
+  }
+  if (decoded.length === 0 || decoded.length > 256 || decoded.includes("\0")) {
+    throw new ApiError(400, "INVALID_PATH", `${label} is invalid`);
+  }
+  return decoded;
+}
+
 async function attachmentContent(env, id, request) {
   const attachment = await requireAttachment(env, id);
   const object = await env.ATTACHMENTS.get(attachment.id);
@@ -2393,6 +2918,35 @@ async function routeApi(request, env, actor, url) {
     methodNotAllowed(["GET", "PUT"]);
   }
 
+  const projectContextBriefMatch = pathname.match(
+    /^\/api\/projects\/([^/]+)\/context\/brief$/,
+  );
+  if (projectContextBriefMatch) {
+    if (request.method !== "GET") methodNotAllowed(["GET"]);
+    requireNoQuery(url, "GET /api/projects/:projectId/context/brief");
+    const projectId = validateProjectId(decodePathPart(projectContextBriefMatch[1], "Project id"));
+    return json(200, await getProjectContextBrief(env, projectId));
+  }
+
+  const projectContextMatch = pathname.match(/^\/api\/projects\/([^/]+)\/context$/);
+  if (projectContextMatch) {
+    const projectId = validateProjectId(decodePathPart(projectContextMatch[1], "Project id"));
+    if (request.method === "GET") {
+      return json(200, await listProjectContext(env, projectId, parseContextListFilters(url)));
+    }
+    if (request.method === "POST") {
+      requireNoQuery(url, "POST /api/projects/:projectId/context");
+      const result = await createContextEntry(
+        env,
+        projectId,
+        parseContextCreate(await readJson(request)),
+        contextAuthContext(actor),
+      );
+      return json(result.created ? 201 : 200, { entry: result.entry });
+    }
+    methodNotAllowed(["GET", "POST"]);
+  }
+
   if (pathname === "/api/tasks") {
     if (request.method === "GET") {
       return json(200, {
@@ -2405,6 +2959,55 @@ async function routeApi(request, env, actor, url) {
       });
     }
     methodNotAllowed(["GET", "POST"]);
+  }
+
+  const contextRevisionsMatch = pathname.match(/^\/api\/context\/([^/]+)\/revisions$/);
+  if (contextRevisionsMatch) {
+    if (request.method !== "GET") methodNotAllowed(["GET"]);
+    requireNoQuery(url, "GET /api/context/:id/revisions");
+    const id = decodeContextPathPart(contextRevisionsMatch[1], "Context entry id");
+    return json(200, { revisions: await listContextRevisions(env, id) });
+  }
+
+  const contextActionMatch = pathname.match(/^\/api\/context\/([^/]+)\/(archive|restore)$/);
+  if (contextActionMatch) {
+    if (request.method !== "POST") methodNotAllowed(["POST"]);
+    requireNoQuery(url, "Context archive/restore routes");
+    const id = decodeContextPathPart(contextActionMatch[1], "Context entry id");
+    const input = parseContextMutation(
+      await readJson(request),
+      `POST /api/context/:id/${contextActionMatch[2]}`,
+    );
+    const entry = await setContextArchived(
+      env,
+      id,
+      input.version,
+      contextAuthContext(actor),
+      contextActionMatch[2] === "archive",
+    );
+    return json(200, { entry });
+  }
+
+  const contextEntryMatch = pathname.match(/^\/api\/context\/([^/]+)$/);
+  if (contextEntryMatch) {
+    requireNoQuery(url, "Context entry routes");
+    const id = decodeContextPathPart(contextEntryMatch[1], "Context entry id");
+    if (request.method === "GET") {
+      return json(200, { entry: contextEntryFromRow(await requireContextEntryRow(env, id)) });
+    }
+    if (request.method === "PATCH") {
+      const input = parseContextPatch(await readJson(request));
+      return json(200, {
+        entry: await updateContextEntry(
+          env,
+          id,
+          input.version,
+          input.changes,
+          contextAuthContext(actor),
+        ),
+      });
+    }
+    methodNotAllowed(["GET", "PATCH"]);
   }
 
   const relationMatch = pathname.match(

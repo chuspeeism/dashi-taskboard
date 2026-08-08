@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -199,6 +200,24 @@ test("cloud proxy replaces client identity with Basic Auth and makes exactly one
   });
 });
 
+test("cloud proxy rejects network-path URLs before attaching cloud credentials", async () => {
+  const { createCloudProxy } = await importCloudProxy();
+  const calls = [];
+  const proxy = createCloudProxy({
+    configStore: memoryConfigStore(),
+    fetch: async (url, init) => {
+      calls.push({ url: url.toString(), init });
+      return jsonResponse({ projects: [] });
+    },
+  });
+
+  await assert.rejects(
+    proxy.forward(new Request("http://127.0.0.1//outside.example.test/collect")),
+    (error) => error?.status === 400 && error?.code === "INVALID_PATH",
+  );
+  assert.equal(calls.length, 0);
+});
+
 test("cloud companion blocks project moves for issue-linked local AI chats", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-chat-move-"));
   temporaryDirectories.push(directory);
@@ -272,6 +291,114 @@ test("configured cloud mode fails explicitly and never falls back to the local d
   assert.equal(localFallbackCalls, 0);
 });
 
+test("cloud proxy applies its deadline while consuming an upstream JSON body", async () => {
+  const { createCloudProxy } = await importCloudProxy();
+  const timeoutController = new AbortController();
+  let requestedTimeout;
+  let upstreamSignal;
+  let startedResolve;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  const proxy = createCloudProxy({
+    configStore: memoryConfigStore(),
+    timeoutMs: 3210,
+    createTimeoutSignal(timeoutMs) {
+      requestedTimeout = timeoutMs;
+      return timeoutController.signal;
+    },
+    fetch: async (_url, init) => {
+      upstreamSignal = init.signal;
+      startedResolve();
+      return new Response(new ReadableStream({
+        start(controller) {
+          if (!init.signal) {
+            controller.error(new Error("missing upstream signal"));
+            return;
+          }
+          init.signal.addEventListener("abort", () => {
+            controller.error(init.signal.reason);
+          }, { once: true });
+        },
+      }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const pendingError = proxy.forward(
+    new Request("http://127.0.0.1:47823/api/projects"),
+  ).then(() => null, (error) => error);
+  await started;
+  timeoutController.abort(new DOMException("deadline exceeded", "TimeoutError"));
+  const error = await pendingError;
+
+  assert.equal(requestedTimeout, 3210);
+  assert.ok(upstreamSignal instanceof AbortSignal);
+  assert.equal(upstreamSignal.aborted, true);
+  assert.equal(error?.status, 502);
+  assert.equal(error?.code, "REMOTE_UNAVAILABLE");
+});
+
+test("disconnecting a companion client aborts the in-flight cloud request", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-abort-"));
+  temporaryDirectories.push(directory);
+  let startedResolve;
+  let abortedResolve;
+  let releaseUpstream;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  const aborted = new Promise((resolve) => {
+    abortedResolve = resolve;
+  });
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    cloudConfigStore: memoryConfigStore(),
+    remoteFetch: async (_url, init) => new Promise((_resolve, reject) => {
+      startedResolve(init.signal);
+      releaseUpstream = () => reject(new Error("test cleanup"));
+      init.signal?.addEventListener("abort", () => {
+        abortedResolve();
+        reject(init.signal.reason);
+      }, { once: true });
+    }),
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  let clientRequest;
+
+  try {
+    clientRequest = httpRequest({
+      host: "127.0.0.1",
+      port: address.port,
+      path: "/api/projects",
+      method: "GET",
+    });
+    clientRequest.on("error", () => {});
+    clientRequest.end();
+    const upstreamSignal = await started;
+
+    clientRequest.destroy();
+    let timeout;
+    try {
+      await Promise.race([
+        aborted,
+        new Promise((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("upstream request was not aborted")), 1000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    assert.ok(upstreamSignal instanceof AbortSignal);
+    assert.equal(upstreamSignal.aborted, true);
+  } finally {
+    clientRequest?.destroy();
+    releaseUpstream?.();
+    await app.close();
+  }
+});
+
 test("cloud proxy preserves upstream 401 responses and binary attachment streams", async () => {
   const { createCloudProxy } = await importCloudProxy();
   const unauthorized = new Response("invalid shared key", {
@@ -322,6 +449,12 @@ test("cloud routing keeps machine-specific capability endpoints in the local com
   for (const pathname of [
     "/api/projects",
     "/api/projects/portfolio/workflow-workspace",
+    "/api/projects/portfolio/context",
+    "/api/projects/portfolio/context/brief",
+    "/api/context/context-1",
+    "/api/context/context-1/revisions",
+    "/api/context/context-1/archive",
+    "/api/context/context-1/restore",
     "/api/tasks",
     "/api/tasks/PORTFOLIO-1",
     "/api/comments/comment-1",
@@ -580,6 +713,89 @@ test("configured server proxies business APIs without touching local rows and ad
     assert.equal(upstreamCalls.length, 1);
     assert.equal(upstreamCalls[0].url, "https://tasks.example.test/api/tasks");
     assert.equal(app.database.listTasks({}).length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("configured server context writes never fall back to or double-write local SQLite", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-context-cloud-server-"));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, "companion.json");
+  const { createCloudConfigStore } = await importCloudConfig();
+  await createCloudConfigStore({ configPath }).configure({
+    remoteUrl: "https://tasks.example.test",
+    actorName: "Alice",
+    sharedKey: "two-person-shared-key",
+  });
+  const upstreamCalls = [];
+  let failRemote = false;
+  const remoteEntry = {
+    id: "remote-context",
+    projectId: "portfolio",
+    kind: "decision",
+    title: "Remote only",
+    body: "Cloud owns this row",
+    tags: [],
+    sourceType: "manual",
+    sourceId: null,
+    sourceThreadId: null,
+    authorType: "user",
+    authorId: "basic:alice",
+    authorName: "Alice",
+    pinned: false,
+    archivedAt: null,
+    version: 1,
+    idempotencyKey: "remote-only",
+    createdAt: "2026-08-05T00:00:00.000Z",
+    updatedAt: "2026-08-05T00:00:00.000Z",
+  };
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    cloudConfigPath: configPath,
+    remoteFetch: async (url, init) => {
+      upstreamCalls.push({ url: url.toString(), init });
+      if (failRemote) throw new Error("cloud unavailable");
+      return jsonResponse({ entry: remoteEntry }, 201);
+    },
+  });
+  const address = await app.listen({ port: 0 });
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const contextBody = {
+    kind: "decision",
+    title: "Remote only",
+    body: "Cloud owns this row",
+    idempotencyKey: "remote-only",
+  };
+
+  try {
+    const created = await fetch(`${baseUrl}/api/projects/portfolio/context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(contextBody),
+    });
+    assert.equal(created.status, 201);
+    assert.deepEqual(await created.json(), { entry: remoteEntry });
+    assert.equal(upstreamCalls.length, 1);
+    assert.equal(upstreamCalls[0].url, "https://tasks.example.test/api/projects/portfolio/context");
+    assert.equal(
+      app.database.database.prepare("SELECT COUNT(*) AS count FROM project_context_entries").get().count,
+      0,
+    );
+
+    failRemote = true;
+    const failed = await fetch(`${baseUrl}/api/projects/portfolio/context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...contextBody, idempotencyKey: "remote-failure" }),
+    });
+    assert.equal(failed.status, 502);
+    assert.equal((await failed.json()).error.code, "REMOTE_UNAVAILABLE");
+    assert.equal(upstreamCalls.length, 2);
+    assert.equal(
+      app.database.database.prepare("SELECT COUNT(*) AS count FROM project_context_entries").get().count,
+      0,
+    );
   } finally {
     await app.close();
   }
