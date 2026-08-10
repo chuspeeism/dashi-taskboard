@@ -2477,6 +2477,19 @@ export function createTaskboardServer(options = {}) {
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }
+        if (!action && request.method === "DELETE") {
+          const { version } = parseArchive(await readJson(request));
+          const deleted = database.deleteArchivedTask(id, version);
+          for (const attachmentId of deleted.attachmentIds) {
+            try {
+              await unlink(path.join(resolved.attachmentsDirectory, attachmentId));
+            } catch (error) {
+              if (error.code !== "ENOENT") throw error;
+            }
+          }
+          events.emit("task.deleted", { task: deleted.task });
+          return sendEmpty(response, 204);
+        }
         if (action === "move" && request.method === "POST") {
           const move = parseMove(await readJson(request));
           const task = database.moveTask(
@@ -2502,7 +2515,7 @@ export function createTaskboardServer(options = {}) {
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }
-        return methodNotAllowed(response, action ? ["POST"] : ["GET", "PATCH"]);
+        return methodNotAllowed(response, action ? ["POST"] : ["GET", "PATCH", "DELETE"]);
       }
 
       if (pathname.startsWith("/api/")) {

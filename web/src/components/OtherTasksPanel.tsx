@@ -3,18 +3,79 @@ import type { DragEvent } from "react";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
 import {
-  SECONDARY_STATUSES,
-  type SecondaryTaskStatus,
+  OTHER_TASK_TABS,
+  type OtherTaskTab,
 } from "../issueBoardStatuses";
 import { STATUS_DETAILS } from "./BoardColumn";
-import { LinearIcon } from "./LinearIcon";
+import { LinearIcon, LinearStatusIcon } from "./LinearIcon";
 import { TaskCard } from "./TaskCard";
 import { TaskboardIcon } from "./TaskboardIcon";
 
+const ARCHIVED_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "numeric",
+  day: "numeric",
+});
+
+function archivedDate(value: string | null) {
+  return value ? `${ARCHIVED_DATE_FORMATTER.format(new Date(value))}归档` : "";
+}
+
+interface ArchivedTaskCardProps {
+  task: Task;
+  busy: boolean;
+  restoring: boolean;
+  onRestore: (task: Task) => void;
+  onDelete: (task: Task) => void;
+}
+
+function ArchivedTaskCard({
+  task,
+  busy,
+  restoring,
+  onRestore,
+  onDelete,
+}: ArchivedTaskCardProps) {
+  return (
+    <article className={`task-card task-card-sidebar archived-task-card status-${task.status}`}>
+      <div className="card-topline">
+        <span className="task-identifier">ID: {task.identifier}</span>
+        <span className="archived-task-date">{archivedDate(task.archivedAt)}</span>
+      </div>
+      <h3>{task.title}</h3>
+      <div className="archived-task-footer">
+        <span className="archived-task-status">
+          <LinearStatusIcon status={task.status} />
+          {STATUS_DETAILS[task.status].label}
+        </span>
+        <button
+          className="archived-task-action archived-task-restore"
+          type="button"
+          disabled={busy}
+          onClick={() => onRestore(task)}
+        >
+          <LinearIcon name="recurrence" />
+          {restoring ? "恢复中…" : "恢复"}
+        </button>
+        <button
+          className="archived-task-action archived-task-delete"
+          type="button"
+          aria-label={`永久删除 ${task.identifier}`}
+          title="永久删除"
+          disabled={busy}
+          onClick={() => onDelete(task)}
+        >
+          <LinearIcon name="trash" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
 interface OtherTasksPanelProps {
   open: boolean;
-  activeStatus: SecondaryTaskStatus;
+  activeTab: OtherTaskTab;
   tasksByStatus: Record<TaskStatus, Task[]>;
+  archivedTasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
   now: number;
   hasActiveFilters: boolean;
@@ -26,8 +87,12 @@ interface OtherTasksPanelProps {
   contextMenuTaskId: string | null;
   availableLabels: string[];
   currentUser: ActorIdentity;
-  onStatusChange: (status: SecondaryTaskStatus) => void;
-  onCreate: (status: SecondaryTaskStatus) => void;
+  restoringTaskId: string | null;
+  deletingTaskId: string | null;
+  onTabChange: (tab: OtherTaskTab) => void;
+  onCreate: (status: Exclude<OtherTaskTab, "archived">) => void;
+  onRestore: (task: Task) => void;
+  onDelete: (task: Task) => void;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
   onContextMenu: (task: Task, position: { x: number; y: number }) => void;
@@ -40,8 +105,9 @@ interface OtherTasksPanelProps {
 
 export function OtherTasksPanel({
   open,
-  activeStatus,
+  activeTab,
   tasksByStatus,
+  archivedTasks,
   presentations,
   now,
   hasActiveFilters,
@@ -53,8 +119,12 @@ export function OtherTasksPanel({
   contextMenuTaskId,
   availableLabels,
   currentUser,
-  onStatusChange,
+  restoringTaskId,
+  deletingTaskId,
+  onTabChange,
   onCreate,
+  onRestore,
+  onDelete,
   onEdit,
   onUpdate,
   onContextMenu,
@@ -64,7 +134,8 @@ export function OtherTasksPanel({
   onDrop,
   onOpenConversation,
 }: OtherTasksPanelProps) {
-  const tasks = tasksByStatus[activeStatus];
+  const archived = activeTab === "archived";
+  const tasks = archived ? archivedTasks : tasksByStatus[activeTab];
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
@@ -89,10 +160,11 @@ export function OtherTasksPanel({
 
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
+    if (archived) return;
     const taskId =
       event.dataTransfer.getData("application/x-taskboard-task") ||
       event.dataTransfer.getData("text/plain");
-    if (taskId) onDrop(activeStatus, taskId, findDropBefore(event.currentTarget, event.clientY));
+    if (taskId) onDrop(activeTab, taskId, findDropBefore(event.currentTarget, event.clientY));
     setDropBeforeTaskId(undefined);
   }
 
@@ -115,50 +187,56 @@ export function OtherTasksPanel({
       aria-hidden={!open}
     >
       <div className="other-tasks-tabs" role="tablist" aria-label="其他任务状态">
-        {SECONDARY_STATUSES.map((status) => {
-          const details = STATUS_DETAILS[status];
-          const selected = status === activeStatus;
+        {OTHER_TASK_TABS.map((tab) => {
+          const label = tab === "archived" ? "已归档" : STATUS_DETAILS[tab].label;
+          const count = tab === "archived" ? archivedTasks.length : tasksByStatus[tab].length;
+          const selected = tab === activeTab;
           return (
             <button
               className={`other-tasks-tab${selected ? " is-active" : ""}`}
-              id={`other-tasks-tab-${status}`}
-              key={status}
+              id={`other-tasks-tab-${tab}`}
+              key={tab}
               type="button"
               role="tab"
               aria-selected={selected}
               aria-controls="other-tasks-list"
-              title={`${details.label} ${tasksByStatus[status].length}`}
-              onClick={() => onStatusChange(status)}
+              title={`${label} ${count}`}
+              onClick={() => onTabChange(tab)}
             >
-              <span className="other-tasks-tab-label">{details.label}</span>
-              <span className="other-tasks-tab-count" aria-label={`${tasksByStatus[status].length} 个议题`}>
-                {tasksByStatus[status].length}
+              <span className="other-tasks-tab-label">{label}</span>
+              <span className="other-tasks-tab-count" aria-label={`${count} 个议题`}>
+                {count}
               </span>
             </button>
           );
         })}
       </div>
 
-      <button
-        className="other-tasks-add"
-        type="button"
-        aria-label={`在${STATUS_DETAILS[activeStatus].label}中新建议题`}
-        title={`添加到${STATUS_DETAILS[activeStatus].label}`}
-        onClick={() => onCreate(activeStatus)}
-      >
-        <TaskboardIcon name="sidebarAdd" />
-      </button>
+      {!archived && (
+        <button
+          className="other-tasks-add"
+          type="button"
+          aria-label={`在${STATUS_DETAILS[activeTab].label}中新建议题`}
+          title={`添加到${STATUS_DETAILS[activeTab].label}`}
+          onClick={() => onCreate(activeTab)}
+        >
+          <TaskboardIcon name="sidebarAdd" />
+        </button>
+      )}
 
       <div
-        className="other-tasks-list"
+        className={`other-tasks-list${archived ? " is-archived" : ""}`}
         id="other-tasks-list"
         role="tabpanel"
-        aria-labelledby={`other-tasks-tab-${activeStatus}`}
-        onDragEnter={() => onDragEnter(activeStatus)}
+        aria-labelledby={`other-tasks-tab-${activeTab}`}
+        onDragEnter={() => {
+          if (!archived) onDragEnter(activeTab);
+        }}
         onDragOver={(event) => {
+          if (archived) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
-          onDragEnter(activeStatus);
+          onDragEnter(activeTab);
           setDropBeforeTaskId(findDropBefore(event.currentTarget, event.clientY));
         }}
         onDragLeave={(event) => {
@@ -168,7 +246,16 @@ export function OtherTasksPanel({
         }}
         onDrop={handleDrop}
       >
-        {tasks.map((task) => {
+        {archived ? archivedTasks.map((task) => (
+          <ArchivedTaskCard
+            key={task.id}
+            task={task}
+            busy={restoringTaskId !== null || deletingTaskId !== null}
+            restoring={restoringTaskId === task.id}
+            onRestore={onRestore}
+            onDelete={onDelete}
+          />
+        )) : tasks.map((task) => {
           const dragShift = getTaskDragShift(task);
           return (
             <TaskCard
@@ -195,9 +282,15 @@ export function OtherTasksPanel({
         })}
         {tasks.length === 0 && (
           <div className="other-tasks-empty">
-            <LinearIcon name={hasActiveFilters ? "search" : "panel"} />
+            <LinearIcon name={hasActiveFilters ? "search" : archived ? "trash" : "panel"} />
             <strong>{hasActiveFilters ? "当前筛选下无匹配议题" : "暂无议题"}</strong>
-            <span>{hasActiveFilters ? "搜索和筛选会同步作用于所有状态。" : `没有${STATUS_DETAILS[activeStatus].label}。`}</span>
+            <span>
+              {hasActiveFilters
+                ? "搜索和筛选会同步作用于所有状态。"
+                : archived
+                  ? "没有已归档议题。"
+                  : `没有${STATUS_DETAILS[activeTab].label}。`}
+            </span>
           </div>
         )}
       </div>

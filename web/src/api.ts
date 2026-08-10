@@ -344,10 +344,22 @@ export async function listDevelopmentContexts(
   );
 }
 
-export async function listTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
-  const params = new URLSearchParams({ projectId, archived: "false" });
+async function listTasksByArchive(
+  projectId: string,
+  archived: "true" | "false",
+  signal?: AbortSignal,
+): Promise<Task[]> {
+  const params = new URLSearchParams({ projectId, archived });
   const data = await request<{ tasks: Task[] }>(`/api/tasks?${params}`, { signal });
   return data.tasks;
+}
+
+export function listTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
+  return listTasksByArchive(projectId, "false", signal);
+}
+
+export function listArchivedTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
+  return listTasksByArchive(projectId, "true", signal);
 }
 
 export async function createTask(projectId: string, draft: TaskDraft, threadId?: string): Promise<Task> {
@@ -402,6 +414,13 @@ export async function restoreTask(task: Task, threadId?: string): Promise<Task> 
     },
   );
   return data.task;
+}
+
+export async function deleteArchivedTask(task: Task): Promise<void> {
+  await request(`/api/tasks/${encodeURIComponent(task.id)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ version: task.version }),
+  });
 }
 
 export async function addTaskRelation(

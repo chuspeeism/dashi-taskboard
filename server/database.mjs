@@ -1561,6 +1561,22 @@ export class TaskboardDatabase {
     return this.getTask(current.id);
   }
 
+  deleteArchivedTask(id, version) {
+    const current = this.#requireTask(id);
+    this.#requireVersion(current, version);
+    if (current.archivedAt === null) {
+      throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be deleted");
+    }
+    const attachmentIds = this.database.prepare(
+      "SELECT id FROM attachments WHERE task_id = ? ORDER BY created_at, id",
+    ).all(current.id).map((attachment) => attachment.id);
+    const result = this.database.prepare(
+      "DELETE FROM tasks WHERE id = ? AND version = ? AND archived_at IS NOT NULL",
+    ).run(current.id, version);
+    if (result.changes !== 1) this.#throwMissingOrConflict(id, version);
+    return { task: current, attachmentIds };
+  }
+
   addTaskRelation(id, version, type, relatedId, threadId, actor) {
     this.database.exec("BEGIN IMMEDIATE");
     try {

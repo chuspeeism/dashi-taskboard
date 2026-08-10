@@ -63,6 +63,27 @@ const TASKBOARD_ICONS = {
 
 export type TaskboardIconName = keyof typeof TASKBOARD_ICONS;
 
+const MONOCHROME_ICONS = new Set<TaskboardIconName>([
+  "aiLauncher",
+  "automationPlay",
+  "breadcrumb",
+  "calendar",
+  "columnAdd",
+  "conversation",
+  "create",
+  "dropdown",
+  "filter",
+  "home",
+  "panel",
+  "projectFolder",
+  "search",
+  "sidebarAdd",
+  "statusBlocked",
+  "statusProgress",
+  "statusReview",
+  "statusTodo",
+]);
+
 export function taskboardIconSource(name: TaskboardIconName) {
   return TASKBOARD_ICONS[name];
 }
@@ -72,10 +93,16 @@ interface TaskboardIconProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "
 }
 
 export function TaskboardIcon({ name, className, ...props }: TaskboardIconProps) {
+  const classes = [
+    "taskboard-icon",
+    MONOCHROME_ICONS.has(name) ? "taskboard-icon-monochrome" : "",
+    className ?? "",
+  ].filter(Boolean).join(" ");
+
   return (
     <img
       {...props}
-      className={`taskboard-icon${className ? ` ${className}` : ""}`}
+      className={classes}
       src={TASKBOARD_ICONS[name]}
       alt=""
       aria-hidden="true"
