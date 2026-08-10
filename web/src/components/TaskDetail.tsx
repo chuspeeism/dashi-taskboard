@@ -1187,7 +1187,7 @@ export function TaskDetail({
                 type="button"
                 onClick={() => onCopy(
                   buildIssueUrl(
-                    window.location.href,
+                    document.baseURI,
                     currentTask.projectId,
                     currentTask.identifier,
                   ).href,

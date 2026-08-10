@@ -118,6 +118,9 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type DetailSourceScroll =
+  | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
+  | { projectId: string; view: "list"; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
@@ -653,7 +656,8 @@ export function App() {
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
   const issueListRef = useRef<HTMLDivElement>(null);
-  const pendingIssueListScrollRef = useRef<{ projectId: string; scrollTop: number } | null>(null);
+  const boardColumnScrollRefs = useRef<Partial<Record<TaskStatus, HTMLDivElement | null>>>({});
+  const pendingDetailSourceScrollRef = useRef<DetailSourceScroll | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
@@ -1056,11 +1060,22 @@ export function App() {
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
     if (fullTask) markTaskRead(fullTask);
-    if (issueListRef.current) {
-      pendingIssueListScrollRef.current = {
+    if (boardView === "list" && issueListRef.current) {
+      pendingDetailSourceScrollRef.current = {
         projectId: selectedProjectId,
+        view: "list",
         scrollTop: issueListRef.current.scrollTop,
       };
+    } else if (boardView === "issues" && fullTask) {
+      const scrollContainer = boardColumnScrollRefs.current[fullTask.status];
+      if (scrollContainer) {
+        pendingDetailSourceScrollRef.current = {
+          projectId: selectedProjectId,
+          view: "issues",
+          status: fullTask.status,
+          scrollTop: scrollContainer.scrollTop,
+        };
+      }
     }
     closeContextMenu();
     setProjectMenuOpen(false);
@@ -1086,15 +1101,18 @@ export function App() {
 
   useLayoutEffect(() => {
     if (detailTaskIdentifier) return;
-    const pendingScroll = pendingIssueListScrollRef.current;
+    const pendingScroll = pendingDetailSourceScrollRef.current;
     if (!pendingScroll) return;
-    if (boardView !== "list" || pendingScroll.projectId !== selectedProjectId) {
-      pendingIssueListScrollRef.current = null;
+    if (pendingScroll.view !== boardView || pendingScroll.projectId !== selectedProjectId) {
+      pendingDetailSourceScrollRef.current = null;
       return;
     }
-    if (!issueListRef.current) return;
-    issueListRef.current.scrollTop = pendingScroll.scrollTop;
-    pendingIssueListScrollRef.current = null;
+    const scrollContainer = pendingScroll.view === "list"
+      ? issueListRef.current
+      : boardColumnScrollRefs.current[pendingScroll.status];
+    if (!scrollContainer) return;
+    scrollContainer.scrollTop = pendingScroll.scrollTop;
+    pendingDetailSourceScrollRef.current = null;
   }, [boardView, detailTaskIdentifier, selectedProjectId]);
 
   useEffect(() => {
@@ -1102,11 +1120,27 @@ export function App() {
       const url = new URL(window.location.href);
       const routeProjectId = url.searchParams.get("project") ?? GLOBAL_PROJECT_ID;
       const routeIssueIdentifier = readIssueIdentifier(url.search);
-      if (routeIssueIdentifier && issueListRef.current) {
-        pendingIssueListScrollRef.current = {
+      if (routeIssueIdentifier && boardView === "list" && issueListRef.current) {
+        pendingDetailSourceScrollRef.current = {
           projectId: selectedProjectId,
+          view: "list",
           scrollTop: issueListRef.current.scrollTop,
         };
+      } else if (routeIssueIdentifier && boardView === "issues") {
+        const routeTask = tasksRef.current.find(
+          (task) => task.identifier === routeIssueIdentifier,
+        );
+        const scrollContainer = routeTask
+          ? boardColumnScrollRefs.current[routeTask.status]
+          : null;
+        if (routeTask && scrollContainer) {
+          pendingDetailSourceScrollRef.current = {
+            projectId: selectedProjectId,
+            view: "issues",
+            status: routeTask.status,
+            scrollTop: scrollContainer.scrollTop,
+          };
+        }
       }
       setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
@@ -1116,7 +1150,7 @@ export function App() {
 
     window.addEventListener("popstate", syncRouteFromLocation);
     return () => window.removeEventListener("popstate", syncRouteFromLocation);
-  }, [selectedProjectId]);
+  }, [boardView, selectedProjectId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -2626,6 +2660,9 @@ export function App() {
                     {mainStatuses.map((status) => (
                       <BoardColumn
                         key={status}
+                        scrollRef={(element) => {
+                          boardColumnScrollRefs.current[status] = element;
+                        }}
                         status={status}
                         tasks={tasksByStatus[status]}
                         presentations={taskPresentations}

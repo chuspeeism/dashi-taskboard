@@ -62,6 +62,7 @@ function ColumnStatusIcon({ status }: { status: TaskStatus }) {
 }
 
 interface BoardColumnProps {
+  scrollRef: (element: HTMLDivElement | null) => void;
   status: TaskStatus;
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
@@ -88,6 +89,7 @@ interface BoardColumnProps {
 }
 
 export function BoardColumn({
+  scrollRef,
   status,
   tasks,
   presentations,
@@ -193,7 +195,7 @@ export function BoardColumn({
         </div>
       </header>
 
-      <div className="column-list">
+      <div className="column-list" ref={scrollRef}>
         {tasks.map((task) => {
           const dragShift = getTaskDragShift(task);
           return (
