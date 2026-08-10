@@ -1110,9 +1110,9 @@ export function App() {
     const scrollContainer = pendingScroll.view === "list"
       ? issueListRef.current
       : boardColumnScrollRefs.current[pendingScroll.status];
+    pendingDetailSourceScrollRef.current = null;
     if (!scrollContainer) return;
     scrollContainer.scrollTop = pendingScroll.scrollTop;
-    pendingDetailSourceScrollRef.current = null;
   }, [boardView, detailTaskIdentifier, selectedProjectId]);
 
   useEffect(() => {
