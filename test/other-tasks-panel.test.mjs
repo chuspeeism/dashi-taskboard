@@ -36,9 +36,9 @@ test("the issue workspace projects the seven statuses into adaptive main and sec
   assert.match(boardColumnSource, /in_review: \{ label: "等你确认", tone: "review" \}/);
 });
 
-test("other tasks is a closed-by-default non-modal panel with three counted tabs", () => {
+test("other tasks is a closed-by-default non-modal panel with four counted tabs", () => {
   assert.match(appSource, /useState\(false\)/);
-  assert.match(appSource, /useState<SecondaryTaskStatus>\("backlog"\)/);
+  assert.match(appSource, /useState<OtherTaskTab>\("backlog"\)/);
   assert.match(appSource, /className=\{`other-tasks-trigger\$\{otherTasksOpen \? " is-open" : ""\}`\}/);
   assert.match(appSource, /aria-controls="other-tasks-panel"/);
   assert.match(appSource, /aria-expanded=\{otherTasksOpen\}/);
@@ -47,9 +47,10 @@ test("other tasks is a closed-by-default non-modal panel with three counted tabs
   assert.match(panelSource, /<aside[\s\S]*?id="other-tasks-panel"/);
   assert.match(panelSource, /aria-hidden=\{!open\}/);
   assert.match(panelSource, /role="tablist"/);
-  assert.match(panelSource, /SECONDARY_STATUSES\.map\(\(status\) =>/);
+  assert.match(statusSource, /OTHER_TASK_TABS = \[[\s\S]*?\.\.\.SECONDARY_STATUSES,[\s\S]*?"archived"/);
+  assert.match(panelSource, /OTHER_TASK_TABS\.map\(\(tab\) =>/);
   assert.match(panelSource, /aria-selected=\{selected\}/);
-  assert.match(panelSource, /tasksByStatus\[status\]\.length/);
+  assert.match(panelSource, /const count = tab === "archived" \? archivedTasks\.length : tasksByStatus\[tab\]\.length/);
   assert.doesNotMatch(panelSource, /createPortal|role="dialog"|backdrop|overlay/);
   assert.match(cssBlock(".issue-board-layout"), /display: grid/);
   assert.match(cssBlock(".issue-board-layout.has-other-tasks"), /minmax\(0, 1fr\)/);
@@ -62,16 +63,20 @@ test("other tasks is a closed-by-default non-modal panel with three counted tabs
 
 test("search and filters feed the same status buckets used by the board and panel", () => {
   assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search\) && matchesTaskFilters\(task, filters\)/);
+  assert.match(appSource, /const filteredArchivedTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search\) && matchesTaskFilters\(task, filters\)/);
   assert.match(appSource, /TASK_STATUSES\.map\(\(status\) => \[status, filteredTasks\.filter\(\(task\) => task\.status === status\)\]\)/);
   assert.match(appSource, /tasks=\{tasksByStatus\[status\]\}/);
   assert.match(appSource, /tasksByStatus=\{tasksByStatus\}/);
+  assert.match(appSource, /archivedTasks=\{filteredArchivedTasks\}/);
   assert.match(appSource, /hasActiveFilters=\{hasActiveTaskFilters\}/);
-  assert.match(panelSource, /const tasks = tasksByStatus\[activeStatus\]/);
+  assert.match(panelSource, /const archived = activeTab === "archived"/);
+  assert.match(panelSource, /const tasks = archived \? archivedTasks : tasksByStatus\[activeTab\]/);
   assert.match(panelSource, /hasActiveFilters \? "当前筛选下无匹配议题"/);
   assert.match(boardColumnSource, /tasks\.length === 0 && <div className="column-empty">\{emptyMessage\}<\/div>/);
 });
 
-test("panel cards reuse TaskCard and the existing ranked board drop path", () => {
+test("active panel cards reuse TaskCard and ranked drops while archived cards use their own branch", () => {
+  assert.match(panelSource, /\{archived \? archivedTasks\.map\(\(task\) => \([\s\S]*?<ArchivedTaskCard[\s\S]*?\)\) : tasks\.map\(\(task\) =>/);
   assert.match(panelSource, /<TaskCard/);
   assert.match(panelSource, /variant="sidebar"/);
   assert.match(panelSource, /presentation=\{presentations\[task\.id\]\}/);
@@ -86,7 +91,8 @@ test("panel cards reuse TaskCard and the existing ranked board drop path", () =>
   assert.match(boardColumnSource, /findDropBefore\(event\.currentTarget, event\.clientY\)/);
   assert.match(boardColumnSource, /onDrop\(status, taskId, findDropBefore/);
   assert.match(panelSource, /findDropBefore\(event\.currentTarget, event\.clientY\)/);
-  assert.match(panelSource, /onDrop\(activeStatus, taskId, findDropBefore/);
+  assert.match(panelSource, /if \(archived\) return/);
+  assert.match(panelSource, /onDrop\(activeTab, taskId, findDropBefore/);
   assert.match(appSource, /onDrop=\{finishTaskDrop\}/);
   assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true\)/);
 });
