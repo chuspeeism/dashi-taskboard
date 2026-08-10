@@ -1572,13 +1572,16 @@ export function createTaskboardServer(options = {}) {
       } catch {}
     }
 
-    const turnStates = new Map();
+    let runningTurnId = null;
     for (const record of records) {
       const payload = record?.payload;
       if (record?.type !== "event_msg" || typeof payload?.turn_id !== "string") continue;
-      if (payload.type === "task_started") turnStates.set(payload.turn_id, true);
-      if (payload.type === "task_complete" || payload.type === "turn_aborted") {
-        turnStates.set(payload.turn_id, false);
+      if (payload.type === "task_started") runningTurnId = payload.turn_id;
+      if (
+        (payload.type === "task_complete" || payload.type === "turn_aborted")
+        && payload.turn_id === runningTurnId
+      ) {
+        runningTurnId = null;
       }
     }
 
@@ -1616,7 +1619,7 @@ export function createTaskboardServer(options = {}) {
     const state = {
       completed: progress?.completed ?? null,
       total: progress?.total ?? null,
-      running: [...turnStates.values()].some(Boolean),
+      running: runningTurnId !== null,
     };
     codexSessionStateCache.set(sessionPath, {
       size: sessionStat.size,

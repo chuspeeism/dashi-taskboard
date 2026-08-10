@@ -143,7 +143,8 @@ export function taskCardPresentation(
     conversations,
     unread,
     processing: {
-      running: Boolean(running) || taskNativeSession?.running === true,
+      running: task.status === "in_progress"
+        && (Boolean(running) || taskNativeSession?.running === true),
       completed: latestTodo?.completed ?? null,
       total: latestTodo?.total ?? null,
       startedAt: runningAi?.currentRun?.startedAt ?? null,

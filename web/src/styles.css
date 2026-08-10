@@ -9494,11 +9494,11 @@ kbd {
 .task-processing.is-running .task-processing-label {
   background: linear-gradient(
     90deg,
-    rgba(0, 0, 0, 0.36) 0%,
-    rgba(0, 0, 0, 0.36) 35%,
-    rgba(0, 0, 0, 0.7) 50%,
-    rgba(0, 0, 0, 0.36) 65%,
-    rgba(0, 0, 0, 0.36) 100%
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 35%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 65%,
+    var(--text-tertiary) 100%
   );
   background-position: 100% 0;
   background-size: 220% 100%;
@@ -9566,11 +9566,11 @@ kbd {
 .task-processing-row.is-running .task-processing-label {
   background: linear-gradient(
     90deg,
-    rgba(0, 0, 0, .36) 0%,
-    rgba(0, 0, 0, .36) 35%,
-    rgba(0, 0, 0, .7) 50%,
-    rgba(0, 0, 0, .36) 65%,
-    rgba(0, 0, 0, .36) 100%
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 35%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 65%,
+    var(--text-tertiary) 100%
   );
   background-position: 100% 0;
   background-size: 220% 100%;
