@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useState, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import { assigneeTargetForActor } from "../actors";
 import { labelPresentation } from "../labels";
 import type { TaskCardPresentation } from "../taskConversations";
@@ -21,6 +21,7 @@ const PRIORITY_LABELS: Record<TaskPriority, string> = {
 const COLLAPSED_BY_DEFAULT = new Set<TaskStatus>(["backlog", "done", "canceled"]);
 
 interface IssueListViewProps {
+  scrollRef: RefObject<HTMLDivElement | null>;
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
   currentUser: ActorIdentity;
@@ -40,6 +41,7 @@ function calendarDate(value: string) {
 }
 
 export function IssueListView({
+  scrollRef,
   tasks,
   presentations,
   currentUser,
@@ -65,7 +67,7 @@ export function IssueListView({
   }
 
   return (
-    <div className="issue-list-view">
+    <div className="issue-list-view" ref={scrollRef}>
       <div className="issue-list-groups">
         {TASK_STATUSES.map((status) => {
           const statusTasks = tasks.filter((task) => task.status === status);

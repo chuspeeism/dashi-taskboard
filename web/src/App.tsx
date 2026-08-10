@@ -645,6 +645,8 @@ export function App() {
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
+  const issueListRef = useRef<HTMLDivElement>(null);
+  const pendingIssueListScrollTopRef = useRef<number | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
@@ -1037,6 +1039,9 @@ export function App() {
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
     if (fullTask) markTaskRead(fullTask);
+    if (issueListRef.current) {
+      pendingIssueListScrollTopRef.current = issueListRef.current.scrollTop;
+    }
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(task.identifier);
@@ -1058,6 +1063,14 @@ export function App() {
     const url = buildIssueUrl(window.location.href, selectedProjectId || null, null);
     window.history.replaceState(window.history.state, "", url);
   }
+
+  useLayoutEffect(() => {
+    if (detailTaskIdentifier || boardView !== "list") return;
+    const scrollTop = pendingIssueListScrollTopRef.current;
+    if (scrollTop === null || !issueListRef.current) return;
+    issueListRef.current.scrollTop = scrollTop;
+    pendingIssueListScrollTopRef.current = null;
+  }, [boardView, detailTaskIdentifier]);
 
   useEffect(() => {
     function syncRouteFromLocation() {
@@ -2450,6 +2463,7 @@ export function App() {
           />
         ) : boardView === "list" ? (
           <IssueListView
+            scrollRef={issueListRef}
             tasks={filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}

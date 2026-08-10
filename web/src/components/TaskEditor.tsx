@@ -128,6 +128,7 @@ export function TaskEditor({
   onSave,
 }: TaskEditorProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const backdropPointerRef = useRef({ down: false, up: false });
   const titleRef = useRef<HTMLInputElement>(null);
   const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
   const createSubmitIntentRef = useRef(false);
@@ -281,8 +282,24 @@ export function TaskEditor({
         event.preventDefault();
         if (!saving) cancelEditor();
       }}
+      onPointerDown={(event) => {
+        backdropPointerRef.current = {
+          down: event.target === event.currentTarget,
+          up: false,
+        };
+      }}
+      onPointerUp={(event) => {
+        backdropPointerRef.current.up = event.target === event.currentTarget;
+      }}
+      onPointerCancel={() => {
+        backdropPointerRef.current = { down: false, up: false };
+      }}
       onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) cancelEditor();
+        const backdropClick = backdropPointerRef.current.down
+          && backdropPointerRef.current.up
+          && event.target === event.currentTarget;
+        backdropPointerRef.current = { down: false, up: false };
+        if (backdropClick && !saving) cancelEditor();
       }}
     >
       <form className="task-form" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
