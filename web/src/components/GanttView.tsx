@@ -173,7 +173,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
         ? `${start.getMonth() + 1}月${start.getDate()}日 — ${displayEnd.getMonth() + 1}月${displayEnd.getDate()}日`
         : `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 — ${displayEnd.getFullYear()}年${displayEnd.getMonth() + 1}月${displayEnd.getDate()}日`;
       const avatar = task.taskboardAssigneeType === "agent"
-        ? `<img src="/codex-agent-logo.png" alt="">`
+        ? `<img src="codex-agent-logo.png" alt="">`
         : task.taskboardAssigneeAvatarUrl
         ? `<img src="${escapeHtml(task.taskboardAssigneeAvatarUrl)}" alt="">`
         : `<span>${escapeHtml(task.taskboardAssigneeInitial)}</span>`;
