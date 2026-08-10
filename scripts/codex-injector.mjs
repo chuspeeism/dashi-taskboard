@@ -2,7 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -33,6 +33,9 @@ const defaultCodexDebuggingPort = 9229;
 const independentCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_PROFILE
   ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_PROFILE)
   : "/private/tmp/codex-taskboard-independent-profile-v2";
+const sourceCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE
+  ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE)
+  : null;
 const injectionPath = path.join(projectRoot, "inject", "codex-taskboard.user.js");
 const taskboardDataDirectory = process.env.CODEX_TASKBOARD_DATA_DIR
   ? path.resolve(process.env.CODEX_TASKBOARD_DATA_DIR)
@@ -233,6 +236,52 @@ async function removeTaskboardRuntime() {
     }
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
+  }
+}
+
+async function importCodexBrowserProfile() {
+  if (!sourceCodexProfilePath || sourceCodexProfilePath === independentCodexProfilePath) return;
+  const markerPath = path.join(
+    independentCodexProfilePath,
+    ".codex-taskboard-browser-profile-imported-v1",
+  );
+  try {
+    await stat(markerPath);
+    return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  const databasePaths = [
+    "Default/Partitions/codex-browser-app/Cookies",
+    "Default/Partitions/codex-browser-app/Login Data",
+    "Default/Partitions/codex-browser-app/Login Data For Account",
+  ];
+  const sources = [];
+  for (const relativePath of databasePaths) {
+    const sourcePath = path.join(sourceCodexProfilePath, relativePath);
+    try {
+      await stat(sourcePath);
+      sources.push({ relativePath, sourcePath });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  if (sources.length === 0) return;
+
+  const { DatabaseSync, backup } = await import("node:sqlite");
+  for (const { relativePath, sourcePath } of sources) {
+    const destinationPath = path.join(independentCodexProfilePath, relativePath);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    const sourceDatabase = new DatabaseSync(sourcePath, { readOnly: true });
+    try {
+      await backup(sourceDatabase, destinationPath);
+    } finally {
+      sourceDatabase.close();
+    }
+  }
+  if (sources.length === databasePaths.length) {
+    await writeFile(markerPath, "1\n");
   }
 }
 
@@ -1598,6 +1647,7 @@ async function main() {
 
     await supervisor.ensure({ force: true });
     await publishTaskboardRuntime();
+    if (options.launch) await importCodexBrowserProfile();
 
     if (options.cdpPipe) {
       const launched = await launchCodexWithPipe(options.appPath);

@@ -142,6 +142,10 @@ async function prepareNodeRuntime() {
     path.join(runtimes.get("arm64"), "LICENSE"),
     path.join(resourcesDirectory, "licenses", "Node-LICENSE"),
   );
+  await copyFile(
+    path.join(tauriRoot, "licenses", "Lobe-Icons-LICENSE.txt"),
+    path.join(resourcesDirectory, "licenses", "Lobe-Icons-LICENSE.txt"),
+  );
 }
 
 async function copyApplicationResources() {
