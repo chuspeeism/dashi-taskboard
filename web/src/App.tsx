@@ -646,7 +646,7 @@ export function App() {
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
   const issueListRef = useRef<HTMLDivElement>(null);
-  const pendingIssueListScrollTopRef = useRef<number | null>(null);
+  const pendingIssueListScrollRef = useRef<{ projectId: string; scrollTop: number } | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
@@ -1040,7 +1040,10 @@ export function App() {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
     if (fullTask) markTaskRead(fullTask);
     if (issueListRef.current) {
-      pendingIssueListScrollTopRef.current = issueListRef.current.scrollTop;
+      pendingIssueListScrollRef.current = {
+        projectId: selectedProjectId,
+        scrollTop: issueListRef.current.scrollTop,
+      };
     }
     closeContextMenu();
     setProjectMenuOpen(false);
@@ -1065,18 +1068,30 @@ export function App() {
   }
 
   useLayoutEffect(() => {
-    if (detailTaskIdentifier || boardView !== "list") return;
-    const scrollTop = pendingIssueListScrollTopRef.current;
-    if (scrollTop === null || !issueListRef.current) return;
-    issueListRef.current.scrollTop = scrollTop;
-    pendingIssueListScrollTopRef.current = null;
-  }, [boardView, detailTaskIdentifier]);
+    if (detailTaskIdentifier) return;
+    const pendingScroll = pendingIssueListScrollRef.current;
+    if (!pendingScroll) return;
+    if (boardView !== "list" || pendingScroll.projectId !== selectedProjectId) {
+      pendingIssueListScrollRef.current = null;
+      return;
+    }
+    if (!issueListRef.current) return;
+    issueListRef.current.scrollTop = pendingScroll.scrollTop;
+    pendingIssueListScrollRef.current = null;
+  }, [boardView, detailTaskIdentifier, selectedProjectId]);
 
   useEffect(() => {
     function syncRouteFromLocation() {
       const url = new URL(window.location.href);
       const routeProjectId = url.searchParams.get("project") ?? GLOBAL_PROJECT_ID;
-      setDetailTaskIdentifier(readIssueIdentifier(url.search));
+      const routeIssueIdentifier = readIssueIdentifier(url.search);
+      if (routeIssueIdentifier && issueListRef.current) {
+        pendingIssueListScrollRef.current = {
+          projectId: selectedProjectId,
+          scrollTop: issueListRef.current.scrollTop,
+        };
+      }
+      setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
       setBoardView(readProjectBoardView(routeProjectId));
       setSelectedProjectId(routeProjectId);
