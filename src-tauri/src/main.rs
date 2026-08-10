@@ -107,6 +107,20 @@ fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
     }
 }
 
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let destination = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &destination)?;
+        } else {
+            fs::copy(entry.path(), destination)?;
+        }
+    }
+    Ok(())
+}
+
 fn taskboard_listener(state: &LauncherState) -> Result<(i32, u16), String> {
     let mut listener = state.taskboard_listener.lock().unwrap();
     if listener.is_none() {
@@ -656,6 +670,15 @@ fn main() {
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
             let home_directory = app.path().home_dir()?;
+            let bundled_skill = app
+                .path()
+                .resource_dir()?
+                .join("app/skills/manage-taskboard");
+            let global_skill = home_directory.join(".agents/skills/manage-taskboard");
+            if global_skill.exists() {
+                fs::remove_dir_all(&global_skill)?;
+            }
+            copy_directory(&bundled_skill, &global_skill)?;
             let data_directory = home_directory.join("Library/Application Support/Codex Taskboard");
             let log_directory = home_directory.join("Library/Logs/Codex Taskboard");
             fs::create_dir_all(&data_directory)?;
