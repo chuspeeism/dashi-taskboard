@@ -1021,7 +1021,6 @@ kbd {
   background: transparent;
 }
 
-.search-field:hover,
 .task-filter-trigger:hover,
 .other-tasks-trigger:hover {
   background: var(--surface-hover);
