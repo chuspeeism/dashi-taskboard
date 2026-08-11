@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,6 +13,7 @@ import {
   listComments,
   listTaskActivities,
   markdownIncludesAttachment,
+  resolveTaskboardUrl,
   resolvePersistedAttachmentUrl,
   uploadAttachment,
   uploadCommentAttachment,
@@ -152,6 +153,18 @@ function fileSize(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
   return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+async function downloadAttachmentFile(attachment: Attachment) {
+  const response = await fetch(resolveTaskboardUrl(attachmentDownloadUrl(attachment)));
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = attachment.filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function contextValue(context: DevelopmentContext | null): string {
@@ -763,6 +776,14 @@ export function TaskDetail({
     }
   }
 
+  function handleAttachmentDownload(event: MouseEvent<HTMLAnchorElement>, attachment: Attachment) {
+    event.preventDefault();
+    setAttachmentsError(null);
+    void downloadAttachmentFile(attachment).catch((error) => {
+      setAttachmentsError(messageFor(error));
+    });
+  }
+
   const developmentOptions = [...developmentScan.contexts];
   if (
     currentTask.developmentContext
@@ -941,6 +962,7 @@ export function TaskDetail({
                         href={attachmentDownloadUrl(attachment)}
                         download={attachment.filename}
                         title={text(`下载 ${attachment.filename}`, `Download ${attachment.filename}`)}
+                        onClick={(event) => handleAttachmentDownload(event, attachment)}
                       >
                         <span className="attachment-file-icon" aria-hidden="true">
                           <LinearIcon name="file" />
@@ -956,6 +978,7 @@ export function TaskDetail({
                           download={attachment.filename}
                           aria-label={text(`下载 ${attachment.filename}`, `Download ${attachment.filename}`)}
                           title={text("下载附件", "Download attachment")}
+                          onClick={(event) => handleAttachmentDownload(event, attachment)}
                         >
                           <LinearIcon name="openExternal" />
                         </a>
@@ -1223,6 +1246,7 @@ export function TaskDetail({
                                   href={attachmentDownloadUrl(attachment)}
                                   download={attachment.filename}
                                   title={text(`下载 ${attachment.filename}`, `Download ${attachment.filename}`)}
+                                  onClick={(event) => handleAttachmentDownload(event, attachment)}
                                 >
                                   <span className="attachment-file-icon" aria-hidden="true">
                                     <LinearIcon name="file" />
