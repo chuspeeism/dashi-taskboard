@@ -128,6 +128,7 @@ type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
   | { projectId: string; view: "list"; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
+type ActionError = string | readonly [string, string];
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
 
@@ -629,7 +630,12 @@ export function App() {
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const actionErrorText = actionError === null
+    ? null
+    : typeof actionError === "string"
+      ? actionError
+      : text(actionError[0], actionError[1]);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
@@ -2675,10 +2681,10 @@ export function App() {
           </div>}
         </div>}
 
-        {(loadError || actionError) && (
+        {(loadError || actionErrorText) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionError ?? loadError}</p></div>
+            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionErrorText ?? loadError}</p></div>
             <button
               type="button"
               onClick={() => {
@@ -2920,7 +2926,7 @@ export function App() {
                 onChange={(event) => setProjectName(event.target.value)}
               />
             </label>
-            {actionError && <p className="project-dialog-error">{actionError}</p>}
+            {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
             <div>
               <button
                 className="button secondary"

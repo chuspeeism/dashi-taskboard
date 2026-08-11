@@ -76,6 +76,8 @@ import { buildIssueUrl } from "../issueRoute";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
 
+type TaskDetailError = string | readonly [string, string];
+
 interface TaskDetailProps {
   task: Task;
   tasks: Task[];
@@ -101,22 +103,23 @@ interface TaskDetailProps {
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
   openingThread: boolean;
-  onError: (message: string | null) => void;
+  onError: (message: TaskDetailError | null) => void;
 }
 
-function messageFor(
-  error: unknown,
-  text: (chinese: string, english: string) => string,
-): string {
-  if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
-    return text(
-      "该议题已在其他位置更新，请刷新后重试。",
-      "This issue changed elsewhere. Refresh and try again.",
-    );
-  }
+function messageFor(error: unknown): TaskDetailError {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
-  return text("操作未完成，请重试。", "The action could not be completed. Try again.");
+  return ["操作未完成，请重试。", "The action could not be completed. Try again."];
+}
+
+function issueMessageFor(error: unknown): TaskDetailError {
+  if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+    return [
+      "该议题已在其他位置更新，请刷新后重试。",
+      "This issue changed elsewhere. Refresh and try again.",
+    ];
+  }
+  return messageFor(error);
 }
 
 function exactTime(value: string, locale: string): string {
@@ -344,14 +347,14 @@ export function TaskDetail({
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(true);
-  const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
+  const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [pendingAttachmentDelete, setPendingAttachmentDelete] = useState<Attachment | null>(null);
   const [deletingAttachment, setDeletingAttachment] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [taskActivities, setTaskActivities] = useState<TaskChangeActivity[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
-  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [commentsError, setCommentsError] = useState<TaskDetailError | null>(null);
   const [commentSegments, setCommentSegments] = useState<InlineMediaSegment[]>(
     () => createInlineMediaSegments(
       taskboardStorage.getItem(`taskboard.comment-draft.${task.id}`) ?? "",
@@ -424,7 +427,7 @@ export function TaskDetail({
       },
       (error) => {
         if ((error as Error).name === "AbortError") return;
-        setCommentsError(messageFor(error, text));
+        setCommentsError(messageFor(error));
         setCommentsLoading(false);
       },
     );
@@ -442,7 +445,7 @@ export function TaskDetail({
       },
       (error) => {
         if ((error as Error).name === "AbortError") return;
-        setAttachmentsError(messageFor(error, text));
+        setAttachmentsError(messageFor(error));
         setAttachmentsLoading(false);
       },
     );
@@ -495,7 +498,7 @@ export function TaskDetail({
       setDescription(saved.description);
       return saved;
     } catch (error) {
-      onError(messageFor(error, text));
+      onError(issueMessageFor(error));
       setTitle(currentTask.title);
       setDescription(currentTask.description);
       return null;
@@ -518,7 +521,7 @@ export function TaskDetail({
       if (nextCurrent) setCurrentTask(nextCurrent);
       return result;
     } catch (error) {
-      onError(messageFor(error, text));
+      onError(issueMessageFor(error));
       throw error;
     }
   }
@@ -538,7 +541,7 @@ export function TaskDetail({
     const normalized = title.trim();
     if (!normalized) {
       setTitle(currentTask.title);
-      onError(text("议题标题不能为空。", "Issue title cannot be empty."));
+      onError(["议题标题不能为空。", "Issue title cannot be empty."]);
       return;
     }
     if (normalized === currentTask.title) {
@@ -568,7 +571,11 @@ export function TaskDetail({
         inlineImages,
         uploaded,
       ).trim();
-      const saved = await onUpdate(currentTask, { description: resolvedDescription });
+      const saved = await onUpdate(currentTask, { description: resolvedDescription }).catch((error) => {
+        onError(issueMessageFor(error));
+        return null;
+      });
+      if (!saved) return;
       setCurrentTask(saved);
       setDescription(saved.description);
       setDescriptionSegments(createInlineMediaSegments(saved.description));
@@ -578,7 +585,7 @@ export function TaskDetail({
       ]);
       setEditingDescription(false);
     } catch (error) {
-      onError(messageFor(error, text));
+      onError(messageFor(error));
     } finally {
       setSavingProperty(null);
     }
@@ -611,13 +618,13 @@ export function TaskDetail({
       setPendingCommentFiles([]);
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       const failed = results.length - uploaded.length;
-      if (failed > 0) setCommentsError(text(
+      if (failed > 0) setCommentsError([
         `评论已发布，但有 ${failed} 个附件上传失败。`,
         `The comment was posted, but ${failed} attachments failed to upload.`,
-      ));
+      ]);
       requestAnimationFrame(() => composerRef.current?.focus());
     } catch (error) {
-      setCommentsError(messageFor(error, text));
+      setCommentsError(messageFor(error));
     } finally {
       setSubmitting(false);
     }
@@ -627,10 +634,10 @@ export function TaskDetail({
     const selected = Array.from(files);
     const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
     if (oversized) {
-      setCommentsError(text(
+      setCommentsError([
         `“${oversized.name}” 超过 25 MB，无法上传。`,
         `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
-      ));
+      ]);
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       return;
     }
@@ -686,7 +693,7 @@ export function TaskDetail({
       setComments((current) => current.map((item) => item.id === updated.id ? updated : item));
       endCommentEdit();
     } catch (error) {
-      setCommentsError(messageFor(error, text));
+      setCommentsError(messageFor(error));
     } finally {
       setSavingCommentId(null);
     }
@@ -701,7 +708,7 @@ export function TaskDetail({
       setComments((current) => current.filter((comment) => comment.id !== pendingDelete.id));
       setPendingDelete(null);
     } catch (error) {
-      setCommentsError(messageFor(error, text));
+      setCommentsError(messageFor(error));
     } finally {
       setDeleting(false);
     }
@@ -712,10 +719,10 @@ export function TaskDetail({
     if (selected.length === 0 || uploadingAttachments) return;
     const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
     if (oversized) {
-      setAttachmentsError(text(
+      setAttachmentsError([
         `“${oversized.name}” 超过 25 MB，无法上传。`,
         `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
-      ));
+      ]);
       if (attachmentInputRef.current) attachmentInputRef.current.value = "";
       return;
     }
@@ -730,7 +737,7 @@ export function TaskDetail({
           : [...current, attachment]);
       }
     } catch (error) {
-      setAttachmentsError(messageFor(error, text));
+      setAttachmentsError(messageFor(error));
     } finally {
       setUploadingAttachments(false);
       if (attachmentInputRef.current) attachmentInputRef.current.value = "";
@@ -750,7 +757,7 @@ export function TaskDetail({
       })));
       setPendingAttachmentDelete(null);
     } catch (error) {
-      setAttachmentsError(messageFor(error, text));
+      setAttachmentsError(messageFor(error));
     } finally {
       setDeletingAttachment(false);
     }
@@ -970,7 +977,13 @@ export function TaskDetail({
                   "Add images, documents, or other files up to 25 MB each.",
                 )}</p>
               )}
-              {attachmentsError && <div className="attachments-error" role="alert">{attachmentsError}</div>}
+              {attachmentsError && (
+                <div className="attachments-error" role="alert">
+                  {typeof attachmentsError === "string"
+                    ? attachmentsError
+                    : text(attachmentsError[0], attachmentsError[1])}
+                </div>
+              )}
             </section>
 
             <section className="activity-section" aria-labelledby="activity-heading">
@@ -1241,7 +1254,13 @@ export function TaskDetail({
                 })}
               </div>
 
-              {commentsError && <div className="comments-error" role="alert">{commentsError}</div>}
+              {commentsError && (
+                <div className="comments-error" role="alert">
+                  {typeof commentsError === "string"
+                    ? commentsError
+                    : text(commentsError[0], commentsError[1])}
+                </div>
+              )}
 
               <form className="comment-composer" onSubmit={(event) => { event.preventDefault(); void submitComment(); }}>
                 <div className="composer-author">

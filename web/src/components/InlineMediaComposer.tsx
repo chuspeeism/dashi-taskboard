@@ -28,6 +28,7 @@ interface InlineImageSegment {
 
 export type InlineMediaSegment = InlineTextSegment | InlineImageSegment;
 export type PendingInlineImage = InlineImageSegment;
+type InlineMediaError = string | readonly [string, string];
 
 export interface InlineMediaComposerHandle {
   focus: () => void;
@@ -41,7 +42,7 @@ interface InlineMediaComposerProps {
   disabled?: boolean;
   className?: string;
   onChange: (segments: InlineMediaSegment[]) => void;
-  onError: (message: string | null) => void;
+  onError: (message: InlineMediaError | null) => void;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
 }
 
@@ -195,10 +196,10 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
 
         const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
         if (oversized) {
-          onError(text(
+          onError([
             `“${oversized.name}” 超过 25 MB，无法上传。`,
             `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
-          ));
+          ]);
           return;
         }
 
@@ -213,7 +214,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         onError(null);
         onChange(normalizeSegments([...segments, ...images.map(imageSegment)]));
       },
-    }), [onChange, onError, segments, text]);
+    }), [onChange, onError, segments]);
 
     function changeText(id: string, text: string) {
       onChange(segments.map((segment) => (
@@ -231,10 +232,10 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
 
       const oversized = clipboardFiles.find((file) => file.size > MAX_ATTACHMENT_SIZE);
       if (oversized) {
-        onError(text(
+        onError([
           `“${oversized.name}” 超过 25 MB，无法上传。`,
           `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
-        ));
+        ]);
         return;
       }
 

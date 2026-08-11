@@ -59,6 +59,8 @@ const RECURRENCE_UNITS: Record<TaskboardLanguage, Record<Recurrence["unit"], str
   },
 };
 
+type TaskEditorError = string | readonly [string, string];
+
 export interface NewTaskEditorDraft {
   title: string;
   descriptionSegments: InlineMediaSegment[];
@@ -159,8 +161,8 @@ export function TaskEditor({
   const [menu, setMenu] = useState<"status" | "priority" | "assignee" | "labels" | "more" | "due" | "recurrence" | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [error, setError] = useState<TaskEditorError | null>(null);
+  const [attachmentError, setAttachmentError] = useState<TaskEditorError | null>(null);
   const [attachments, setAttachments] = useState<File[]>(initialDraft?.attachments ?? []);
 
   const developmentOptions = useMemo(() => {
@@ -218,18 +220,18 @@ export function TaskEditor({
     }
     const cleanTitle = title.trim();
     if (!cleanTitle) {
-      setError(text(
+      setError([
         "请为议题填写一个简短、明确的标题。",
         "Enter a short, clear issue title.",
-      ));
+      ]);
       titleRef.current?.focus();
       return;
     }
     if (recurrence && !dueDate) {
-      setError(text(
+      setError([
         "重复议题需要先设置最早截止日期。",
         "A recurring issue needs an initial due date.",
-      ));
+      ]);
       return;
     }
 
@@ -256,14 +258,14 @@ export function TaskEditor({
       }, attachments, inlineMediaImages(descriptionSegments));
     } catch (caught) {
       if (caught instanceof ApiError && caught.code === "VERSION_CONFLICT") {
-        setError(text(
+        setError([
           "这个议题已在其他位置发生变更，请关闭并刷新后重试。",
           "This issue changed elsewhere. Close the editor, refresh, and try again.",
-        ));
+        ]);
       } else {
         setError(caught instanceof Error
           ? caught.message
-          : text("无法保存这个议题。", "Could not save this issue."));
+          : ["无法保存这个议题。", "Could not save this issue."]);
       }
     } finally {
       setSaving(false);
@@ -288,10 +290,10 @@ export function TaskEditor({
     const selected = Array.from(files);
     const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
     if (oversized) {
-      setAttachmentError(text(
+      setAttachmentError([
         `“${oversized.name}” 超过 25 MB，无法上传。`,
         `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
-      ));
+      ]);
       return;
     }
     setAttachmentError(null);
@@ -536,8 +538,18 @@ export function TaskEditor({
             </div>
           </div>
 
-          {attachmentError && <div className="form-error" role="alert">{attachmentError}</div>}
-          {error && <div className="form-error" role="alert">{error}</div>}
+          {attachmentError && (
+            <div className="form-error" role="alert">
+              {typeof attachmentError === "string"
+                ? attachmentError
+                : text(attachmentError[0], attachmentError[1])}
+            </div>
+          )}
+          {error && (
+            <div className="form-error" role="alert">
+              {typeof error === "string" ? error : text(error[0], error[1])}
+            </div>
+          )}
 
           <footer className="dialog-footer">
             {!task && (
