@@ -85,7 +85,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
   }
-  const body = (await response.json().catch(() => ({}))) as T & ApiErrorBody;
+  let body: T & ApiErrorBody;
+  try {
+    body = (await response.json()) as T & ApiErrorBody;
+  } catch (error) {
+    if ((error as Error).name === "AbortError") throw error;
+    body = {} as T & ApiErrorBody;
+  }
 
   if (!response.ok) throw new ApiError(response.status, body);
   return body;

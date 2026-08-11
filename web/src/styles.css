@@ -2457,6 +2457,14 @@ kbd {
 
 .issue-detail-main {
   min-width: 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.issue-detail-main button,
+.issue-detail-main .issue-title-input {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .issue-editor {

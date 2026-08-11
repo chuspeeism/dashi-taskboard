@@ -30,6 +30,7 @@ export type PendingInlineImage = InlineImageSegment;
 
 export interface InlineMediaComposerHandle {
   focus: () => void;
+  addImages: (files: FileList | File[]) => void;
 }
 
 interface InlineMediaComposerProps {
@@ -185,7 +186,28 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         const firstText = segments.find((segment) => segment.type === "text");
         if (firstText) textareas.current.get(firstText.id)?.focus();
       },
-    }), [segments]);
+      addImages(files) {
+        const selected = Array.from(files).filter((file) => file.type.startsWith("image/"));
+        if (selected.length === 0) return;
+
+        const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
+        if (oversized) {
+          onError(`“${oversized.name}” 超过 25 MB，无法上传。`);
+          return;
+        }
+
+        const existing = new Set(inlineMediaImages(segments).map((image) => fileKey(image.file)));
+        const images = selected.filter((file) => {
+          const key = fileKey(file);
+          if (existing.has(key)) return false;
+          existing.add(key);
+          return true;
+        });
+        if (images.length === 0) return;
+        onError(null);
+        onChange(normalizeSegments([...segments, ...images.map(imageSegment)]));
+      },
+    }), [onChange, onError, segments]);
 
     function changeText(id: string, text: string) {
       onChange(segments.map((segment) => (

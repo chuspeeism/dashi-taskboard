@@ -25,6 +25,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use uuid::Uuid;
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
 #[derive(Clone, Serialize)]
@@ -664,6 +665,7 @@ async fn offer_update(
     {
         return;
     }
+    check_update.set_enabled(false).unwrap();
     let update = match check_for_startup_update(app, state).await {
         Ok(update) => update,
         Err(error) => {
@@ -779,7 +781,6 @@ fn main() {
                         let Some(state) = app.try_state::<Arc<LauncherState>>() else {
                             return;
                         };
-                        check_update_menu.set_enabled(false).unwrap();
                         let state = Arc::clone(state.inner());
                         let app = app.clone();
                         let check_update = check_update_menu.clone();
@@ -822,6 +823,19 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+
+            let periodic_update_app = app.handle().clone();
+            let periodic_update_state = Arc::clone(&state);
+            let periodic_check_update = check_update.clone();
+            thread::spawn(move || loop {
+                thread::sleep(UPDATE_CHECK_INTERVAL);
+                let app_handle = periodic_update_app.clone();
+                let state = Arc::clone(&periodic_update_state);
+                let check_update = periodic_check_update.clone();
+                tauri::async_runtime::spawn(async move {
+                    offer_update(&app_handle, &state, &check_update, false).await;
+                });
+            });
 
             let app_handle = app.handle().clone();
             let startup_check_update = check_update.clone();
