@@ -23,7 +23,7 @@ test("Twitter publishing owns only one shared node-data configuration field", ()
   assert.match(node, /twitterPostContent\?: string/);
   assert.match(
     inspector,
-    /data\.kind === "twitter-post"[\s\S]*?<h2>发布到 Twitter<\/h2>[\s\S]*?aria-label="Twitter 发布内容"[\s\S]*?value=\{data\.twitterPostContent \?\? ""\}[\s\S]*?onChange=\{\(event\) => onChange\(\{ twitterPostContent: event\.target\.value \}\)\}/,
+    /data\.kind === "twitter-post"[\s\S]*?<h2>\{text\("发布到 Twitter", "Post to Twitter"\)\}<\/h2>[\s\S]*?aria-label=\{text\("Twitter 发布内容", "Twitter post content"\)\}[\s\S]*?value=\{data\.twitterPostContent \?\? ""\}[\s\S]*?onChange=\{\(event\) => onChange\(\{ twitterPostContent: event\.target\.value \}\)\}/,
   );
   assert.doesNotMatch(
     inspector,
@@ -38,7 +38,7 @@ test("Twitter node title, summary and configured state derive from actual post c
   );
   assert.match(
     catalog,
-    /if \(data\.kind === "twitter-post"\)[\s\S]*?formatActionTitle\(data\.title/,
+    /const displayTitle = workflowNodeBaseDisplayTitle\(data, text\);[\s\S]*?if \(data\.kind === "twitter-post"\)[\s\S]*?formatActionTitle\(displayTitle, content \? \[twitterPostSummary\(content\)\] : \[\], text\)/,
   );
   assert.match(
     catalog,

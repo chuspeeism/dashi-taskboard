@@ -44,6 +44,7 @@ import {
   listWorkflowCapabilities,
   saveWorkflowWorkspace,
 } from "../api";
+import { useTaskboardI18n } from "../i18n";
 import type { WorkflowCapabilities, WorkflowOption } from "../types";
 import {
   clearLegacyWorkflowWorkspace,
@@ -67,8 +68,11 @@ import {
   paletteData,
   type PaletteItem,
   workflowNodeConfigured,
+  workflowNodeDisplayDescription,
   workflowNodeDisplayTitle,
+  workflowNodeSystemCopyDepth,
 } from "./workflowCatalog";
+import { workflowText } from "./workflowI18n";
 
 interface WorkflowBoardProps {
   projectId: string;
@@ -494,6 +498,7 @@ export function WorkflowBoard({
   revision,
   onWorkflowsChange,
 }: WorkflowBoardProps) {
+  const { text } = useTaskboardI18n();
   const [initialWorkspace] = useState(
     () => parseWorkflowWorkspace(readLegacyWorkflowWorkspace(projectId)) ?? createInitialWorkflowWorkspace(),
   );
@@ -902,6 +907,7 @@ export function WorkflowBoard({
     const source = nodes.find((candidate) => candidate.id === nodeId);
     if (!source || isWorkflowTriggerKind(source.data.kind) || source.data.kind === "condition") return;
     const duplicateId = `node-${crypto.randomUUID()}`;
+    const effectiveSourceCopyDepth = workflowNodeSystemCopyDepth(source.data);
     if (source.parentId) {
       const siblingIds = nodes
         .filter((candidate) => candidate.parentId === source.parentId)
@@ -915,7 +921,11 @@ export function WorkflowBoard({
           ...source,
           id: duplicateId,
           selected: false,
-          data: { ...source.data, title: `${source.data.title} 副本` },
+          data: {
+            ...source.data,
+            title: `${source.data.title} 副本`,
+            systemCopyDepth: effectiveSourceCopyDepth + 1,
+          },
         },
       ];
       commitNodes(layoutPlanChildren(nextNodes, source.parentId, siblingIds));
@@ -929,7 +939,11 @@ export function WorkflowBoard({
           id: duplicateId,
           selected: false,
           parentId: undefined,
-          data: { ...source.data, title: `${source.data.title} 副本` },
+          data: {
+            ...source.data,
+            title: `${source.data.title} 副本`,
+            systemCopyDepth: effectiveSourceCopyDepth + 1,
+          },
         },
       ];
       const nextFlow = insertWorkflowNode(
@@ -963,11 +977,13 @@ export function WorkflowBoard({
         draggable: Boolean(node.parentId),
         data: {
           ...node.data,
-          displayTitle: workflowNodeDisplayTitle(node.data),
+          displayTitle: workflowNodeDisplayTitle(node.data, text),
+          displayDescription: workflowNodeDisplayDescription(node.data, text),
           meta: capabilityNodeMeta(
             node.data,
             workflowCapabilities,
             workflowCapabilitiesFailed,
+            text,
           ),
           configured: workflowNodeConfigured(
             node.data,
@@ -1026,6 +1042,7 @@ export function WorkflowBoard({
     planDragPreview,
     rootStepIds,
     settlingNodeId,
+    text,
     workflowCapabilities,
     workflowCapabilitiesFailed,
   ]);
@@ -1287,11 +1304,15 @@ export function WorkflowBoard({
   return (
     <section
       className={`workflow-board${selectedNode ? " has-inspector" : ""}`}
-      aria-label="流程看板"
+      aria-label={text("流程看板", "Workflow board")}
     >
       <div className="workflow-canvas-shell">
         <div className="workflow-canvas-toolbar">
-          <div className="workflow-tabs" role="tablist" aria-label={`${projectName} 的流程`}>
+          <div
+            className="workflow-tabs"
+            role="tablist"
+            aria-label={text(`${projectName} 的流程`, `${projectName} workflows`)}
+          >
             {workflowTabs.map((workflow) => {
               const active = workflow.id === activeWorkflowId;
               if (workflow.id === renamingWorkflowId) {
@@ -1308,7 +1329,7 @@ export function WorkflowBoard({
                     <input
                       ref={workflowNameInputRef}
                       type="text"
-                      aria-label="流程名称"
+                      aria-label={text("流程名称", "Workflow name")}
                       value={workflowNameDraft}
                       onChange={(event) => setWorkflowNameDraft(event.target.value)}
                       onBlur={() => commitWorkflowRename(workflow.id)}
@@ -1339,7 +1360,7 @@ export function WorkflowBoard({
                   onDoubleClick={() => startWorkflowRename(workflow)}
                   onContextMenu={(event) => openWorkflowTabMenu(event, workflow.id)}
                   onKeyDown={(event) => handleWorkflowTabKeyDown(event, workflow.id)}
-                  title="双击重命名"
+                  title={text("双击重命名", "Double-click to rename")}
                 >
                   <LinearIcon name="dashboard" />
                   <span>{workflow.name}</span>
@@ -1349,8 +1370,8 @@ export function WorkflowBoard({
             <button
               className="workflow-tab-add"
               type="button"
-              aria-label="新建流程"
-              title="新建流程"
+              aria-label={text("新建流程", "Create workflow")}
+              title={text("新建流程", "Create workflow")}
               onClick={createWorkflow}
             >
               <LinearIcon name="plus" />
@@ -1359,7 +1380,9 @@ export function WorkflowBoard({
           <div className="workflow-toolbar-status">
             <span className={persistenceError ? "has-error" : ""}>
               <i aria-hidden="true" />
-              {persistenceError || "已自动保存"}
+              {persistenceError
+                ? workflowText(text, persistenceError)
+                : text("已自动保存", "Autosaved")}
             </span>
           </div>
         </div>
@@ -1368,7 +1391,7 @@ export function WorkflowBoard({
           className="workflow-canvas"
           id="workflow-canvas-panel"
           role="tabpanel"
-          aria-label="流程编排区"
+          aria-label={text("流程编排区", "Workflow canvas")}
           aria-labelledby={`workflow-tab-${activeWorkflowId}`}
         >
           <ReactFlow<WorkflowCanvasNode, Edge>
@@ -1419,11 +1442,11 @@ export function WorkflowBoard({
             <button
               className="workflow-empty-add"
               type="button"
-              aria-label="添加第一个步骤"
+              aria-label={text("添加第一个步骤", "Add the first step")}
               onClick={() => openStepPicker([], 0)}
             >
               <LinearIcon name="plus" />
-              <span>添加触发器</span>
+              <span>{text("添加触发器", "Add trigger")}</span>
             </button>
           )}
           {pickerTarget && (
@@ -1437,7 +1460,10 @@ export function WorkflowBoard({
       </div>
 
       {selectedNode && (
-        <aside className="workflow-inspector workflow-step-inspector" aria-label="步骤配置">
+        <aside
+          className="workflow-inspector workflow-step-inspector"
+          aria-label={text("步骤配置", "Step configuration")}
+        >
           <WorkflowInspector
             node={selectedNode}
             projectName={projectName}
@@ -1454,7 +1480,7 @@ export function WorkflowBoard({
           ref={workflowTabMenuRef}
           className="task-context-menu workflow-tab-context-menu"
           role="menu"
-          aria-label="流程操作"
+          aria-label={text("流程操作", "Workflow actions")}
           style={{ left: workflowTabMenu.x, top: workflowTabMenu.y }}
           onContextMenu={(event) => event.preventDefault()}
         >
@@ -1468,7 +1494,7 @@ export function WorkflowBoard({
               onClick={() => deleteWorkflow(workflowTabMenu.workflowId)}
             >
               <span className="context-menu-icon"><LinearIcon name="trash" /></span>
-              <span className="context-menu-label">删除流程</span>
+              <span className="context-menu-label">{text("删除流程", "Delete workflow")}</span>
             </button>
           </div>
         </div>,
