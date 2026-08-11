@@ -515,3 +515,77 @@ test("usage errors are stable and never call the service", async () => {
   assert.equal(result.stderr.error.code, "USAGE_ERROR");
   assert.match(result.stderr.error.message, /--title/);
 });
+
+test("attachment upload posts file bytes to a task with filename headers", async () => {
+  const calls = [];
+  const fileBytes = Buffer.from("hello attachment", "utf8");
+  const result = await run(
+    ["attachment", "upload", "--task", "TASK-1", "--file", "notes.md", "--json"],
+    async (url, init) => {
+      calls.push({ url: url.toString(), init });
+      return response({
+        attachment: {
+          id: "att-1",
+          taskId: "TASK-1",
+          filename: "notes.md",
+          contentType: "text/markdown",
+          size: fileBytes.byteLength,
+        },
+      }, 201);
+    },
+    {
+      readFile: async () => fileBytes,
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.attachment.id, "att-1");
+  assert.equal(result.stdout.target.type, "task");
+  assert.equal(result.stdout.target.id, "TASK-1");
+  assert.equal(calls[0].url, "http://127.0.0.1:47823/api/tasks/TASK-1/attachments");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.headers["content-type"], "text/markdown");
+  assert.equal(calls[0].init.headers["x-taskboard-filename"], encodeURIComponent("notes.md"));
+  assert.equal(calls[0].init.headers["x-taskboard-client"], "taskctl");
+  assert.deepEqual(Buffer.from(calls[0].init.body), fileBytes);
+});
+
+test("attachment upload requires exactly one target and can target comments", async () => {
+  const missing = await run(
+    ["attachment", "upload", "--file", "a.txt"],
+    async () => assert.fail("fetch should not be called"),
+    { readFile: async () => Buffer.from("x") },
+  );
+  assert.equal(missing.exitCode, 2);
+  assert.match(missing.stderr.error.message, /exactly one of --task or --comment/);
+
+  const both = await run(
+    ["attachment", "upload", "--task", "T1", "--comment", "C1", "--file", "a.txt"],
+    async () => assert.fail("fetch should not be called"),
+    { readFile: async () => Buffer.from("x") },
+  );
+  assert.equal(both.exitCode, 2);
+  assert.match(both.stderr.error.message, /exactly one of --task or --comment/);
+
+  let commentUrl;
+  const commentResult = await run(
+    ["attachment", "upload", "--comment", "COMMENT-1", "--file", "shot.png", "--content-type", "image/png"],
+    async (url, init) => {
+      commentUrl = url.toString();
+      assert.equal(init.headers["content-type"], "image/png");
+      return response({
+        attachment: {
+          id: "att-2",
+          commentId: "COMMENT-1",
+          filename: "shot.png",
+          contentType: "image/png",
+          size: 1,
+        },
+      }, 201);
+    },
+    { readFile: async () => Buffer.from([1]) },
+  );
+  assert.equal(commentResult.exitCode, 0);
+  assert.equal(commentUrl, "http://127.0.0.1:47823/api/comments/COMMENT-1/attachments");
+  assert.equal(commentResult.stdout.target.type, "comment");
+});

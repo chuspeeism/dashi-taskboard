@@ -139,7 +139,7 @@ taskctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
 
-## Download inline images
+## Attachments
 
 Issue descriptions and comments may contain inline images at exact positions in their Markdown:
 
@@ -147,7 +147,16 @@ Issue descriptions and comments may contain inline images at exact positions in 
 ![alt text](api/attachments/ATTACHMENT_ID/content)
 ```
 
-Download an inline image to an explicit local path before inspecting it:
+Upload a local file onto a task or comment. Provide exactly one of `--task` or `--comment`:
+
+```bash
+taskctl attachment upload --task TASK_ID --file PATH [--content-type TYPE] [--json]
+taskctl attachment upload --comment COMMENT_ID --file PATH [--content-type TYPE] [--json]
+```
+
+The upload posts file bytes with `X-Taskboard-Filename` and `Content-Type`. When `--content-type` is omitted, `taskctl` guesses from the extension and falls back to `application/octet-stream`.
+
+Download an attachment to an explicit local path:
 
 ```bash
 taskctl attachment download ATTACHMENT_ID --output PATH [--json]
