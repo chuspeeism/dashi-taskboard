@@ -199,6 +199,41 @@ test("automation changes wait for a passive refresh without crossing semantic co
   assert.match(saveSource, /const stored = projectAutomationsRef\.current\[selectedProjectId\]/);
 });
 
+test("automation changes coalesce to the latest edit while a passive refresh is pending", async () => {
+  const saveSource = appSource.slice(
+    appSource.indexOf("const saveProjectAutomation"),
+    appSource.indexOf("function openTaskDetail"),
+  );
+  assert.match(appSource, /const automationSaveRevisionRef = useRef\(0\)/);
+  const revisionIndex = saveSource.indexOf("const saveRevision = ++automationSaveRevisionRef.current");
+  const passiveWaitIndex = saveSource.indexOf(
+    "if (passiveAutomationRequestRef.current) await passiveAutomationRequestRef.current",
+  );
+  const latestEditGuardIndex = saveSource.indexOf(
+    "automationSaveRevisionRef.current !== saveRevision",
+  );
+  assert.ok(revisionIndex >= 0);
+  assert.ok(passiveWaitIndex > revisionIndex);
+  assert.ok(latestEditGuardIndex > passiveWaitIndex);
+
+  let currentRevision = 0;
+  let releasePassiveRefresh;
+  const passiveRefresh = new Promise((resolve) => {
+    releasePassiveRefresh = resolve;
+  });
+  const committed = [];
+  async function save(value) {
+    const saveRevision = ++currentRevision;
+    await passiveRefresh;
+    if (currentRevision !== saveRevision) return;
+    committed.push(value);
+  }
+  const saves = [save("first"), save("latest")];
+  releasePassiveRefresh();
+  await Promise.all(saves);
+  assert.deepEqual(committed, ["latest"]);
+});
+
 test("opening settings and changing projects reconcile with the host list", () => {
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),

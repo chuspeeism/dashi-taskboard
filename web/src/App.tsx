@@ -666,6 +666,7 @@ export function App() {
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
   const passiveAutomationRequestRef = useRef<Promise<void> | null>(null);
+  const automationSaveRevisionRef = useRef(0);
   const lastAutomationContextReconcileKeyRef = useRef("");
   const projectAutomationsRef = useRef(projectAutomations);
 
@@ -1043,9 +1044,11 @@ export function App() {
       || !automationProjectContext.codexProjectId
       || (automationRequestInFlightRef.current && !passiveAutomationRequestRef.current)
     ) return;
+    const saveRevision = ++automationSaveRevisionRef.current;
     if (passiveAutomationRequestRef.current) await passiveAutomationRequestRef.current;
     if (
-      automationContextReconcileKeyRef.current !== requestContextKey
+      automationSaveRevisionRef.current !== saveRevision
+      || automationContextReconcileKeyRef.current !== requestContextKey
       || automationRequestInFlightRef.current
     ) return;
     const stored = projectAutomationsRef.current[selectedProjectId];
