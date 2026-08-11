@@ -160,13 +160,16 @@ fn update_snapshot(
     };
     let status_menu = state.status_menu.lock().unwrap().clone();
     if let Some(status_menu) = status_menu {
-        let status = match snapshot.phase.as_str() {
-            "running" => "运行状态：正常",
-            "error" => "运行状态：异常",
-            _ => "运行状态：启动中",
-        }
-        .to_string();
+        let status_state = Arc::clone(state);
         let _ = app.run_on_main_thread(move || {
+            let status = {
+                let snapshot = status_state.snapshot.lock().unwrap();
+                match snapshot.phase.as_str() {
+                    "running" => "运行状态：正常",
+                    "error" => "运行状态：异常",
+                    _ => "运行状态：启动中",
+                }
+            };
             let _ = status_menu.set_text(status);
         });
     }
@@ -331,38 +334,51 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
             append_log(&state, &line);
             if is_stderr && line.contains("Waiting for Codex") {
                 update_snapshot(&app, &state, |snapshot| {
-                    snapshot.phase = "starting".into();
-                    snapshot.message = "正在等待 Codex 窗口…".into();
+                    if state.generation.load(Ordering::SeqCst) == generation
+                        && snapshot.child_pid == Some(pid)
+                    {
+                        snapshot.phase = "starting".into();
+                        snapshot.message = "正在等待 Codex 窗口…".into();
+                    }
                 });
             } else if !is_stderr && line.contains("Codex Taskboard listening") {
                 update_snapshot(&app, &state, |snapshot| {
-                    snapshot.phase = "starting".into();
-                    snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
+                    if state.generation.load(Ordering::SeqCst) == generation
+                        && snapshot.child_pid == Some(pid)
+                    {
+                        snapshot.phase = "starting".into();
+                        snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
+                    }
                 });
             } else if !is_stderr && line.contains("\"openTaskboardSignalReady\":true") {
-                if state.generation.load(Ordering::SeqCst) == generation {
-                    let snapshot = update_snapshot(&app, &state, |snapshot| {
-                        if state.generation.load(Ordering::SeqCst) == generation {
-                            snapshot.open_signal_pid = Some(pid);
-                        }
-                    });
-                    if snapshot.open_signal_pid == Some(pid) {
-                        if let Err(error) = signal_pending_taskboard_open(&state) {
-                            append_log(&state, &format!("Taskboard open signal failed: {error}"));
-                        }
+                let snapshot = update_snapshot(&app, &state, |snapshot| {
+                    if state.generation.load(Ordering::SeqCst) == generation
+                        && snapshot.child_pid == Some(pid)
+                    {
+                        snapshot.open_signal_pid = Some(pid);
+                    }
+                });
+                if snapshot.child_pid == Some(pid) && snapshot.open_signal_pid == Some(pid) {
+                    if let Err(error) = signal_pending_taskboard_open(&state) {
+                        append_log(&state, &format!("Taskboard open signal failed: {error}"));
                     }
                 }
             } else if !is_stderr && line.contains("\"openTaskboardSignalQueued\":true") {
                 let mut snapshot = state.snapshot.lock().unwrap();
                 if state.generation.load(Ordering::SeqCst) == generation
+                    && snapshot.child_pid == Some(pid)
                     && snapshot.open_signal_pid == Some(pid)
                 {
                     snapshot.open_request_pending = false;
                 }
             } else if !is_stderr && line.contains("\"injected\"") {
                 update_snapshot(&app, &state, |snapshot| {
-                    snapshot.phase = "running".into();
-                    snapshot.message = "任务面板已在 Codex 客户端中打开。".into();
+                    if state.generation.load(Ordering::SeqCst) == generation
+                        && snapshot.child_pid == Some(pid)
+                    {
+                        snapshot.phase = "running".into();
+                        snapshot.message = "任务面板已在 Codex 客户端中打开。".into();
+                    }
                 });
             }
         }
@@ -484,37 +500,63 @@ fn start_launcher_locked(
     let event_state = state.clone();
     thread::spawn(move || {
         let status = child.wait();
+        let recovery_token = {
+            let mut current_child = event_state.child.lock().unwrap();
+            if *current_child != Some(pid) {
+                None
+            } else {
+                let recovery_token = generation + 1;
+                if event_state
+                    .generation
+                    .compare_exchange(
+                        generation,
+                        recovery_token,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    *current_child = None;
+                    Some(recovery_token)
+                } else {
+                    None
+                }
+            }
+        };
+        let Some(recovery_token) = recovery_token else {
+            append_log(
+                &event_state,
+                &format!("Launcher child {pid} exited: {status:?}"),
+            );
+            terminate_process_group(pid);
+            return;
+        };
+        let intentional = event_state.intentional_stop.load(Ordering::SeqCst);
+        update_snapshot(&event_app, &event_state, |snapshot| {
+            if event_state.generation.load(Ordering::SeqCst) == recovery_token
+                && snapshot.child_pid == Some(pid)
+            {
+                snapshot.child_pid = None;
+                snapshot.open_signal_pid = None;
+                if !intentional {
+                    snapshot.phase = "error".into();
+                    snapshot.message = "任务面板进程已退出，正在恢复…".into();
+                }
+            }
+        });
         append_log(
             &event_state,
             &format!("Launcher child {pid} exited: {status:?}"),
         );
         terminate_process_group(pid);
-        if event_state.generation.load(Ordering::SeqCst) != generation {
-            return;
-        }
-        let mut current_child = event_state.child.lock().unwrap();
-        if *current_child != Some(pid) {
-            return;
-        }
-        *current_child = None;
-        drop(current_child);
         clear_pid_record(&event_state, pid);
-        let intentional = event_state.intentional_stop.load(Ordering::SeqCst);
-        update_snapshot(&event_app, &event_state, |snapshot| {
-            snapshot.child_pid = None;
-            snapshot.open_signal_pid = None;
-            if !intentional {
-                snapshot.phase = "error".into();
-                snapshot.message = "任务面板进程已退出，正在恢复…".into();
-            }
-        });
         if intentional {
             return;
         }
         thread::sleep(Duration::from_secs(2));
         let recovery_result = {
             let _lifecycle = event_state.lifecycle.lock().unwrap();
-            if event_state.generation.load(Ordering::SeqCst) != generation
+            if event_state.generation.load(Ordering::SeqCst) != recovery_token
                 || event_state.intentional_stop.load(Ordering::SeqCst)
                 || event_state.update_in_progress.load(Ordering::SeqCst)
             {
@@ -552,18 +594,30 @@ fn restart_launcher(
     app: &AppHandle,
     state: &Arc<LauncherState>,
 ) -> Result<LauncherSnapshot, String> {
-    let _lifecycle = state.lifecycle.lock().unwrap();
-    if state.intentional_stop.load(Ordering::SeqCst) {
-        return Ok(state.snapshot.lock().unwrap().clone());
-    }
-    if state.update_in_progress.load(Ordering::SeqCst) {
-        append_log(state, "Launcher reopen ignored during update installation");
-        return Ok(state.snapshot.lock().unwrap().clone());
-    }
-    stop_managed_child_locked(app, state);
-    let result = start_launcher_locked(app, state);
-    if result.is_err() {
-        state.intentional_stop.store(false, Ordering::SeqCst);
+    let result = {
+        let _lifecycle = state.lifecycle.lock().unwrap();
+        if state.intentional_stop.load(Ordering::SeqCst) {
+            return Ok(state.snapshot.lock().unwrap().clone());
+        }
+        if state.update_in_progress.load(Ordering::SeqCst) {
+            append_log(state, "Launcher reopen ignored during update installation");
+            return Ok(state.snapshot.lock().unwrap().clone());
+        }
+        stop_managed_child_locked(app, state);
+        let result = start_launcher_locked(app, state);
+        if result.is_err() {
+            state.intentional_stop.store(false, Ordering::SeqCst);
+        }
+        result
+    };
+    if let Err(error) = &result {
+        let error = error.clone();
+        update_snapshot(app, state, |snapshot| {
+            snapshot.phase = "error".into();
+            snapshot.message = format!("任务面板启动失败：{error}");
+            snapshot.child_pid = None;
+            snapshot.open_signal_pid = None;
+        });
     }
     result
 }
@@ -749,10 +803,15 @@ async fn offer_update(
         return;
     }
     check_update.set_enabled(false).unwrap();
+    check_update.set_text("正在检查更新…").unwrap();
     let update = match check_for_startup_update(app, state).await {
         Ok(update) => update,
         Err(error) => {
             append_log(state, &format!("Update check failed: {error}"));
+            update_snapshot(app, state, |snapshot| {
+                snapshot.update_message = format!("更新检查失败：{error}");
+                snapshot.update_available = false;
+            });
             if show_current_version {
                 show_error_dialog(
                     app,
