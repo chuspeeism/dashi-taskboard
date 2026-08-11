@@ -48,7 +48,7 @@ test("issue card assignee control uses compact participant avatars", async () =>
 
   assert.match(cardSource, /className="task-participants-control card-property-control"/);
   assert.match(cardSource, /<ParticipantAvatars participants=\{participants\} \/>/);
-  assert.match(cardSource, /aria-label=\{`\$\{task\.identifier\} 负责人`\}/);
+  assert.match(cardSource, /aria-label=\{text\(`\$\{task\.identifier\} 负责人`, `\$\{task\.identifier\} assignee`\)\}/);
   assert.match(
     styles,
     /\.task-participant-avatar\s*\{[^}]*width:\s*16px;[^}]*height:\s*16px;/s,

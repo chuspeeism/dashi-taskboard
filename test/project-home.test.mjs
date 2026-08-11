@@ -14,7 +14,7 @@ const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.
 test("the project switcher merges live Codex projects with persisted Taskboard projects", () => {
   assert.match(appSource, /hostContext\?\.projects \?\? \[\]/);
   assert.match(appSource, /persistedById/);
-  assert.match(appSource, /name: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
+  assert.match(appSource, /name: project\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
   assert.match(appSource, /for \(const project of projects\) \{[\s\S]*?inCodex: false,[\s\S]*?persisted: true/);
   assert.match(appSource, /projectChoices\.map\(\(project\) => \(/);
   assert.match(appSource, /createProjectRequest/);
@@ -68,7 +68,7 @@ test("the issue composer includes Linear-style labels and scheduling", () => {
     assert.match(labelsSource, new RegExp(label));
   }
   assert.match(editorSource, /<LabelPicker/);
-  assert.match(labelPickerSource, /创建 “\{normalizedSearch\}”/);
+  assert.match(labelPickerSource, /text\(`创建 “\$\{normalizedSearch\}”`, `Create “\$\{normalizedSearch\}”`\)/);
   assert.match(editorSource, /设置截止日期/);
   assert.match(editorSource, /设置重复/);
   assert.match(editorSource, /最早截止日期/);
@@ -85,15 +85,15 @@ test("the current project is shown only in navigation, not in issue creation or 
 
 test("the project header exposes project, automation, and create controls", () => {
   assert.match(appSource, /className="header-project-button"[\s\S]*?aria-haspopup="menu"/);
-  assert.match(appSource, /className="header-project-menu" role="menu" aria-label="项目"/);
+  assert.match(appSource, /className="header-project-menu" role="menu" aria-label=\{text\("项目", "Projects"\)\}/);
   assert.match(appSource, /<ProjectAutomationMenu/);
   assert.match(appSource, /className="icon-button header-create-button"/);
   assert.match(styles, /\.header-project-menu \{[\s\S]*?-webkit-app-region: no-drag/);
 });
 
 test("the project header keeps detail navigation separate from the project switcher", () => {
-  assert.match(appSource, /const headerProjectName = selectedProject\?\.name \?\? "任务面板"/);
-  assert.match(appSource, /detailTask && \([\s\S]*?aria-label="返回议题看板"[\s\S]*?<\/button>/);
+  assert.match(appSource, /const headerProjectName = selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: selectedProject\?\.name \?\? text\("任务面板", "Taskboard"\)/);
+  assert.match(appSource, /detailTask && \([\s\S]*?aria-label=\{text\("返回议题看板", "Back to issue board"\)\}[\s\S]*?<\/button>/);
   assert.match(appSource, /className="header-project-switcher"[\s\S]*?<span className="project-name">\{headerProjectName\}<\/span>/);
   assert.doesNotMatch(appSource, /className="issue-root-button"/);
   assert.doesNotMatch(appSource, /detailTask\?\.identifier \?\? "议题"/);

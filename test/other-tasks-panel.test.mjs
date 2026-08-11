@@ -70,7 +70,7 @@ test("search and filters feed the same status buckets used by the board and pane
   assert.match(appSource, /archivedTasks=\{filteredArchivedTasks\}/);
   assert.match(appSource, /hasActiveFilters=\{hasActiveTaskFilters\}/);
   assert.match(panelSource, /const tasks = archived \? archivedTasks : tasksByStatus\[activeTab\]/);
-  assert.match(panelSource, /hasActiveFilters \? "当前筛选下无匹配议题"/);
+  assert.match(panelSource, /hasActiveFilters\s*\? text\("当前筛选下无匹配议题", "No issues match the current filters"\)/);
   assert.match(boardColumnSource, /tasks\.length === 0 && <div className="column-empty">\{emptyMessage\}<\/div>/);
 });
 

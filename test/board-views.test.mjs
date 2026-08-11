@@ -23,14 +23,14 @@ test("the taskboard defaults to issues and exposes the current project views", (
     /function readProjectBoardView\(projectId: string\): BoardView \{\s*const view = [^;]+;\s*return [\s\S]*?\? view\s*: "issues";\s*\}/,
   );
   assert.match(appSource, /useState<BoardView>\(\(\) => readProjectBoardView\(initialProjectId\)\)/);
-  assert.match(appSource, />\s*Dashboard\s*<\/button>/);
-  assert.match(appSource, />\s*议题看板\s*<\/button>/);
-  assert.match(appSource, />\s*列表视图\s*<\/button>/);
-  assert.match(appSource, />\s*甘特图\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("仪表盘", "Dashboard"\)\}\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("议题看板", "Issue board"\)\}\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("列表视图", "List"\)\}\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("甘特图", "Gantt"\)\}\s*<\/button>/);
   assert.match(appSource, /aria-pressed=\{boardView === "issues"\}/);
   assert.match(appSource, /onClick=\{\(\) => selectBoardView\("issues"\)\}/);
   assert.match(appSource, /const SHOW_WORKFLOW_BOARD_ENTRY = false/);
-  assert.match(appSource, /SHOW_WORKFLOW_BOARD_ENTRY && \([\s\S]*?>\s*节点模式\s*<\/button>/);
+  assert.match(appSource, /SHOW_WORKFLOW_BOARD_ENTRY && \([\s\S]*?>\s*\{text\("节点模式", "Workflow"\)\}\s*<\/button>/);
   assert.match(appSource, /function changeProject[\s\S]*?setBoardView\(readProjectBoardView\(projectId\)\)/);
   assert.doesNotMatch(appSource, /<span>活跃<\/span>|<span>积压事项<\/span>|所有议题|add-view/);
 });
