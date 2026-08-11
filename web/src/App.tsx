@@ -664,6 +664,7 @@ export function App() {
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
+  const loadedAutomationProjectIdsRef = useRef(new Set<string>());
   const projectAutomationsRef = useRef(projectAutomations);
 
   const setAnnouncement = useCallback((message: string) => {
@@ -927,8 +928,9 @@ export function App() {
     }
     if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return;
     const stored = projectAutomationsRef.current[selectedProjectId];
+    const initialLoad = !loadedAutomationProjectIdsRef.current.has(selectedProjectId);
     automationRequestInFlightRef.current = true;
-    setAutomationPending(true);
+    if (initialLoad) setAutomationPending(true);
     setAutomationError(null);
     try {
       const options = stored ?? {
@@ -1000,8 +1002,9 @@ export function App() {
     } catch (error) {
       setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
     } finally {
+      loadedAutomationProjectIdsRef.current.add(selectedProjectId);
       automationRequestInFlightRef.current = false;
-      setAutomationPending(false);
+      if (initialLoad) setAutomationPending(false);
     }
   }, [
     automationProjectContext,
