@@ -261,14 +261,16 @@ jobs:
           RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
           MANIFEST_ROOT="$RUNNER_TEMP/release-manifest"
           mkdir -p "$RELEASE_ASSETS" "$MANIFEST_ROOT"
-          cp "$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" "$RELEASE_ASSETS/"
+          cp \
+            "$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
           cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" "$RELEASE_ASSETS/"
           cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$RELEASE_ASSETS/"
           cp "$BUNDLE_ROOT/release/latest.json" "$RELEASE_ASSETS/"
           (
             cd "$RELEASE_ASSETS"
             shasum -a 256 \
-              "Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
               "latest.json" > "$MANIFEST_ROOT/release-assets.sha256"
@@ -296,7 +298,7 @@ jobs:
             --notes "Codex Taskboard 是本地优先的项目协作面板，可通过 macOS App 将任务管理直接集成到 Codex，也可通过 Web UI、taskctl CLI 和 Skill 管理任务、评论、附件、对话与 Worktree。
 
           v0.2.3 提供中文和英文界面，并完善任务详情、Dashboard、List、Gantt、自动化设置和 AI Chat；taskctl 也支持为任务和评论上传附件。" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
             "$RELEASE_ASSETS/latest.json"
@@ -467,7 +469,7 @@ jobs:
             -C "$UPDATER_ROOT"
           npm run app:verify-release -- \
             "$UPDATER_ROOT/Codex Taskboard.app" \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
             "$DRAFT_ASSETS" \
             "$RELEASE_TAG"
 
