@@ -845,14 +845,24 @@ function isWorkflowNodeDefaultText(
   return value === catalogData[field] || templateValues.includes(value);
 }
 
+export function workflowNodeSystemCopyDepth(data: WorkflowNodeData): number {
+  if (data.systemCopyDepth !== undefined) return data.systemCopyDepth;
+  const copySuffix = " 副本";
+  let title = data.title;
+  let copyDepth = 0;
+  while (title.endsWith(copySuffix)) {
+    title = title.slice(0, -copySuffix.length);
+    copyDepth += 1;
+  }
+  return copyDepth;
+}
+
 function workflowNodeBaseDisplayTitle(data: WorkflowNodeData, text: WorkflowText): string {
   const copySuffix = " 副本";
   let baseTitle = data.title;
   let copyCount = 0;
-  while (
-    baseTitle.endsWith(copySuffix)
-    && (data.systemCopyDepth === undefined || copyCount < data.systemCopyDepth)
-  ) {
+  const systemCopyDepth = workflowNodeSystemCopyDepth(data);
+  while (copyCount < systemCopyDepth && baseTitle.endsWith(copySuffix)) {
     baseTitle = baseTitle.slice(0, -copySuffix.length);
     copyCount += 1;
   }

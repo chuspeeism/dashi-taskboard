@@ -70,6 +70,7 @@ import {
   workflowNodeConfigured,
   workflowNodeDisplayDescription,
   workflowNodeDisplayTitle,
+  workflowNodeSystemCopyDepth,
 } from "./workflowCatalog";
 import { workflowText } from "./workflowI18n";
 
@@ -906,6 +907,7 @@ export function WorkflowBoard({
     const source = nodes.find((candidate) => candidate.id === nodeId);
     if (!source || isWorkflowTriggerKind(source.data.kind) || source.data.kind === "condition") return;
     const duplicateId = `node-${crypto.randomUUID()}`;
+    const effectiveSourceCopyDepth = workflowNodeSystemCopyDepth(source.data);
     if (source.parentId) {
       const siblingIds = nodes
         .filter((candidate) => candidate.parentId === source.parentId)
@@ -922,7 +924,7 @@ export function WorkflowBoard({
           data: {
             ...source.data,
             title: `${source.data.title} 副本`,
-            systemCopyDepth: (source.data.systemCopyDepth ?? 0) + 1,
+            systemCopyDepth: effectiveSourceCopyDepth + 1,
           },
         },
       ];
@@ -940,7 +942,7 @@ export function WorkflowBoard({
           data: {
             ...source.data,
             title: `${source.data.title} 副本`,
-            systemCopyDepth: (source.data.systemCopyDepth ?? 0) + 1,
+            systemCopyDepth: effectiveSourceCopyDepth + 1,
           },
         },
       ];
