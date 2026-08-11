@@ -140,7 +140,7 @@ npm start
 - 创建 `macos-release` environment，配置必需审核人，并启用“禁止发起人自行审核”。
 - 启用 immutable releases。promotion 在发布前检查此设置，并在发布后校验 Release API 的 `immutable: true` 和每个资产的 SHA-256。
 
-### 发布 `v0.2.2`
+### 发布 `v0.2.3`
 
 1. 在 PR 中把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json` 的版本同步为目标版本。
 2. 合并已审核的 PR。
@@ -148,8 +148,8 @@ npm start
 4. 在已合并提交上创建并推送标签：
 
    ```bash
-   git tag -a v0.2.2 -m "Codex Taskboard 0.2.2"
-   git push origin v0.2.2
+   git tag -a v0.2.3 -m "Codex Taskboard 0.2.3"
+   git push origin v0.2.3
    ```
 
 5. 等待构建 job 创建 Draft Release。不要在 GitHub Release 页面直接发布。
