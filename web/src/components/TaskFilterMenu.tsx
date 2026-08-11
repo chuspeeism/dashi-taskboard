@@ -114,7 +114,9 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
 
   function countFor(key: TaskFilterKey, predicate: (task: Task) => boolean): number {
     return tasks.filter(
-      (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters, key) && predicate(task),
+      (task) => matchesTaskSearch(task, search, language)
+        && matchesTaskFilters(task, filters, key)
+        && predicate(task),
     ).length;
   }
 

@@ -63,7 +63,7 @@ test("other tasks is a closed-by-default non-modal panel with archived issues", 
 });
 
 test("search and filters feed the same status buckets used by the board and panel", () => {
-  assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search\) && matchesTaskFilters\(task, filters\)/);
+  assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search, language\) && matchesTaskFilters\(task, filters\)/);
   assert.match(appSource, /TASK_STATUSES\.map\(\(status\) => \[status, filteredTasks\.filter\(\(task\) => task\.status === status\)\]\)/);
   assert.match(appSource, /tasks=\{tasksByStatus\[status\]\}/);
   assert.match(appSource, /tasksByStatus=\{tasksByStatus\}/);

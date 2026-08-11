@@ -75,6 +75,10 @@
   let observer = null;
   let reattachTimer = null;
   let hostContextTimer = null;
+  let hostUiLanguage = null;
+  let entryLabel = null;
+  let statusView = "idle";
+  let loadError = null;
   let lastFocusedElement = null;
   let hostContextSnapshot = null;
   let mutedNativeSelections = new Map();
@@ -94,9 +98,26 @@
     return document.documentElement.lang || navigator.language;
   }
 
-  function hostText(chinese, english) {
+  function resolvedHostLanguage() {
     const language = hostLanguage().trim().replaceAll("_", "-").toLowerCase();
-    return language === "zh" || language.startsWith("zh-") ? chinese : english;
+    return language === "zh" || language.startsWith("zh-") ? "zh" : "en";
+  }
+
+  function hostText(chinese, english) {
+    return resolvedHostLanguage() === "zh" ? chinese : english;
+  }
+
+  function hostError(chinese, english) {
+    const error = new Error(hostText(chinese, english));
+    error.taskboardText = { chinese, english };
+    return error;
+  }
+
+  function hostErrorText(error) {
+    if (error?.taskboardText) {
+      return hostText(error.taskboardText.chinese, error.taskboardText.english);
+    }
+    return error instanceof Error ? error.message : String(error || "");
   }
 
   function normalizeThreadId(value) {
@@ -281,14 +302,11 @@
     button.removeAttribute("aria-controls");
     button.removeAttribute("aria-describedby");
     button.removeAttribute("data-state");
-    button.setAttribute("aria-label", hostText("打开任务面板", "Open Taskboard"));
-    button.setAttribute("title", hostText("任务面板", "Taskboard"));
     button.setAttribute(OWNED_ATTRIBUTE, "true");
     button.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
-    const label = button.querySelector(".text-fade-truncate")
+    entryLabel = button.querySelector(".text-fade-truncate")
       || Array.from(button.querySelectorAll("span")).find((node) => buttonMatches(node, PLUGIN_LABELS));
-    if (label) label.textContent = hostText("任务面板", "Taskboard");
-    else button.textContent = hostText("任务面板", "Taskboard");
+    syncEntryText(button);
     replaceEntryIcon(button);
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -296,6 +314,14 @@
       openTaskboard();
     });
     return button;
+  }
+
+  function syncEntryText(button = entry) {
+    if (!button) return;
+    button.setAttribute("aria-label", hostText("打开任务面板", "Open Taskboard"));
+    button.setAttribute("title", hostText("任务面板", "Taskboard"));
+    if (entryLabel) entryLabel.textContent = hostText("任务面板", "Taskboard");
+    else button.textContent = hostText("任务面板", "Taskboard");
   }
 
   function syncEntryState() {
@@ -677,6 +703,7 @@
   }
 
   function postHostContext() {
+    syncHostUiLanguage();
     if (!frame) return;
     const liveContext = readHostContext();
     const payload = hostContextSnapshot
@@ -1033,6 +1060,12 @@
   }
 
   function showLoading() {
+    statusView = "loading";
+    loadError = null;
+    renderLoading();
+  }
+
+  function renderLoading() {
     if (!status) return;
     status.replaceChildren(document.createTextNode(hostText("正在启动任务面板…", "Starting Taskboard…")));
     status.hidden = false;
@@ -1040,6 +1073,8 @@
   }
 
   function showFrame() {
+    statusView = "frame";
+    loadError = null;
     if (status) status.hidden = true;
     if (frame) {
       frame.hidden = false;
@@ -1047,11 +1082,17 @@
     }
   }
 
-  function showLoadError(message) {
+  function showLoadError(error) {
+    statusView = "error";
+    loadError = error;
+    renderLoadError();
+  }
+
+  function renderLoadError() {
     if (!status) return;
     const content = document.createElement("div");
     const text = document.createElement("div");
-    text.textContent = message;
+    text.textContent = hostErrorText(loadError);
     const retry = document.createElement("button");
     retry.type = "button";
     retry.textContent = hostText("重新启动", "Restart");
@@ -1060,6 +1101,17 @@
     status.replaceChildren(content);
     status.hidden = false;
     if (frame) frame.hidden = true;
+  }
+
+  function syncHostUiLanguage() {
+    const language = resolvedHostLanguage();
+    if (hostUiLanguage === language) return;
+    hostUiLanguage = language;
+    syncEntryText();
+    if (page) page.setAttribute("aria-label", hostText("任务面板", "Taskboard"));
+    if (frame) frame.title = hostText("任务面板", "Taskboard");
+    if (statusView === "loading") renderLoading();
+    else if (statusView === "error") renderLoadError();
   }
 
   function cancelFrameReadyWaiters(error) {
@@ -1078,7 +1130,7 @@
         reject,
         timer: window.setTimeout(() => {
           frameReadyWaiters.delete(waiter);
-          reject(new Error(hostText("任务面板页面加载超时", "Taskboard page load timed out")));
+          reject(hostError("任务面板页面加载超时", "Taskboard page load timed out"));
         }, FRAME_READY_TIMEOUT_MS),
       };
       frameReadyWaiters.add(waiter);
@@ -1086,7 +1138,7 @@
   }
 
   function loadTaskboardFrame(cacheBust = false) {
-    cancelFrameReadyWaiters(new Error(hostText("任务面板正在重新加载", "Taskboard is reloading")));
+    cancelFrameReadyWaiters(hostError("任务面板正在重新加载", "Taskboard is reloading"));
     frame?.remove();
     frame = null;
     frameTaskboardUrl = "";
@@ -1135,7 +1187,7 @@
       })
       .catch((error) => {
         if (!active || generation !== openGeneration) return;
-        showLoadError(error.message);
+        showLoadError(error);
       });
     return true;
   }
@@ -1160,17 +1212,17 @@
 
   function requestHost(action, payload = {}) {
     if (!hasLiveHostBinding()) {
-      return Promise.reject(new Error(hostText(
+      return Promise.reject(hostError(
         "Taskboard 启动器未运行，无法操作 Codex 对话输入框",
         "The Taskboard launcher is not running, so the Codex composer is unavailable",
-      )));
+      ));
     }
 
     const id = `${Date.now().toString(36)}-${(++hostRequestSequence).toString(36)}`;
     return new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         hostRequests.delete(id);
-        reject(new Error(hostText("任务面板启动器没有响应", "The Taskboard launcher did not respond")));
+        reject(hostError("任务面板启动器没有响应", "The Taskboard launcher did not respond"));
       }, HOST_REQUEST_TIMEOUT_MS);
       hostRequests.set(id, { resolve, reject, timeout });
       try {
@@ -1224,10 +1276,9 @@
     window.clearTimeout(pending.timeout);
     hostRequests.delete(response.id);
     if (response.ok) pending.resolve(response);
-    else pending.reject(new Error(response.error || hostText(
-      "任务面板服务启动失败",
-      "The Taskboard service failed to start",
-    )));
+    else pending.reject(response.error
+      ? new Error(response.error)
+      : hostError("任务面板服务启动失败", "The Taskboard service failed to start"));
   }
 
   function onHostBridgeMessage(event) {
@@ -1278,8 +1329,8 @@
       if (!active || generation !== openGeneration) return;
       const bindingAvailable = hasLiveHostBinding();
       showLoadError(bindingAvailable
-        ? error.message
-        : hostText(
+        ? error
+        : hostError(
           "任务面板服务未就绪。请保持 Taskboard 启动器运行后重试。",
           "The Taskboard service is not ready. Keep the Taskboard launcher running and try again.",
         ));
@@ -1450,10 +1501,10 @@
     hostContextTimer = null;
     observer?.disconnect();
     observer = null;
-    cancelFrameReadyWaiters(new Error(hostText("任务面板已关闭", "Taskboard was closed")));
+    cancelFrameReadyWaiters(hostError("任务面板已关闭", "Taskboard was closed"));
     hostRequests.forEach(({ reject, timeout }) => {
       window.clearTimeout(timeout);
-      reject(new Error(hostText("任务面板已关闭", "Taskboard was closed")));
+      reject(hostError("任务面板已关闭", "Taskboard was closed"));
     });
     hostRequests.clear();
     pendingThreadCreation = null;
@@ -1467,6 +1518,7 @@
     closeTaskboard(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
     entry = null;
+    entryLabel = null;
     page = null;
     frame = null;
     dragRegion = null;

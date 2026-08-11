@@ -672,6 +672,8 @@ export function App() {
   selectedProjectIdRef.current = selectedProjectId;
 
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
+  const textRef = useRef(text);
+  textRef.current = text;
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
   const projectAutomationsRef = useRef(projectAutomations);
@@ -1275,7 +1277,9 @@ export function App() {
         pendingAutomationRequestsRef.current.delete(payload.requestId);
         if (payload.ok) pending.resolve(payload as AutomationHostResponse);
         else pending.reject(new Error(
-          typeof payload.error === "string" ? payload.error : "Codex 无法更新自动化",
+          typeof payload.error === "string"
+            ? payload.error
+            : textRef.current("Codex 无法更新自动化", "Codex could not update automation"),
         ));
         return;
       }
@@ -1295,7 +1299,7 @@ export function App() {
         setOpeningThreadTaskId(null);
         setActionError(typeof payload.error === "string"
           ? payload.error
-          : text("无法在 Codex 中创建对话。", "Could not create the conversation in Codex."));
+          : textRef.current("无法在 Codex 中创建对话。", "Could not create the conversation in Codex."));
         return;
       }
 
@@ -1316,10 +1320,14 @@ export function App() {
       removeExternalLinkHandler();
       for (const pending of pendingAutomationRequestsRef.current.values()) {
         window.clearTimeout(pending.timeoutId);
+        pending.reject(new Error(textRef.current(
+          "Taskboard 消息桥已关闭",
+          "The Taskboard host bridge was closed",
+        )));
       }
       pendingAutomationRequestsRef.current.clear();
     };
-  }, [embedded, host, text]);
+  }, [embedded, host]);
 
   useEffect(() => {
     if (host !== "workbuddy") return;
@@ -1641,13 +1649,13 @@ export function App() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
-      (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
+      (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
     );
-  }, [filters, search, tasks]);
+  }, [filters, language, search, tasks]);
 
   const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
-    (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
-  ), [archivedTasks, filters, search]);
+    (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
+  ), [archivedTasks, filters, language, search]);
 
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
