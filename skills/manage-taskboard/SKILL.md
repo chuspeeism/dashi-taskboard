@@ -11,9 +11,9 @@ Open only the relevant section of [references/cli.md](references/cli.md) when co
 
 ## Core workflow
 
-1. For an existing issue, run `issue get` and `comment list` before acting. Treat comments as current requirements, including returned work.
-2. For a new durable requirement, run `context current` and search existing project issues before creating one. Update a matching issue instead of creating a duplicate. Do not track trivial requests.
-3. Before starting or resuming work, read the issue again and move it to `in_progress` with its current `version`. Stop if the status changed or the write conflicts.
+1. When claiming, starting, or resuming an existing issue, first run `issue get`, then immediately move it to `in_progress` with its current `version`. Do this before reading comments or code, downloading attachments, analyzing the implementation, or doing any other task work. If the write fails or conflicts, run `issue get` again and retry with the latest `version`; do not continue until the move succeeds.
+2. After the move succeeds, run `comment list`. Treat comments as current requirements, including returned work.
+3. For a new durable requirement, run `context current` and search existing project issues before creating one. Update a matching issue instead of creating a duplicate. Do not track trivial requests.
 4. Execute only the requested work in the issue's branch or worktree when one is bound.
 5. Verify the requested operation path. Add a comment with the changes, verification result, outcome, and remaining risks. Read the issue again, then move it to `in_review` with its current `version`.
 6. Move an issue to `done` only after the user explicitly accepts it or asks to complete it. Use `blocked` when work cannot continue and `canceled` when it will not continue.
