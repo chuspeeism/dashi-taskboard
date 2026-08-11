@@ -945,7 +945,7 @@ export function App() {
     const response = new Promise<AutomationHostResponse>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         pendingAutomationRequestsRef.current.delete(requestId);
-        reject(new Error(text(
+        reject(new Error(textRef.current(
           "Codex 自动化没有响应，请稍后重试",
           "Codex automation did not respond. Try again later.",
         )));
