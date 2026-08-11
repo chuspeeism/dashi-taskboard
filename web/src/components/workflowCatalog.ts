@@ -839,9 +839,10 @@ function isWorkflowNodeDefaultText(
   field: "title" | "description",
   value: string,
 ): boolean {
-  const catalogValue = paletteData(data.kind)[field];
+  const catalogData = PALETTE_ITEMS.find((item) => item.data.kind === data.kind)?.data;
+  if (!catalogData) return false;
   const templateValues = WORKFLOW_NODE_DEFAULT_TEXT[data.kind]?.[field] ?? [];
-  return value === catalogValue || templateValues.includes(value);
+  return value === catalogData[field] || templateValues.includes(value);
 }
 
 function workflowNodeBaseDisplayTitle(data: WorkflowNodeData, text: WorkflowText): string {
