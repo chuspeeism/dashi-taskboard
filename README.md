@@ -142,7 +142,7 @@ npm start
 
 ### 发布 `v0.2.2`
 
-1. 在 PR 中把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本同步为目标版本。
+1. 在 PR 中把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json` 的版本同步为目标版本。
 2. 合并已审核的 PR。
 3. 确认所有 GitHub Secrets 和上述仓库发布设置已配置。
 4. 在已合并提交上创建并推送标签：
