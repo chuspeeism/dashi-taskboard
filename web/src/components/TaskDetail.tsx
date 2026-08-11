@@ -349,6 +349,7 @@ export function TaskDetail({
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const editCommentImageInputRef = useRef<HTMLInputElement>(null);
+  const editingUploadedAttachmentsRef = useRef<Map<string, Attachment>>(new Map());
   const draft = serializeInlineMedia(commentSegments);
   const commentInlineImages = inlineMediaImages(commentSegments);
   const editingDraft = serializeInlineMedia(editingSegments);
@@ -617,29 +618,41 @@ export function TaskDetail({
   }
 
   function beginEdit(comment: Comment) {
+    editingUploadedAttachmentsRef.current.clear();
     setEditingId(comment.id);
     setEditingSegments(createInlineMediaSegments(comment.body));
     setActiveMenuId(null);
   }
 
+  function endCommentEdit() {
+    setEditingId(null);
+    editingUploadedAttachmentsRef.current.clear();
+  }
+
   async function saveComment(comment: Comment) {
     const body = editingDraft.trim();
     if (!body || (body === comment.body && editingInlineImages.length === 0)) {
-      if (body === comment.body) setEditingId(null);
+      if (body === comment.body) endCommentEdit();
       return;
     }
     setSavingCommentId(comment.id);
     setCommentsError(null);
     try {
-      const uploaded = await Promise.all(
-        editingInlineImages.map((image) => uploadCommentAttachment(comment.id, image.file)),
-      );
+      const uploaded: Attachment[] = [];
+      for (const image of editingInlineImages) {
+        let attachment = editingUploadedAttachmentsRef.current.get(image.id);
+        if (!attachment) {
+          attachment = await uploadCommentAttachment(comment.id, image.file);
+          editingUploadedAttachmentsRef.current.set(image.id, attachment);
+        }
+        uploaded.push(attachment);
+      }
       const updated = await updateComment(
         comment,
         resolveInlineMediaMarkdown(body, editingInlineImages, uploaded).trim(),
       );
       setComments((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setEditingId(null);
+      endCommentEdit();
     } catch (error) {
       setCommentsError(messageFor(error));
     } finally {
@@ -1046,7 +1059,7 @@ export function TaskDetail({
                             onChange={setEditingSegments}
                             onError={setCommentsError}
                             onKeyDown={(event) => {
-                              if (event.key === "Escape") setEditingId(null);
+                              if (event.key === "Escape") endCommentEdit();
                               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                                 event.preventDefault();
                                 void saveComment(comment);
@@ -1076,7 +1089,7 @@ export function TaskDetail({
                                 event.currentTarget.value = "";
                               }}
                             />
-                            <button className="button secondary" type="button" onClick={() => setEditingId(null)}>取消</button>
+                            <button className="button secondary" type="button" onClick={endCommentEdit}>取消</button>
                             <button
                               className="button primary"
                               type="button"
