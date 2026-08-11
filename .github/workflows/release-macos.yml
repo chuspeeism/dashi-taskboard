@@ -295,7 +295,7 @@ jobs:
             --title "Codex Taskboard $RELEASE_TAG" \
             --notes "Codex Taskboard 是本地优先的项目协作面板，可通过 macOS App 将任务管理直接集成到 Codex，也可通过 Web UI、taskctl CLI 和 Skill 管理任务、评论、附件、对话与 Worktree。
 
-          v0.2.3 提供中文和英文界面，并完善任务详情、Dashboard、List、Gantt、Workflow、自动化设置和 AI Chat；taskctl 也支持为任务和评论上传附件。" \
+          v0.2.3 提供中文和英文界面，并完善任务详情、Dashboard、List、Gantt、自动化设置和 AI Chat；taskctl 也支持为任务和评论上传附件。" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
