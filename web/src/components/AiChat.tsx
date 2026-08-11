@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { taskboardStorage } from "../storage";
+import { useTaskboardI18n } from "../i18n";
 import {
   createAiChatThread,
   deleteAiChatThread,
@@ -964,6 +965,7 @@ export function AiChat({
   onThreadsChange,
   openThreadRequest,
 }: AiChatProps) {
+  const { text } = useTaskboardI18n();
   const [panelOpen, setPanelOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menu, setMenu] = useState<MenuName>(null);
@@ -2632,9 +2634,9 @@ export function AiChat({
         <button
           type="button"
           className={`ai-chat-launcher is-${launcherState}`}
-          aria-label="打开 AI 对话"
+          aria-label={text("打开 AI 对话", "Open AI chat")}
           aria-expanded="false"
-          title="AI 对话"
+          title={text("AI 对话", "AI chat")}
           onClick={() => setPanelOpen(true)}
         >
           <TaskboardIcon name="aiLauncher" />

@@ -8,6 +8,7 @@ import {
   type AutomationReasoningEffort,
 } from "../../../shared/taskboard-automation-options.mjs";
 import { TaskboardIcon } from "./TaskboardIcon";
+import { useTaskboardI18n } from "../i18n";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
@@ -65,6 +66,7 @@ export function ProjectAutomationMenu({
   onOpen,
   onChange,
 }: ProjectAutomationMenuProps) {
+  const { text } = useTaskboardI18n();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const wasPendingRef = useRef(pending);
@@ -257,11 +259,15 @@ export function ProjectAutomationMenu({
         ref={triggerRef}
         type="button"
         className={`project-automation-trigger no-drag ${status === "ACTIVE" ? "is-active" : "is-paused"}`}
-        aria-label={status === "ACTIVE" ? "自动认领中" : "自动化"}
+        aria-label={status === "ACTIVE"
+          ? text("自动认领中", "Auto-claiming")
+          : text("自动化", "Automation")}
         aria-busy={pending}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={status === "ACTIVE" ? "自动认领中" : "自动化"}
+        title={status === "ACTIVE"
+          ? text("自动认领中", "Auto-claiming")
+          : text("自动化", "Automation")}
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
@@ -271,7 +277,9 @@ export function ProjectAutomationMenu({
         }}
       >
         <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
-        <span>{status === "ACTIVE" ? "自动认领中" : "自动化"}</span>
+        <span>{status === "ACTIVE"
+          ? text("自动认领中", "Auto-claiming")
+          : text("自动化", "Automation")}</span>
       </button>
       {menu}
     </>

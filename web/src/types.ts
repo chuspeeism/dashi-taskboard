@@ -293,6 +293,7 @@ export interface Attachment {
 
 export interface HostContext {
   user?: ActorIdentity;
+  language?: string;
   workspacePath?: string;
   threadId?: string;
   theme?: "light" | "dark";

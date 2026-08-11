@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import type { TaskConversationItem } from "../taskConversations";
+import { useTaskboardI18n } from "../i18n";
 import { TaskboardIcon } from "./TaskboardIcon";
 
 interface TaskConversationMenuProps {
@@ -8,25 +9,34 @@ interface TaskConversationMenuProps {
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
-function conversationSource(conversation: TaskConversationItem) {
-  if (conversation.kind === "local-ai") return "内置 AI";
-  return conversation.source === "comment" ? "评论对话" : "任务对话";
+function conversationSource(
+  conversation: TaskConversationItem,
+  text: (chinese: string, english: string) => string,
+) {
+  if (conversation.kind === "local-ai") return text("内置 AI", "Built-in AI");
+  return conversation.source === "comment"
+    ? text("评论对话", "Comment conversation")
+    : text("任务对话", "Task conversation");
 }
 
-function conversationStatus(conversation: TaskConversationItem) {
+function conversationStatus(
+  conversation: TaskConversationItem,
+  text: (chinese: string, english: string) => string,
+) {
   if (conversation.currentRun?.status === "running") {
     if (conversation.latestTodo?.total) {
       return `${conversation.latestTodo.completed}/${conversation.latestTodo.total}`;
     }
-    return "正在处理";
+    return text("正在处理", "Processing");
   }
-  return conversation.kind === "local-ai" ? "已暂停" : "Codex";
+  return conversation.kind === "local-ai" ? text("已暂停", "Paused") : "Codex";
 }
 
 export function TaskConversationMenu({
   conversations,
   onOpenConversation,
 }: TaskConversationMenuProps) {
+  const { text } = useTaskboardI18n();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -97,10 +107,14 @@ export function TaskConversationMenu({
         className={`task-conversation-trigger${multiple ? " is-multiple" : ""}${open ? " is-open" : ""}`}
         type="button"
         draggable={false}
-        aria-label={multiple ? `查看 ${conversations.length} 个对话` : `打开对话 ${conversations[0].title}`}
+        aria-label={multiple
+          ? text(`查看 ${conversations.length} 个对话`, `View ${conversations.length} conversations`)
+          : text(`打开对话 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
         aria-haspopup={multiple ? "menu" : undefined}
         aria-expanded={multiple ? open : undefined}
-        title={multiple ? `${conversations.length} 个对话` : conversations[0].title}
+        title={multiple
+          ? text(`${conversations.length} 个对话`, `${conversations.length} conversations`)
+          : conversations[0].title}
         onPointerDown={stop}
         onDragStart={(event) => event.preventDefault()}
         onClick={(event) => {
@@ -117,7 +131,7 @@ export function TaskConversationMenu({
           ref={menuRef}
           className="task-conversation-menu"
           role="menu"
-          aria-label="选择对话"
+          aria-label={text("选择对话", "Select conversation")}
           style={{
             left: position.left,
             top: position.top,
@@ -125,7 +139,7 @@ export function TaskConversationMenu({
           }}
           onClick={stop}
         >
-          <div className="task-conversation-menu-heading">关联对话</div>
+          <div className="task-conversation-menu-heading">{text("关联对话", "Linked conversations")}</div>
           {conversations.map((conversation) => (
             <button
               key={conversation.key}
@@ -138,10 +152,10 @@ export function TaskConversationMenu({
               </span>
               <span className="task-conversation-menu-copy">
                 <strong>{conversation.title}</strong>
-                <small>{conversationSource(conversation)}</small>
+                <small>{conversationSource(conversation, text)}</small>
               </span>
               <span className={`task-conversation-menu-status${conversation.currentRun?.status === "running" ? " is-running" : ""}`}>
-                {conversationStatus(conversation)}
+                {conversationStatus(conversation, text)}
               </span>
             </button>
           ))}

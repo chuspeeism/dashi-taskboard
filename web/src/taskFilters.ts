@@ -87,7 +87,7 @@ export function matchesTaskSearch(task: Task, search: string): boolean {
     task.title,
     task.description,
     ...task.labels,
-    ...task.labels.map(labelDisplayName),
+    ...task.labels.map((label) => labelDisplayName(label)),
   ]
     .join(" ")
     .toLowerCase()

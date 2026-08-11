@@ -50,7 +50,7 @@ import {
   actorForAssigneeTarget,
   assigneeTargetForActor,
 } from "./actors";
-import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
+import { BoardColumn } from "./components/BoardColumn";
 import { AiChat, type AiChatOpenThreadRequest } from "./components/AiChat";
 import { DashboardView } from "./components/DashboardView";
 import { IssueListView } from "./components/IssueListView";
@@ -73,6 +73,12 @@ import {
   setEmbeddedFrameChallenge,
 } from "./embeddedHost.mjs";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
+import {
+  getTaskboardI18n,
+  resolveTaskboardLanguage,
+  taskStatusLabel,
+  TaskboardLanguageProvider,
+} from "./i18n";
 import {
   MAIN_STATUSES,
   type OtherTaskTab,
@@ -574,6 +580,10 @@ export function App() {
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
+  const language = resolveTaskboardLanguage(
+    hostContext?.language ?? query.get("lang") ?? navigator.language,
+  );
+  const { locale, text } = getTaskboardI18n(language);
   const [embeddedFrameChallenge, setEmbeddedFrameChallengeState] = useState("");
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
@@ -666,6 +676,10 @@ export function App() {
   const automationRequestInFlightRef = useRef(false);
   const projectAutomationsRef = useRef(projectAutomations);
 
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   const setAnnouncement = useCallback((message: string) => {
     setUndoNotice(null);
     setAnnouncementValue(message);
@@ -703,7 +717,10 @@ export function App() {
   useLayoutEffect(() => {
     if (selectedProject) rememberProjectOpen(selectedProject.id);
   }, [rememberProjectOpen, selectedProject]);
-  const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
+  const currentUser = hostContext?.user ?? {
+    ...DEFAULT_USER_ACTOR,
+    name: text("本地用户", "Local user"),
+  };
   const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID
     ? undefined
     : deviceWorkspacePaths[selectedProjectId];
@@ -770,7 +787,9 @@ export function App() {
       seen.add(project.id);
       choices.push({
         id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
+        name: project.id === GLOBAL_PROJECT_ID
+          ? text("全局", "Global")
+          : persistedById.get(project.id)?.name ?? project.name,
         issueCount: persistedById.get(project.id)?.issueCount ?? 0,
         inCodex: true,
         persisted: persistedById.has(project.id),
@@ -780,7 +799,7 @@ export function App() {
       if (seen.has(project.id)) continue;
       choices.push({
         id: project.id,
-        name: project.name,
+        name: project.id === GLOBAL_PROJECT_ID ? text("全局", "Global") : project.name,
         issueCount: project.issueCount,
         inCodex: false,
         persisted: true,
@@ -791,7 +810,7 @@ export function App() {
       (recentOrder.get(left.id) ?? recentProjectIds.length)
       - (recentOrder.get(right.id) ?? recentProjectIds.length)
     ));
-  }, [hostContext?.projects, projects, recentProjectIds]);
+  }, [hostContext?.projects, projects, recentProjectIds, text]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const issueReadStorageKey = selectedProjectId
     ? `${ISSUE_READ_KEY_PREFIX}:${taskboardMetadata?.mode ?? "local"}:${selectedProjectId}`
@@ -1274,7 +1293,9 @@ export function App() {
       if (message.type === "taskboard:thread-create-error" && message.payload) {
         const payload = message.payload as { taskId?: unknown; error?: unknown };
         setOpeningThreadTaskId(null);
-        setActionError(typeof payload.error === "string" ? payload.error : "无法在 Codex 中创建对话。");
+        setActionError(typeof payload.error === "string"
+          ? payload.error
+          : text("无法在 Codex 中创建对话。", "Could not create the conversation in Codex."));
         return;
       }
 
@@ -1298,7 +1319,7 @@ export function App() {
       }
       pendingAutomationRequestsRef.current.clear();
     };
-  }, [embedded, host]);
+  }, [embedded, host, text]);
 
   useEffect(() => {
     if (host !== "workbuddy") return;
@@ -1550,7 +1571,10 @@ export function App() {
     try {
       await operation.undo();
     } catch (error) {
-      setActionError(`无法撤回这次操作：${errorMessage(error)}`);
+      setActionError(text(
+        `无法撤回这次操作：${errorMessage(error)}`,
+        `Could not undo this action: ${errorMessage(error)}`,
+      ));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     } finally {
       undoInFlightRef.current = false;
@@ -1767,11 +1791,17 @@ export function App() {
       if (creating) setNewTaskDraft(null);
       setEditor(null);
       if (failedAttachments > 0) {
-        setActionError(`${saved.identifier} 已创建，但有 ${failedAttachments} 个附件上传失败，可在详情页重试。`);
+        setActionError(text(
+          `${saved.identifier} 已创建，但有 ${failedAttachments} 个附件上传失败，可在详情页重试。`,
+          `${saved.identifier} was created, but ${failedAttachments} attachments failed to upload. Try again from the details page.`,
+        ));
       }
       if (creating) {
         const totalUploaded = uploadedAttachments + inlineImages.length;
-        const message = `${saved.identifier} 已创建${totalUploaded > 0 ? `，已上传 ${totalUploaded} 个附件` : ""}。`;
+        const message = text(
+          `${saved.identifier} 已创建${totalUploaded > 0 ? `，已上传 ${totalUploaded} 个附件` : ""}。`,
+          `${saved.identifier} was created${totalUploaded > 0 ? ` with ${totalUploaded} attachments uploaded` : ""}.`,
+        );
         pushUndo(message, async () => {
           const candidate = tasksRef.current.find((task) => task.id === saved.id);
           const current = candidate && candidate.version >= saved.version ? candidate : saved;
@@ -1783,7 +1813,7 @@ export function App() {
         const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
         if (!draft.assigneeTarget || previousAssigneeTarget) {
           pushUndo(
-            `${saved.identifier} 已更新。`,
+            text(`${saved.identifier} 已更新。`, `${saved.identifier} was updated.`),
             () => restoreTaskDetails(previous, saved, previousAssigneeTarget),
           );
         }
@@ -1852,8 +1882,11 @@ export function App() {
         candidate.id === moved.id ? moved : candidate,
       )));
       const message = task.status === status
-        ? `${task.identifier} 排序已调整。`
-        : `${task.identifier} 已移至${STATUS_DETAILS[status].label}。`;
+        ? text(`${task.identifier} 排序已调整。`, `${task.identifier} was reordered.`)
+        : text(
+          `${task.identifier} 已移至${taskStatusLabel(language, status)}。`,
+          `${task.identifier} was moved to ${taskStatusLabel(language, status)}.`,
+        );
       pushUndo(message, async () => {
         const candidate = tasksRef.current.find((current) => current.id === moved.id);
         const current = candidate && candidate.version >= moved.version ? candidate : moved;
@@ -1926,7 +1959,7 @@ export function App() {
       const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
       if (!assigneeTarget || previousAssigneeTarget) {
         pushUndo(
-          `${task.identifier} 已更新。`,
+          text(`${task.identifier} 已更新。`, `${task.identifier} was updated.`),
           () => restoreTaskDetails(previous, updated, previousAssigneeTarget),
         );
       }
@@ -1936,7 +1969,10 @@ export function App() {
         candidate.id === previous.id ? previous : candidate,
       )));
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
       throw error;
@@ -1963,7 +1999,10 @@ export function App() {
       return result;
     } catch (error) {
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
       throw error;
@@ -1979,7 +2018,10 @@ export function App() {
         developmentContext: null,
       });
       setTasks((current) => sortTasks([...current, duplicated]));
-      pushUndo(`${duplicated.identifier} 副本已创建。`, async () => {
+      pushUndo(text(
+        `${duplicated.identifier} 副本已创建。`,
+        `${duplicated.identifier} copy was created.`,
+      ), async () => {
         const candidate = tasksRef.current.find((current) => current.id === duplicated.id);
         const current = candidate && candidate.version >= duplicated.version ? candidate : duplicated;
         await archiveTaskRequest(current);
@@ -1999,7 +2041,7 @@ export function App() {
         ...current.filter((candidate) => candidate.id !== archived.id),
         archived,
       ]));
-      pushUndo(`${task.identifier} 已归档。`, async () => {
+      pushUndo(text(`${task.identifier} 已归档。`, `${task.identifier} was archived.`), async () => {
         const restored = await restoreTaskRequest(archived);
         setArchivedTasks((current) => current.filter((candidate) => candidate.id !== restored.id));
         setTasks((current) => sortTasks([
@@ -2009,7 +2051,10 @@ export function App() {
       });
     } catch (error) {
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     }
@@ -2025,10 +2070,16 @@ export function App() {
         ...current.filter((candidate) => candidate.id !== restored.id),
         restored,
       ]));
-      setAnnouncement(`${restored.identifier} 已恢复。`);
+      setAnnouncement(text(
+        `${restored.identifier} 已恢复。`,
+        `${restored.identifier} was restored.`,
+      ));
     } catch (error) {
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     } finally {
@@ -2045,10 +2096,16 @@ export function App() {
       await deleteArchivedTaskRequest(task);
       setArchivedTasks((current) => current.filter((candidate) => candidate.id !== task.id));
       setPendingArchivedTaskDelete(null);
-      setAnnouncement(`${task.identifier} 已永久删除。`);
+      setAnnouncement(text(
+        `${task.identifier} 已永久删除。`,
+        `${task.identifier} was permanently deleted.`,
+      ));
     } catch (error) {
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     } finally {
@@ -2056,12 +2113,12 @@ export function App() {
     }
   }
 
-  async function copyText(text: string, message: string) {
+  async function copyText(content: string, message: string) {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(content);
       setAnnouncement(message);
     } catch {
-      setActionError("无法写入剪贴板。");
+      setActionError(text("无法写入剪贴板。", "Could not write to the clipboard."));
     }
   }
 
@@ -2240,7 +2297,10 @@ export function App() {
       setPendingProjectDelete(null);
       setProjectDeleteIssueCount(null);
       if (selectedProjectId === project.id) changeProject(GLOBAL_PROJECT_ID);
-      setAnnouncement(`已删除项目“${project.name}”`);
+      setAnnouncement(text(
+        `已删除项目“${project.name}”`,
+        `Deleted project “${project.name}”`,
+      ));
     } catch (error) {
       if (error instanceof ApiError && error.code === "PROJECT_NOT_EMPTY") {
         const details = error.details as { issueCount: number };
@@ -2254,13 +2314,16 @@ export function App() {
     }
   }
 
-  const headerProjectName = selectedProject?.name ?? "任务面板";
+  const headerProjectName = selectedProject?.id === GLOBAL_PROJECT_ID
+    ? text("全局", "Global")
+    : selectedProject?.name ?? text("任务面板", "Taskboard");
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
 
   return (
-    <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
+    <TaskboardLanguageProvider language={language}>
+      <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
       {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={selectedProjectId}
@@ -2274,19 +2337,19 @@ export function App() {
         />
       )}
       {!embedded && (
-        <aside className="app-nav" aria-label="Taskboard navigation">
+        <aside className="app-nav" aria-label={text("任务面板导航", "Taskboard navigation")}>
           <div className="brand-row">
             <span className="brand-mark" aria-hidden="true"><LinearIcon name="project" /></span>
-            <span>任务面板</span>
+            <span>{text("任务面板", "Taskboard")}</span>
           </div>
 
-          <nav className="primary-nav" aria-label="Views">
-            <span className="nav-label">工作区</span>
+          <nav className="primary-nav" aria-label={text("视图", "Views")}>
+            <span className="nav-label">{text("工作区", "Workspace")}</span>
             <button className="nav-item active" type="button" aria-current="page">
               <span className="nav-glyph" aria-hidden="true">
                 <LinearIcon name="myIssues" />
               </span>
-              议题
+              {text("议题", "Issues")}
               <span className="nav-count">{tasks.length}</span>
             </button>
           </nav>
@@ -2295,16 +2358,22 @@ export function App() {
           <div className="nav-footer">
             <div className={`connection connection-${connection}`}>
               <span aria-hidden="true" />
-              {connection === "live" ? "实时同步" : "正在重新连接…"}
+              {connection === "live"
+                ? text("实时同步", "Live sync")
+                : text("正在重新连接…", "Reconnecting…")}
             </div>
             <button
               type="button"
               className="theme-toggle"
               onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              aria-label={theme === "dark"
+                ? text("切换到浅色模式", "Switch to light theme")
+                : text("切换到深色模式", "Switch to dark theme")}
             >
               <span aria-hidden="true"><LinearIcon name={theme === "dark" ? "sun" : "moon"} /></span>
-              {theme === "dark" ? "浅色模式" : "深色模式"}
+              {theme === "dark"
+                ? text("浅色模式", "Light mode")
+                : text("深色模式", "Dark mode")}
             </button>
           </div>
         </aside>
@@ -2318,8 +2387,8 @@ export function App() {
                 <button
                   className="detail-back-button"
                   type="button"
-                  aria-label="返回议题看板"
-                  title="返回议题看板 (Esc)"
+                  aria-label={text("返回议题看板", "Back to issue board")}
+                  title={text("返回议题看板 (Esc)", "Back to issue board (Esc)")}
                   onClick={closeTaskDetail}
                 >
                   <LinearIcon name="chevronLeft" />
@@ -2329,8 +2398,8 @@ export function App() {
                 <button
                   className="detail-back-button codex-sidebar-expand-button"
                   type="button"
-                  aria-label="展开 Codex 侧边栏"
-                  title="展开侧边栏"
+                  aria-label={text("展开 Codex 侧边栏", "Expand Codex sidebar")}
+                  title={text("展开侧边栏", "Expand sidebar")}
                   onClick={expandCodexSidebar}
                 >
                   <LinearIcon name="codexSidebarExpand" />
@@ -2340,7 +2409,7 @@ export function App() {
                 <button
                   className="header-project-button"
                   type="button"
-                  aria-label="切换项目"
+                  aria-label={text("切换项目", "Switch project")}
                   aria-haspopup="menu"
                   aria-expanded={projectMenuOpen}
                   onClick={() => {
@@ -2352,8 +2421,8 @@ export function App() {
                   <TaskboardIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
                 {projectMenuOpen && (
-                  <div className="header-project-menu" role="menu" aria-label="项目">
-                    <span>切换项目</span>
+                  <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
+                    <span>{text("切换项目", "Switch project")}</span>
                     {projectChoices.map((project) => (
                       <button
                         type="button"
@@ -2386,7 +2455,7 @@ export function App() {
                       onClick={openCreateProjectDialog}
                     >
                       <TaskboardIcon className="project-avatar" name="create" />
-                      <span>创建项目</span>
+                      <span>{text("创建项目", "Create project")}</span>
                     </button>
                   </div>
                 )}
@@ -2412,8 +2481,8 @@ export function App() {
                 className="icon-button header-create-button"
                 type="button"
                 onClick={() => setEditor({ task: null, status: "todo" })}
-                aria-label="新建议题"
-                title="新建议题 (C)"
+                aria-label={text("新建议题", "Create issue")}
+                title={text("新建议题 (C)", "Create issue (C)")}
               >
                 <TaskboardIcon name="create" />
               </button>
@@ -2422,14 +2491,14 @@ export function App() {
         </header>
 
         {selectedProjectId && !detailTask && <div className="board-toolbar">
-          <div className="view-tabs" aria-label="看板视图">
+          <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
               type="button"
               aria-pressed={boardView === "dashboard"}
               onClick={() => selectBoardView("dashboard")}
             >
-              Dashboard
+              {text("仪表盘", "Dashboard")}
             </button>
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
@@ -2437,7 +2506,7 @@ export function App() {
               aria-pressed={boardView === "issues"}
               onClick={() => selectBoardView("issues")}
             >
-              议题看板
+              {text("议题看板", "Issue board")}
             </button>
             <button
               className={`view-tab${boardView === "list" ? " active" : ""}`}
@@ -2445,7 +2514,7 @@ export function App() {
               aria-pressed={boardView === "list"}
               onClick={() => selectBoardView("list")}
             >
-              列表视图
+              {text("列表视图", "List")}
             </button>
             <button
               className={`view-tab${boardView === "gantt" ? " active" : ""}`}
@@ -2453,7 +2522,7 @@ export function App() {
               aria-pressed={boardView === "gantt"}
               onClick={() => selectBoardView("gantt")}
             >
-              甘特图
+              {text("甘特图", "Gantt")}
             </button>
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
@@ -2462,27 +2531,27 @@ export function App() {
                 aria-pressed={boardView === "workflow"}
                 onClick={() => selectBoardView("workflow")}
               >
-                节点模式
+                {text("节点模式", "Workflow")}
               </button>
             )}
           </div>
           {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
-            <div className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
+            <div className={`search-field${search ? " has-value" : ""}`} title={text("搜索议题 (/)", "Search issues (/)")}>
               <TaskboardIcon className="search-icon" name="search" />
               <input
                 id="task-search"
                 type="search"
-                aria-label="搜索议题"
+                aria-label={text("搜索议题", "Search issues")}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索议题…"
+                placeholder={text("搜索议题…", "Search issues…")}
               />
               {!search && <kbd>/</kbd>}
               {search && (
                 <button
                   className="search-clear"
                   type="button"
-                  aria-label="清除搜索"
+                  aria-label={text("清除搜索", "Clear search")}
                   onClick={() => {
                     setSearch("");
                     document.getElementById("task-search")?.focus();
@@ -2497,18 +2566,20 @@ export function App() {
                 <label className="gantt-hide-completed">
                   <input type="checkbox" checked={ganttHideCompleted} onChange={(event) => setGanttHideCompleted(event.target.checked)} />
                   <i><LinearIcon name="check" /></i>
-                  <span>隐藏已完成</span>
+                  <span>{text("隐藏已完成", "Hide completed")}</span>
                 </label>
-                <button type="button" className="gantt-today-button" onClick={() => setGanttTodayRequest((current) => current + 1)}>今天</button>
+                <button type="button" className="gantt-today-button" onClick={() => setGanttTodayRequest((current) => current + 1)}>{text("今天", "Today")}</button>
                 <div className="gantt-view-menu-wrap">
-                  <button type="button" className="gantt-view-menu-trigger" aria-label="时间轴视图选项" aria-expanded={ganttViewMenuOpen} onClick={() => setGanttViewMenuOpen((current) => !current)}>
+                  <button type="button" className="gantt-view-menu-trigger" aria-label={text("时间轴视图选项", "Timeline view options")} aria-expanded={ganttViewMenuOpen} onClick={() => setGanttViewMenuOpen((current) => !current)}>
                     <LinearIcon name="more" />
                   </button>
                   {ganttViewMenuOpen && (
                     <div className="gantt-view-menu" role="menu">
                       {GANTT_ZOOM_OPTIONS.map((value) => (
                         <button type="button" role="menuitemradio" aria-checked={ganttZoom === value} className={ganttZoom === value ? "active" : ""} onClick={() => { setGanttZoom(value); setGanttViewMenuOpen(false); }} key={value}>
-                          <span>{{ day: "日视图", week: "周视图", month: "月视图" }[value]}</span>
+                          <span>{language === "zh"
+                            ? { day: "日视图", week: "周视图", month: "月视图" }[value]
+                            : { day: "Day", week: "Week", month: "Month" }[value]}</span>
                           {ganttZoom === value && <LinearIcon name="check" />}
                         </button>
                       ))}
@@ -2530,8 +2601,10 @@ export function App() {
                 type="button"
                 aria-controls="other-tasks-panel"
                 aria-expanded={otherTasksOpen}
-                aria-label={otherTasksOpen ? "关闭其他任务" : "打开其他任务"}
-                title="其他任务"
+                aria-label={otherTasksOpen
+                  ? text("关闭其他任务", "Close other issues")
+                  : text("打开其他任务", "Open other issues")}
+                title={text("其他任务", "Other issues")}
                 onClick={() => setOtherTasksOpen((current) => !current)}
               >
                 <TaskboardIcon name="panel" />
@@ -2543,7 +2616,7 @@ export function App() {
         {(loadError || actionError) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>Taskboard needs attention</strong><p>{actionError ?? loadError}</p></div>
+            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionError ?? loadError}</p></div>
             <button
               type="button"
               onClick={() => {
@@ -2552,7 +2625,7 @@ export function App() {
                 else void loadProjectList();
               }}
             >
-              Try again
+              {text("重试", "Try again")}
             </button>
           </div>
         )}
@@ -2607,7 +2680,7 @@ export function App() {
             onUpdate={updateTaskProperties}
           />
         ) : boardView === "gantt" ? (
-          <Suspense fallback={<div className="workflow-board-loading">正在打开甘特图…</div>}>
+          <Suspense fallback={<div className="workflow-board-loading">{text("正在打开甘特图…", "Opening Gantt…")}</div>}>
             <GanttView
               tasks={filteredTasks}
               presentations={taskPresentations}
@@ -2620,11 +2693,11 @@ export function App() {
             />
           </Suspense>
         ) : boardView === "workflow" ? (
-          <Suspense fallback={<div className="workflow-board-loading">正在打开节点模式…</div>}>
+          <Suspense fallback={<div className="workflow-board-loading">{text("正在打开节点模式…", "Opening workflow…")}</div>}>
             <WorkflowBoard
               key={selectedProject?.id ?? GLOBAL_PROJECT_ID}
               projectId={selectedProject?.id ?? GLOBAL_PROJECT_ID}
-              projectName={selectedProject?.name ?? "当前项目"}
+              projectName={selectedProject?.name ?? text("当前项目", "Current project")}
               workspacePath={
                 selectedDeviceWorkspacePath
                 ?? developmentScan.workspacePath
@@ -2646,7 +2719,7 @@ export function App() {
             } as CSSProperties}
           >
             {tasksLoading && !hasLoadedTasks ? (
-              <div className="loading-board" aria-label="Loading issues" aria-busy="true">
+              <div className="loading-board" aria-label={text("正在加载议题", "Loading issues")} aria-busy="true">
                 {mainStatuses.map((status) => (
                   <div className="loading-column" key={status}>
                     <span /><div /><div />
@@ -2655,7 +2728,7 @@ export function App() {
               </div>
             ) : (
               <>
-                <div className="board-scroll" aria-label="Issue board">
+                <div className="board-scroll" aria-label={text("议题看板", "Issue board")}>
                   <div className="board">
                     {mainStatuses.map((status) => (
                       <BoardColumn
@@ -2667,7 +2740,9 @@ export function App() {
                         tasks={tasksByStatus[status]}
                         presentations={taskPresentations}
                         now={processingNow}
-                        emptyMessage={hasActiveTaskFilters ? "当前筛选下无匹配议题" : "暂无议题"}
+                        emptyMessage={hasActiveTaskFilters
+                          ? text("当前筛选下无匹配议题", "No issues match the current filters")
+                          : text("暂无议题", "No issues")}
                         isDropTarget={dropTarget === status}
                         draggedTaskId={draggedTaskId}
                         draggedTaskHeight={draggedTaskHeight}
@@ -2734,7 +2809,10 @@ export function App() {
           className="task-context-menu project-context-menu"
           data-project-context-menu
           role="menu"
-          aria-label={`项目“${projectContextMenu.project.name}”`}
+          aria-label={text(
+            `项目“${projectContextMenu.project.name}”`,
+            `Project “${projectContextMenu.project.name}”`,
+          )}
           style={{ left: projectContextMenu.x, top: projectContextMenu.y }}
         >
           <button
@@ -2744,7 +2822,7 @@ export function App() {
             onClick={() => requestProjectDelete(projectContextMenu.project)}
           >
             <span className="context-menu-icon" aria-hidden="true"><LinearIcon name="trash" /></span>
-            <span className="context-menu-label">删除项目</span>
+            <span className="context-menu-label">{text("删除项目", "Delete project")}</span>
           </button>
         </div>
       )}
@@ -2769,9 +2847,9 @@ export function App() {
               if (event.key === "Escape") closeCreateProjectDialog();
             }}
           >
-            <h2 id="project-create-title">创建项目</h2>
+            <h2 id="project-create-title">{text("创建项目", "Create project")}</h2>
             <label>
-              <span>项目名称</span>
+              <span>{text("项目名称", "Project name")}</span>
               <input
                 autoFocus
                 maxLength={120}
@@ -2788,14 +2866,16 @@ export function App() {
                 disabled={openingProjectId !== null}
                 onClick={closeCreateProjectDialog}
               >
-                取消
+                {text("取消", "Cancel")}
               </button>
               <button
                 className="button primary"
                 type="submit"
                 disabled={!projectName.trim() || openingProjectId !== null}
               >
-                {openingProjectId ? "创建中…" : "创建"}
+                {openingProjectId
+                  ? text("创建中…", "Creating…")
+                  : text("创建", "Create")}
               </button>
             </div>
           </form>
@@ -2820,8 +2900,14 @@ export function App() {
           >
             {projectDeleteIssueCount === null ? (
               <>
-                <h2 id="project-delete-title">删除项目“{pendingProjectDelete.name}”？</h2>
-                <p>仅空项目可以删除。删除后无法恢复。</p>
+                <h2 id="project-delete-title">{text(
+                  `删除项目“${pendingProjectDelete.name}”？`,
+                  `Delete project “${pendingProjectDelete.name}”?`,
+                )}</h2>
+                <p>{text(
+                  "仅空项目可以删除。删除后无法恢复。",
+                  "Only empty projects can be deleted. This cannot be undone.",
+                )}</p>
                 <div>
                   <button
                     className="button secondary"
@@ -2829,7 +2915,7 @@ export function App() {
                     disabled={deletingProjectId !== null}
                     onClick={closeProjectDeleteDialog}
                   >
-                    取消
+                    {text("取消", "Cancel")}
                   </button>
                   <button
                     className="button danger"
@@ -2837,19 +2923,25 @@ export function App() {
                     disabled={deletingProjectId !== null}
                     onClick={() => void deletePendingProject()}
                   >
-                    {deletingProjectId ? "删除中…" : "删除项目"}
+                    {deletingProjectId
+                      ? text("删除中…", "Deleting…")
+                      : text("删除项目", "Delete project")}
                   </button>
                 </div>
               </>
             ) : (
               <>
-                <h2 id="project-delete-title">无法删除项目“{pendingProjectDelete.name}”</h2>
-                <p>
-                  该项目还有 {projectDeleteIssueCount} 个议题（包含已归档议题）。请先移动或删除这些议题。
-                </p>
+                <h2 id="project-delete-title">{text(
+                  `无法删除项目“${pendingProjectDelete.name}”`,
+                  `Cannot delete project “${pendingProjectDelete.name}”`,
+                )}</h2>
+                <p>{text(
+                  `该项目还有 ${projectDeleteIssueCount} 个议题（包含已归档议题）。请先移动或删除这些议题。`,
+                  `This project still has ${projectDeleteIssueCount} issues, including archived issues. Move or delete them first.`,
+                )}</p>
                 <div>
                   <button className="button primary" type="button" onClick={closeProjectDeleteDialog}>
-                    知道了
+                    {text("知道了", "Got it")}
                   </button>
                 </div>
               </>
@@ -2878,8 +2970,14 @@ export function App() {
               }
             }}
           >
-            <h2 id="archived-task-delete-title">永久删除 {pendingArchivedTaskDelete.identifier}？</h2>
-            <p>“{pendingArchivedTaskDelete.title}”及其评论和附件将被永久删除，此操作无法撤销。</p>
+            <h2 id="archived-task-delete-title">{text(
+              `永久删除 ${pendingArchivedTaskDelete.identifier}？`,
+              `Permanently delete ${pendingArchivedTaskDelete.identifier}?`,
+            )}</h2>
+            <p>{text(
+              `“${pendingArchivedTaskDelete.title}”及其评论和附件将被永久删除，此操作无法撤销。`,
+              `“${pendingArchivedTaskDelete.title}” and its comments and attachments will be permanently deleted. This cannot be undone.`,
+            )}</p>
             <div>
               <button
                 className="button secondary"
@@ -2887,7 +2985,7 @@ export function App() {
                 disabled={deletingArchivedTaskId !== null}
                 onClick={() => setPendingArchivedTaskDelete(null)}
               >
-                取消
+                {text("取消", "Cancel")}
               </button>
               <button
                 className="button danger"
@@ -2895,7 +2993,9 @@ export function App() {
                 disabled={deletingArchivedTaskId !== null}
                 onClick={() => void deletePendingArchivedTask()}
               >
-                {deletingArchivedTaskId ? "删除中…" : "永久删除"}
+                {deletingArchivedTaskId
+                  ? text("删除中…", "Deleting…")
+                  : text("永久删除", "Delete permanently")}
               </button>
             </div>
           </div>
@@ -2961,7 +3061,7 @@ export function App() {
           <span aria-hidden="true"><LinearIcon name="check" /></span>
           <span className="undo-toast-message">{undoNotice.message}</span>
           <button type="button" onClick={() => void performUndo()}>
-            撤回 <kbd>{undoShortcut}</kbd>
+            {text("撤回", "Undo")} <kbd>{undoShortcut}</kbd>
           </button>
         </div>
       )}
@@ -2970,6 +3070,7 @@ export function App() {
           <span aria-hidden="true"><LinearIcon name="check" /></span>{announcement}
         </div>
       )}
-    </div>
+      </div>
+    </TaskboardLanguageProvider>
   );
 }
