@@ -8,7 +8,7 @@ import {
   type KeyboardEventHandler,
 } from "react";
 import type { Attachment } from "../types";
-import { attachmentContentUrl } from "../api";
+import { attachmentContentUrl, resolvePersistedAttachmentUrl } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import { clipboardImages, fileKey, MAX_ATTACHMENT_SIZE } from "./PendingAttachments";
 import { LinearIcon } from "./LinearIcon";
@@ -26,7 +26,15 @@ interface InlineImageSegment {
   file: File;
 }
 
-export type InlineMediaSegment = InlineTextSegment | InlineImageSegment;
+interface PersistedImageSegment {
+  id: string;
+  type: "persisted-image";
+  markdown: string;
+  alt: string;
+  url: string;
+}
+
+export type InlineMediaSegment = InlineTextSegment | InlineImageSegment | PersistedImageSegment;
 export type PendingInlineImage = InlineImageSegment;
 type InlineMediaError = string | readonly [string, string];
 
@@ -68,7 +76,25 @@ function imageSegment(file: File): InlineImageSegment {
 }
 
 export function createInlineMediaSegments(text = ""): InlineMediaSegment[] {
-  return [textSegment(text)];
+  const segments: InlineMediaSegment[] = [];
+  const imagePattern = /!\[((?:\\.|[^\]\\])*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+["'][^)]*["'])?\)/g;
+  let offset = 0;
+
+  for (const match of text.matchAll(imagePattern)) {
+    const index = match.index;
+    if (index > offset) segments.push(textSegment(text.slice(offset, index)));
+    segments.push({
+      id: segmentId("image"),
+      type: "persisted-image",
+      markdown: match[0],
+      alt: match[1].replace(/\\([\\\[\]])/g, "$1"),
+      url: match[2] ?? match[3],
+    });
+    offset = index + match[0].length;
+  }
+
+  if (offset < text.length) segments.push(textSegment(text.slice(offset)));
+  return normalizeSegments(segments);
 }
 
 export function inlineMediaImages(segments: InlineMediaSegment[]): PendingInlineImage[] {
@@ -76,13 +102,19 @@ export function inlineMediaImages(segments: InlineMediaSegment[]): PendingInline
 }
 
 export function inlineMediaText(segments: InlineMediaSegment[]): string {
-  return segments.flatMap((segment) => segment.type === "text" ? [segment.text] : []).join("");
+  return segments.map((segment) => {
+    if (segment.type === "text") return segment.text;
+    if (segment.type === "persisted-image") return segment.markdown;
+    return "";
+  }).join("");
 }
 
 export function serializeInlineMedia(segments: InlineMediaSegment[]): string {
-  return segments.map((segment) => (
-    segment.type === "text" ? segment.text : `\n\n${segment.token}\n\n`
-  )).join("");
+  return segments.map((segment) => {
+    if (segment.type === "text") return segment.text;
+    if (segment.type === "persisted-image") return segment.markdown;
+    return `\n\n${segment.token}\n\n`;
+  }).join("");
 }
 
 export function resolveInlineMediaMarkdown(
@@ -151,6 +183,32 @@ function PendingImageBlock({
         type="button"
         disabled={disabled}
         aria-label={text(`移除 ${segment.file.name}`, `Remove ${segment.file.name}`)}
+        onClick={onRemove}
+      >
+        <LinearIcon name="close" />
+      </button>
+    </figure>
+  );
+}
+
+function PersistedImageBlock({
+  segment,
+  disabled,
+  onRemove,
+}: {
+  segment: PersistedImageSegment;
+  disabled: boolean;
+  onRemove: () => void;
+}) {
+  const { text } = useTaskboardI18n();
+
+  return (
+    <figure className="inline-media-image">
+      <img src={resolvePersistedAttachmentUrl(segment.url)} alt={segment.alt} />
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={text(`移除 ${segment.alt || "图片"}`, `Remove ${segment.alt || "image"}`)}
         onClick={onRemove}
       >
         <LinearIcon name="close" />
@@ -292,8 +350,15 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
               onPaste={(event) => pasteImages(event, segment)}
               onKeyDown={onKeyDown}
             />
-          ) : (
+          ) : segment.type === "pending-image" ? (
             <PendingImageBlock
+              key={segment.id}
+              segment={segment}
+              disabled={disabled}
+              onRemove={() => removeImage(segment.id)}
+            />
+          ) : (
+            <PersistedImageBlock
               key={segment.id}
               segment={segment}
               disabled={disabled}
