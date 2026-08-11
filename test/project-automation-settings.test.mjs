@@ -111,7 +111,7 @@ test("unavailable automation state has one notice, clears stale errors, and cann
   );
   assert.match(
     reconcileSource,
-    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return;/,
+    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return false;/,
   );
   assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
 });
@@ -152,9 +152,22 @@ test("host context heartbeats do not repeatedly disable native automation select
   assert.match(appSource, /const lastAutomationContextReconcileKeyRef = useRef\(""\)/);
   assert.match(
     appSource,
-    /if \(lastAutomationContextReconcileKeyRef\.current === automationContextReconcileKey\) return;\s*lastAutomationContextReconcileKeyRef\.current = automationContextReconcileKey;\s*setAutomationError\(null\);\s*void reconcileProjectAutomation\(\);/,
+    /if \(lastAutomationContextReconcileKeyRef\.current === automationContextReconcileKey\) return;\s*setAutomationError\(null\);\s*if \(reconcileProjectAutomation\(\)\) \{\s*lastAutomationContextReconcileKeyRef\.current = automationContextReconcileKey;\s*\}/,
   );
+  assert.match(appSource, /\}, \[automationContextReconcileKey, automationPending, reconcileProjectAutomation\]\)/);
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
+});
+
+test("an in-flight context switch retries after pending reconciliation completes", () => {
+  const reconcileSource = appSource.slice(
+    appSource.indexOf("const reconcileProjectAutomation"),
+    appSource.indexOf("const saveProjectAutomation"),
+  );
+  assert.match(reconcileSource, /automationRequestInFlightRef\.current\) return false/);
+  assert.match(reconcileSource, /automationRequestInFlightRef\.current = true/);
+  assert.match(reconcileSource, /void \(async \(\) => \{/);
+  assert.match(reconcileSource, /setAutomationPending\(false\)/);
+  assert.match(reconcileSource, /return true;/);
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {

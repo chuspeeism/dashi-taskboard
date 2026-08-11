@@ -928,89 +928,92 @@ export function App() {
     selectedProjectId,
   ]);
 
-  const reconcileProjectAutomation = useCallback(async () => {
+  const reconcileProjectAutomation = useCallback(() => {
     if (automationProjectContext.unavailableReason) {
       setAutomationError(null);
-      return;
+      return false;
     }
-    if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return;
+    if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return false;
     const stored = projectAutomationsRef.current[selectedProjectId];
     automationRequestInFlightRef.current = true;
     setAutomationPending(true);
     setAutomationError(null);
-    try {
-      const options = stored ?? {
-        status: "PAUSED" as const,
-        ...DEFAULT_AUTOMATION_OPTIONS,
-      };
-      const response = await sendAutomationRequest(
-        "list",
-        options,
-        stored?.automationId,
-      );
-      const items = Array.isArray(response.items)
-        ? response.items.filter(isAutomationHostItem)
-        : [];
-      const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
-      if (!stored) {
-        if (!policy) return;
-        const item = (isAutomationHostItem(response.item) ? response.item : undefined)
-          ?? items.find((candidate) => candidate.id === policy.automationId)
-          ?? (items.length === 1 ? items[0] : undefined);
-        writeProjectAutomation(selectedProjectId, {
-          automationId: item?.id ?? policy.automationId,
-          codexProjectId: automationProjectContext.codexProjectId,
-          status: item?.status ?? "PAUSED",
-          enabledByUser: policy.enabledByUser,
-          quotaAware: policy.quotaAware,
-          ...(response.quota ? { quota: response.quota } : {}),
-          intervalMinutes: policy.intervalMinutes,
-          model: policy.model,
-          reasoningEffort: policy.reasoningEffort,
-        });
-        return;
-      }
-      const item = (isAutomationHostItem(response.item) ? response.item : undefined)
-        ?? items.find((item) => item.id === stored?.automationId)
-        ?? (items.length === 1 ? items[0] : undefined);
-      if (!item) {
-        if (stored) {
+    void (async () => {
+      try {
+        const options = stored ?? {
+          status: "PAUSED" as const,
+          ...DEFAULT_AUTOMATION_OPTIONS,
+        };
+        const response = await sendAutomationRequest(
+          "list",
+          options,
+          stored?.automationId,
+        );
+        const items = Array.isArray(response.items)
+          ? response.items.filter(isAutomationHostItem)
+          : [];
+        const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
+        if (!stored) {
+          if (!policy) return;
+          const item = (isAutomationHostItem(response.item) ? response.item : undefined)
+            ?? items.find((candidate) => candidate.id === policy.automationId)
+            ?? (items.length === 1 ? items[0] : undefined);
           writeProjectAutomation(selectedProjectId, {
-            ...stored,
-            automationId: undefined,
-            status: "PAUSED",
-            enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
-            quotaAware: policy?.quotaAware ?? stored.quotaAware,
+            automationId: item?.id ?? policy.automationId,
+            codexProjectId: automationProjectContext.codexProjectId,
+            status: item?.status ?? "PAUSED",
+            enabledByUser: policy.enabledByUser,
+            quotaAware: policy.quotaAware,
             ...(response.quota ? { quota: response.quota } : {}),
+            intervalMinutes: policy.intervalMinutes,
+            model: policy.model,
+            reasoningEffort: policy.reasoningEffort,
           });
+          return;
         }
-        return;
+        const item = (isAutomationHostItem(response.item) ? response.item : undefined)
+          ?? items.find((item) => item.id === stored?.automationId)
+          ?? (items.length === 1 ? items[0] : undefined);
+        if (!item) {
+          if (stored) {
+            writeProjectAutomation(selectedProjectId, {
+              ...stored,
+              automationId: undefined,
+              status: "PAUSED",
+              enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
+              quotaAware: policy?.quotaAware ?? stored.quotaAware,
+              ...(response.quota ? { quota: response.quota } : {}),
+            });
+          }
+          return;
+        }
+        const intervalMinutes = intervalMinutesFromRrule(item.rrule);
+        if (!intervalMinutes) return;
+        writeProjectAutomation(selectedProjectId, {
+          automationId: item.id,
+          codexProjectId: automationProjectContext.codexProjectId,
+          status: item.status,
+          enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
+          quotaAware: policy?.quotaAware ?? stored.quotaAware,
+          ...(
+            response.quota
+              ? { quota: response.quota }
+              : stored.quota
+                ? { quota: stored.quota }
+                : {}
+          ),
+          intervalMinutes,
+          model: item.model,
+          reasoningEffort: item.reasoningEffort,
+        });
+      } catch (error) {
+        setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
+      } finally {
+        automationRequestInFlightRef.current = false;
+        setAutomationPending(false);
       }
-      const intervalMinutes = intervalMinutesFromRrule(item.rrule);
-      if (!intervalMinutes) return;
-      writeProjectAutomation(selectedProjectId, {
-        automationId: item.id,
-        codexProjectId: automationProjectContext.codexProjectId,
-        status: item.status,
-        enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
-        quotaAware: policy?.quotaAware ?? stored.quotaAware,
-        ...(
-          response.quota
-            ? { quota: response.quota }
-            : stored.quota
-              ? { quota: stored.quota }
-              : {}
-        ),
-        intervalMinutes,
-        model: item.model,
-        reasoningEffort: item.reasoningEffort,
-      });
-    } catch (error) {
-      setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
-    } finally {
-      automationRequestInFlightRef.current = false;
-      setAutomationPending(false);
-    }
+    })();
+    return true;
   }, [
     automationProjectContext,
     selectedProjectId,
@@ -1231,10 +1234,11 @@ export function App() {
     // Host context heartbeats replace their object every second. Only semantic project changes
     // should trigger a passive automation refresh, otherwise native selects are disabled repeatedly.
     if (lastAutomationContextReconcileKeyRef.current === automationContextReconcileKey) return;
-    lastAutomationContextReconcileKeyRef.current = automationContextReconcileKey;
     setAutomationError(null);
-    void reconcileProjectAutomation();
-  }, [automationContextReconcileKey, reconcileProjectAutomation]);
+    if (reconcileProjectAutomation()) {
+      lastAutomationContextReconcileKeyRef.current = automationContextReconcileKey;
+    }
+  }, [automationContextReconcileKey, automationPending, reconcileProjectAutomation]);
 
   useEffect(() => {
     if (!embedded || window.parent === window) return;
