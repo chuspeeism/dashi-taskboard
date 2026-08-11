@@ -618,6 +618,7 @@ export function TaskDetail({
   }
 
   function beginEdit(comment: Comment) {
+    if (savingCommentId !== null) return;
     editingUploadedAttachmentsRef.current.clear();
     setEditingId(comment.id);
     setEditingSegments(createInlineMediaSegments(comment.body));
@@ -1028,7 +1029,12 @@ export function TaskDetail({
                             </button>
                             {activeMenuId === comment.id && (
                               <div className="comment-action-menu" role="menu">
-                                <button type="button" role="menuitem" onClick={() => beginEdit(comment)}>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={savingCommentId !== null}
+                                  onClick={() => beginEdit(comment)}
+                                >
                                   <LinearIcon name="write" />
                                   编辑评论
                                 </button>
@@ -1089,7 +1095,14 @@ export function TaskDetail({
                                 event.currentTarget.value = "";
                               }}
                             />
-                            <button className="button secondary" type="button" onClick={endCommentEdit}>取消</button>
+                            <button
+                              className="button secondary"
+                              type="button"
+                              disabled={savingCommentId === comment.id}
+                              onClick={endCommentEdit}
+                            >
+                              取消
+                            </button>
                             <button
                               className="button primary"
                               type="button"
