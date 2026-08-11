@@ -664,6 +664,7 @@ export function App() {
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
+  const lastAutomationContextReconcileKeyRef = useRef("");
   const projectAutomationsRef = useRef(projectAutomations);
 
   const setAnnouncement = useCallback((message: string) => {
@@ -747,6 +748,13 @@ export function App() {
     manageTaskboardSkillPath,
     selectedProject,
   ]);
+  const automationContextReconcileKey = [
+    selectedProjectId,
+    automationProjectContext.codexProjectId ?? "",
+    automationProjectContext.workspacePath ?? "",
+    automationProjectContext.unavailableReason ?? "",
+    manageTaskboardSkillPath,
+  ].join("\u0000");
   const detailTask = detailTaskIdentifier
     ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
@@ -1220,9 +1228,13 @@ export function App() {
   }, [projectContextMenu]);
 
   useEffect(() => {
+    // Host context heartbeats replace their object every second. Only semantic project changes
+    // should trigger a passive automation refresh, otherwise native selects are disabled repeatedly.
+    if (lastAutomationContextReconcileKeyRef.current === automationContextReconcileKey) return;
+    lastAutomationContextReconcileKeyRef.current = automationContextReconcileKey;
     setAutomationError(null);
     void reconcileProjectAutomation();
-  }, [selectedProjectId, reconcileProjectAutomation]);
+  }, [automationContextReconcileKey, reconcileProjectAutomation]);
 
   useEffect(() => {
     if (!embedded || window.parent === window) return;

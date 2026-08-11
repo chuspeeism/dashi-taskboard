@@ -144,6 +144,19 @@ test("pending completion reconciles the optimistic draft to confirmed host state
   assert.match(menuSource, /disabled=\{disabled\}/);
 });
 
+test("host context heartbeats do not repeatedly disable native automation selects", () => {
+  assert.match(
+    appSource,
+    /const automationContextReconcileKey = \[[\s\S]*?selectedProjectId,[\s\S]*?automationProjectContext\.codexProjectId[\s\S]*?automationProjectContext\.workspacePath[\s\S]*?automationProjectContext\.unavailableReason[\s\S]*?manageTaskboardSkillPath,[\s\S]*?\]\.join\("\\u0000"\)/,
+  );
+  assert.match(appSource, /const lastAutomationContextReconcileKeyRef = useRef\(""\)/);
+  assert.match(
+    appSource,
+    /if \(lastAutomationContextReconcileKeyRef\.current === automationContextReconcileKey\) return;\s*lastAutomationContextReconcileKeyRef\.current = automationContextReconcileKey;\s*setAutomationError\(null\);\s*void reconcileProjectAutomation\(\);/,
+  );
+  assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
+});
+
 test("opening settings and changing projects reconcile with the host list", () => {
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),
