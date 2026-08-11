@@ -258,7 +258,7 @@ export function TaskEditor({
       event.currentTarget.requestSubmit();
       return;
     }
-    if (event.target !== titleRef.current || event.metaKey || event.ctrlKey) return;
+    if (event.target !== titleRef.current) return;
     event.preventDefault();
     if (task) event.currentTarget.requestSubmit();
   }
