@@ -6011,6 +6011,11 @@ kbd {
   max-height: inherit;
 }
 
+.task-form.is-creating {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .dialog-header,
 .dialog-footer {
   display: flex;
@@ -6088,7 +6093,7 @@ kbd {
   display: block;
 }
 
-.composer-title input,
+.composer-title textarea,
 .composer-description textarea {
   width: 100%;
   padding: 0;
@@ -6098,8 +6103,10 @@ kbd {
   color: var(--text-primary);
 }
 
-.composer-title input {
-  height: 34px;
+.composer-title textarea {
+  min-height: 34px;
+  overflow: hidden;
+  resize: none;
   font-size: 18px;
   font-weight: 600;
   line-height: 28.8px;
@@ -6131,7 +6138,7 @@ kbd {
   min-height: 100px;
 }
 
-.composer-title input::placeholder,
+.composer-title textarea::placeholder,
 .composer-description textarea::placeholder,
 .property-control input::placeholder,
 .codex-link-row input::placeholder {
