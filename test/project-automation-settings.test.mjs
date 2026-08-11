@@ -150,11 +150,21 @@ test("host context heartbeats do not repeatedly disable native automation select
     /const automationContextReconcileKey = \[[\s\S]*?selectedProjectId,[\s\S]*?automationProjectContext\.codexProjectId[\s\S]*?automationProjectContext\.workspacePath[\s\S]*?automationProjectContext\.unavailableReason[\s\S]*?manageTaskboardSkillPath,[\s\S]*?\]\.join\("\\u0000"\)/,
   );
   assert.match(appSource, /const lastAutomationContextReconcileKeyRef = useRef\(""\)/);
+  const reconcileSource = appSource.slice(
+    appSource.indexOf("const reconcileProjectAutomation"),
+    appSource.indexOf("const saveProjectAutomation"),
+  );
+  assert.match(reconcileSource, /useCallback\(\(passive = false\) =>/);
+  assert.match(reconcileSource, /if \(!passive\) setAutomationPending\(true\)/);
+  assert.match(reconcileSource, /if \(!passive\) setAutomationPending\(false\)/);
   assert.match(
     appSource,
     /if \(lastAutomationContextReconcileKeyRef\.current === automationContextReconcileKey\) return;\s*setAutomationError\(null\);\s*if \(reconcileProjectAutomation\(\)\) \{\s*lastAutomationContextReconcileKeyRef\.current = automationContextReconcileKey;\s*\}/,
   );
-  assert.match(appSource, /\}, \[automationContextReconcileKey, automationPending, reconcileProjectAutomation\]\)/);
+  assert.match(
+    appSource,
+    /if \(lastAutomationContextReconcileKeyRef\.current !== automationContextReconcileKey\) return;\s*reconcileProjectAutomation\(true\);/,
+  );
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
 });
 
@@ -165,9 +175,28 @@ test("an in-flight context switch retries after pending reconciliation completes
   );
   assert.match(reconcileSource, /automationRequestInFlightRef\.current\) return false/);
   assert.match(reconcileSource, /automationRequestInFlightRef\.current = true/);
-  assert.match(reconcileSource, /void \(async \(\) => \{/);
+  assert.match(reconcileSource, /const request = \(async \(\) => \{/);
   assert.match(reconcileSource, /setAutomationPending\(false\)/);
+  assert.match(reconcileSource, /setAutomationReconcileRevision\(\(current\) => current \+ 1\)/);
+  assert.match(
+    appSource,
+    /\}, \[automationContextReconcileKey, automationReconcileRevision, reconcileProjectAutomation\]\)/,
+  );
   assert.match(reconcileSource, /return true;/);
+});
+
+test("automation changes wait for a passive refresh without crossing semantic contexts", () => {
+  const saveSource = appSource.slice(
+    appSource.indexOf("const saveProjectAutomation"),
+    appSource.indexOf("function openTaskDetail"),
+  );
+  assert.match(appSource, /const passiveAutomationRequestRef = useRef<Promise<void> \| null>\(null\)/);
+  assert.match(saveSource, /if \(passiveAutomationRequestRef\.current\) await passiveAutomationRequestRef\.current/);
+  assert.match(
+    saveSource,
+    /automationContextReconcileKeyRef\.current !== requestContextKey\s*\|\| automationRequestInFlightRef\.current/,
+  );
+  assert.match(saveSource, /const stored = projectAutomationsRef\.current\[selectedProjectId\]/);
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {

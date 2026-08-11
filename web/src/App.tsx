@@ -646,6 +646,7 @@ export function App() {
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
+  const [automationReconcileRevision, setAutomationReconcileRevision] = useState(0);
   const [automationError, setAutomationError] = useState<string | null>(null);
   const [announcement, setAnnouncementValue] = useState("");
   const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
@@ -664,6 +665,7 @@ export function App() {
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
+  const passiveAutomationRequestRef = useRef<Promise<void> | null>(null);
   const lastAutomationContextReconcileKeyRef = useRef("");
   const projectAutomationsRef = useRef(projectAutomations);
 
@@ -755,6 +757,8 @@ export function App() {
     automationProjectContext.unavailableReason ?? "",
     manageTaskboardSkillPath,
   ].join("\u0000");
+  const automationContextReconcileKeyRef = useRef(automationContextReconcileKey);
+  automationContextReconcileKeyRef.current = automationContextReconcileKey;
   const detailTask = detailTaskIdentifier
     ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
@@ -928,7 +932,7 @@ export function App() {
     selectedProjectId,
   ]);
 
-  const reconcileProjectAutomation = useCallback(() => {
+  const reconcileProjectAutomation = useCallback((passive = false) => {
     if (automationProjectContext.unavailableReason) {
       setAutomationError(null);
       return false;
@@ -936,9 +940,9 @@ export function App() {
     if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return false;
     const stored = projectAutomationsRef.current[selectedProjectId];
     automationRequestInFlightRef.current = true;
-    setAutomationPending(true);
+    if (!passive) setAutomationPending(true);
     setAutomationError(null);
-    void (async () => {
+    const request = (async () => {
       try {
         const options = stored ?? {
           status: "PAUSED" as const,
@@ -1010,9 +1014,13 @@ export function App() {
         setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
       } finally {
         automationRequestInFlightRef.current = false;
-        setAutomationPending(false);
+        if (passive) passiveAutomationRequestRef.current = null;
+        if (!passive) setAutomationPending(false);
+        setAutomationReconcileRevision((current) => current + 1);
       }
     })();
+    if (passive) passiveAutomationRequestRef.current = request;
+    void request;
     return true;
   }, [
     automationProjectContext,
@@ -1028,13 +1036,19 @@ export function App() {
     model: AutomationModel;
     reasoningEffort: AutomationReasoningEffort;
   }) => {
-    const stored = projectAutomations[selectedProjectId];
+    const requestContextKey = automationContextReconcileKey;
     if (
       !selectedProjectId
       || automationProjectContext.unavailableReason
       || !automationProjectContext.codexProjectId
+      || (automationRequestInFlightRef.current && !passiveAutomationRequestRef.current)
+    ) return;
+    if (passiveAutomationRequestRef.current) await passiveAutomationRequestRef.current;
+    if (
+      automationContextReconcileKeyRef.current !== requestContextKey
       || automationRequestInFlightRef.current
     ) return;
+    const stored = projectAutomationsRef.current[selectedProjectId];
     const previousRecord = stored;
     automationRequestInFlightRef.current = true;
     setAutomationPending(true);
@@ -1061,8 +1075,8 @@ export function App() {
       setAutomationPending(false);
     }
   }, [
+    automationContextReconcileKey,
     automationProjectContext,
-    projectAutomations,
     selectedProjectId,
     sendAutomationRequest,
     writeProjectAutomation,
@@ -1231,14 +1245,21 @@ export function App() {
   }, [projectContextMenu]);
 
   useEffect(() => {
-    // Host context heartbeats replace their object every second. Only semantic project changes
-    // should trigger a passive automation refresh, otherwise native selects are disabled repeatedly.
+    // Only semantic project changes enter the visible pending state. The completion revision lets a
+    // context switch retry if an older context's passive refresh was already in flight.
     if (lastAutomationContextReconcileKeyRef.current === automationContextReconcileKey) return;
     setAutomationError(null);
     if (reconcileProjectAutomation()) {
       lastAutomationContextReconcileKeyRef.current = automationContextReconcileKey;
     }
-  }, [automationContextReconcileKey, automationPending, reconcileProjectAutomation]);
+  }, [automationContextReconcileKey, automationReconcileRevision, reconcileProjectAutomation]);
+
+  useEffect(() => {
+    // Host context heartbeats replace their object every second. Keep polling host policy status,
+    // but do not disable the form: toggling a native select's disabled state closes its popover.
+    if (lastAutomationContextReconcileKeyRef.current !== automationContextReconcileKey) return;
+    reconcileProjectAutomation(true);
+  }, [automationContextReconcileKey, reconcileProjectAutomation]);
 
   useEffect(() => {
     if (!embedded || window.parent === window) return;
