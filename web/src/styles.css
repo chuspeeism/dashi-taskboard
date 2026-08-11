@@ -11577,11 +11577,22 @@ kbd {
   padding: 0;
 }
 
+:root[data-theme="dark"] .gantt_scale_line:first-child {
+  border-bottom-color: rgba(255, 255, 255, .1) !important;
+}
+
 .gantt_row,
 .gantt_task_row {
   border-top: 0 !important;
   border-bottom: 0 !important;
 }
+:root[data-theme="dark"] .gantt_grid,
+:root[data-theme="dark"] .gantt_grid_data,
+:root[data-theme="dark"] .gantt_task,
+:root[data-theme="dark"] .gantt_data_area,
+:root[data-theme="dark"] .gantt_task_bg,
+:root[data-theme="dark"] .gantt_row:not(.is-group),
+:root[data-theme="dark"] .gantt_task_row:not(.is-group) { background: var(--bg) !important; }
 .gantt_row:not(.is-group):hover,
 .gantt_task_row:not(.is-group):hover,
 .gantt_row:not(.is-group).is-linked-hover,
