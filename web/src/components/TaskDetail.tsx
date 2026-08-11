@@ -336,17 +336,23 @@ export function TaskDetail({
   const [submitting, setSubmitting] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingBody, setEditingBody] = useState("");
+  const [editingSegments, setEditingSegments] = useState<InlineMediaSegment[]>(
+    () => createInlineMediaSegments(),
+  );
   const [savingCommentId, setSavingCommentId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Comment | null>(null);
   const [deleting, setDeleting] = useState(false);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
   const composerRef = useRef<InlineMediaComposerHandle>(null);
+  const editingComposerRef = useRef<InlineMediaComposerHandle>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const editCommentImageInputRef = useRef<HTMLInputElement>(null);
   const draft = serializeInlineMedia(commentSegments);
   const commentInlineImages = inlineMediaImages(commentSegments);
+  const editingDraft = serializeInlineMedia(editingSegments);
+  const editingInlineImages = inlineMediaImages(editingSegments);
 
   useEffect(() => {
     const taskChanged = currentTask.id !== task.id;
@@ -369,6 +375,13 @@ export function TaskDetail({
       descriptionComposerRef.current?.focus();
     });
   }, [editingDescription]);
+
+  useEffect(() => {
+    if (!editingId) return;
+    requestAnimationFrame(() => {
+      editingComposerRef.current?.focus();
+    });
+  }, [editingId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -605,20 +618,26 @@ export function TaskDetail({
 
   function beginEdit(comment: Comment) {
     setEditingId(comment.id);
-    setEditingBody(comment.body);
+    setEditingSegments(createInlineMediaSegments(comment.body));
     setActiveMenuId(null);
   }
 
   async function saveComment(comment: Comment) {
-    const body = editingBody.trim();
-    if (!body || body === comment.body) {
+    const body = editingDraft.trim();
+    if (!body || (body === comment.body && editingInlineImages.length === 0)) {
       if (body === comment.body) setEditingId(null);
       return;
     }
     setSavingCommentId(comment.id);
     setCommentsError(null);
     try {
-      const updated = await updateComment(comment, body);
+      const uploaded = await Promise.all(
+        editingInlineImages.map((image) => uploadCommentAttachment(comment.id, image.file)),
+      );
+      const updated = await updateComment(
+        comment,
+        resolveInlineMediaMarkdown(body, editingInlineImages, uploaded).trim(),
+      );
       setComments((current) => current.map((item) => item.id === updated.id ? updated : item));
       setEditingId(null);
     } catch (error) {
@@ -785,6 +804,7 @@ export function TaskDetail({
                     tabIndex={0}
                     aria-label="编辑议题描述"
                     onClick={() => {
+                      if (window.getSelection()?.isCollapsed === false) return;
                       setDescriptionSegments(createInlineMediaSegments(description));
                       setEditingDescription(true);
                     }}
@@ -981,65 +1001,86 @@ export function TaskDetail({
                         {comment.version > 1 && (
                           <span className="comment-edited" title={`编辑于 ${exactTime(comment.updatedAt)}`}>已编辑</span>
                         )}
-                        <div className="comment-actions" data-comment-menu-root={comment.id}>
-                          <button
-                            type="button"
-                            className="comment-menu-trigger"
-                            aria-label="评论操作"
-                            aria-haspopup="menu"
-                            aria-expanded={activeMenuId === comment.id}
-                            onClick={() => setActiveMenuId((current) => current === comment.id ? null : comment.id)}
-                          >
-                            <LinearIcon name="more" />
-                          </button>
-                          {activeMenuId === comment.id && (
-                            <div className="comment-action-menu" role="menu">
-                              <button type="button" role="menuitem" onClick={() => beginEdit(comment)}>
-                                <LinearIcon name="write" />
-                                编辑评论
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="danger"
-                                onClick={() => { setPendingDelete(comment); setActiveMenuId(null); }}
-                              >
-                                <LinearIcon name="trash" />
-                                删除评论
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                        {editingId !== comment.id && (
+                          <div className="comment-actions" data-comment-menu-root={comment.id}>
+                            <button
+                              type="button"
+                              className="comment-menu-trigger"
+                              aria-label="评论操作"
+                              aria-haspopup="menu"
+                              aria-expanded={activeMenuId === comment.id}
+                              onClick={() => setActiveMenuId((current) => current === comment.id ? null : comment.id)}
+                            >
+                              <LinearIcon name="more" />
+                            </button>
+                            {activeMenuId === comment.id && (
+                              <div className="comment-action-menu" role="menu">
+                                <button type="button" role="menuitem" onClick={() => beginEdit(comment)}>
+                                  <LinearIcon name="write" />
+                                  编辑评论
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="danger"
+                                  onClick={() => { setPendingDelete(comment); setActiveMenuId(null); }}
+                                >
+                                  <LinearIcon name="trash" />
+                                  删除评论
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </header>
 
                       {editingId === comment.id ? (
                         <div className="comment-edit-form">
-                          <div className="inline-media-composer comment-inline-media">
-                            <textarea
-                              ref={resizeTextarea}
-                              autoFocus
-                              value={editingBody}
-                              rows={1}
-                              aria-label="编辑评论"
+                          <InlineMediaComposer
+                            ref={editingComposerRef}
+                            className="comment-inline-media"
+                            segments={editingSegments}
+                            placeholder="编辑评论"
+                            ariaLabel="编辑评论"
+                            disabled={savingCommentId === comment.id}
+                            onChange={setEditingSegments}
+                            onError={setCommentsError}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setEditingId(null);
+                              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                                event.preventDefault();
+                                void saveComment(comment);
+                              }
+                            }}
+                          />
+                          <div className="comment-edit-actions">
+                            <button
+                              className="button secondary"
+                              type="button"
+                              disabled={savingCommentId === comment.id}
+                              onClick={() => editCommentImageInputRef.current?.click()}
+                            >
+                              <LinearIcon name="attachment" />
+                              添加图片
+                            </button>
+                            <input
+                              ref={editCommentImageInputRef}
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              hidden
                               onChange={(event) => {
-                                setEditingBody(event.target.value);
-                                resizeTextarea(event.currentTarget);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Escape") setEditingId(null);
-                                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                                  event.preventDefault();
-                                  void saveComment(comment);
+                                if (event.currentTarget.files) {
+                                  editingComposerRef.current?.addImages(event.currentTarget.files);
                                 }
+                                event.currentTarget.value = "";
                               }}
                             />
-                          </div>
-                          <div className="comment-edit-actions">
                             <button className="button secondary" type="button" onClick={() => setEditingId(null)}>取消</button>
                             <button
                               className="button primary"
                               type="button"
-                              disabled={!editingBody.trim() || savingCommentId === comment.id}
+                              disabled={!editingDraft.trim() || savingCommentId === comment.id}
                               onClick={() => void saveComment(comment)}
                             >
                               {savingCommentId === comment.id ? "保存中…" : "保存"}
