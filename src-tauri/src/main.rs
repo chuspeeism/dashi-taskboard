@@ -39,6 +39,8 @@ struct LauncherSnapshot {
     version: String,
     app_path: Option<String>,
     child_pid: Option<u32>,
+    open_signal_pid: Option<u32>,
+    open_request_pending: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -82,6 +84,8 @@ impl LauncherState {
                 version,
                 app_path: None,
                 child_pid: None,
+                open_signal_pid: None,
+                open_request_pending: false,
             }),
             status_menu: Mutex::new(None),
             intentional_stop: AtomicBool::new(false),
@@ -154,13 +158,17 @@ fn update_snapshot(
         update(&mut snapshot);
         snapshot.clone()
     };
-    if let Some(status_menu) = state.status_menu.lock().unwrap().as_ref() {
+    let status_menu = state.status_menu.lock().unwrap().clone();
+    if let Some(status_menu) = status_menu {
         let status = match snapshot.phase.as_str() {
             "running" => "运行状态：正常",
             "error" => "运行状态：异常",
             _ => "运行状态：启动中",
-        };
-        let _ = status_menu.set_text(status);
+        }
+        .to_string();
+        let _ = app.run_on_main_thread(move || {
+            let _ = status_menu.set_text(status);
+        });
     }
     let _ = app.emit("launcher-status", snapshot.clone());
     snapshot
@@ -206,6 +214,21 @@ fn send_process_group_signal(pid: u32, signal: i32) {
 
 fn process_group_is_running(pid: u32) -> bool {
     unsafe { libc::kill(-(pid as i32), 0) == 0 }
+}
+
+fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
+    let mut snapshot = state.snapshot.lock().unwrap();
+    if !snapshot.open_request_pending {
+        return Ok(());
+    }
+    let Some(pid) = snapshot.open_signal_pid else {
+        return Ok(());
+    };
+    if unsafe { libc::kill(pid as i32, libc::SIGUSR2) } != 0 {
+        snapshot.open_signal_pid = None;
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(())
 }
 
 fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
@@ -286,6 +309,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
         snapshot.phase = "stopped".into();
         snapshot.message = "任务面板已停止。".into();
         snapshot.child_pid = None;
+        snapshot.open_signal_pid = None;
     });
 }
 
@@ -299,6 +323,8 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     is_stderr: bool,
     app: AppHandle,
     state: Arc<LauncherState>,
+    pid: u32,
+    generation: u64,
 ) {
     thread::spawn(move || {
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
@@ -313,6 +339,26 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                     snapshot.phase = "starting".into();
                     snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
                 });
+            } else if !is_stderr && line.contains("\"openTaskboardSignalReady\":true") {
+                if state.generation.load(Ordering::SeqCst) == generation {
+                    let snapshot = update_snapshot(&app, &state, |snapshot| {
+                        if state.generation.load(Ordering::SeqCst) == generation {
+                            snapshot.open_signal_pid = Some(pid);
+                        }
+                    });
+                    if snapshot.open_signal_pid == Some(pid) {
+                        if let Err(error) = signal_pending_taskboard_open(&state) {
+                            append_log(&state, &format!("Taskboard open signal failed: {error}"));
+                        }
+                    }
+                }
+            } else if !is_stderr && line.contains("\"openTaskboardSignalQueued\":true") {
+                let mut snapshot = state.snapshot.lock().unwrap();
+                if state.generation.load(Ordering::SeqCst) == generation
+                    && snapshot.open_signal_pid == Some(pid)
+                {
+                    snapshot.open_request_pending = false;
+                }
             } else if !is_stderr && line.contains("\"injected\"") {
                 update_snapshot(&app, &state, |snapshot| {
                     snapshot.phase = "running".into();
@@ -353,6 +399,7 @@ fn start_launcher_locked(
         snapshot.phase = "starting".into();
         snapshot.message = "正在启动任务面板服务…".into();
         snapshot.app_path = Some(codex_app.display().to_string());
+        snapshot.open_signal_pid = None;
     });
 
     let path_value = format!(
@@ -427,10 +474,10 @@ fn start_launcher_locked(
         ),
     );
     if let Some(stdout) = stdout {
-        watch_launcher_output(stdout, false, app.clone(), state.clone());
+        watch_launcher_output(stdout, false, app.clone(), state.clone(), pid, generation);
     }
     if let Some(stderr) = stderr {
-        watch_launcher_output(stderr, true, app.clone(), state.clone());
+        watch_launcher_output(stderr, true, app.clone(), state.clone(), pid, generation);
     }
 
     let event_app = app.clone();
@@ -455,6 +502,7 @@ fn start_launcher_locked(
         let intentional = event_state.intentional_stop.load(Ordering::SeqCst);
         update_snapshot(&event_app, &event_state, |snapshot| {
             snapshot.child_pid = None;
+            snapshot.open_signal_pid = None;
             if !intentional {
                 snapshot.phase = "error".into();
                 snapshot.message = "任务面板进程已退出，正在恢复…".into();
@@ -521,27 +569,8 @@ fn restart_launcher(
 }
 
 fn open_taskboard(state: &LauncherState) -> Result<(), String> {
-    let pid = state
-        .child
-        .lock()
-        .unwrap()
-        .ok_or_else(|| "任务面板服务尚未启动".to_string())?;
-    if unsafe { libc::kill(pid as i32, libc::SIGUSR2) } != 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-    let app_path = state
-        .snapshot
-        .lock()
-        .unwrap()
-        .app_path
-        .clone()
-        .ok_or_else(|| "无法定位 Codex App".to_string())?;
-    StdCommand::new("/usr/bin/open")
-        .arg("-a")
-        .arg(app_path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    state.snapshot.lock().unwrap().open_request_pending = true;
+    signal_pending_taskboard_open(state)
 }
 
 async fn check_for_startup_update(
@@ -698,11 +727,11 @@ fn finish_update_flow(
     check_update: &MenuItem<tauri::Wry>,
     quit: &MenuItem<tauri::Wry>,
 ) {
-    state.update_flow_in_progress.store(false, Ordering::SeqCst);
     state.update_in_progress.store(false, Ordering::SeqCst);
     check_update.set_text("检查更新").unwrap();
     check_update.set_enabled(true).unwrap();
     quit.set_enabled(true).unwrap();
+    state.update_flow_in_progress.store(false, Ordering::SeqCst);
 }
 
 async fn offer_update(
@@ -844,12 +873,13 @@ fn main() {
                 MenuItem::with_id(app, "check-update", "检查更新", false, None::<&str>)?;
             let restart_codex =
                 MenuItem::with_id(app, "restart-codex", "重新打开 Codex", true, None::<&str>)?;
+            let autostart_enabled = app.autolaunch().is_enabled()?;
             let autostart = CheckMenuItem::with_id(
                 app,
                 "autostart",
                 "开机自启动",
                 true,
-                app.autolaunch().is_enabled()?,
+                autostart_enabled,
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -868,6 +898,7 @@ fn main() {
             let check_update_menu = check_update.clone();
             let quit_menu = quit.clone();
             let autostart_menu = autostart.clone();
+            let autostart_confirmed = Arc::new(AtomicBool::new(autostart_enabled));
             TrayIconBuilder::new()
                 .icon(tauri::include_image!("icons/tray-codex.png"))
                 .icon_as_template(true)
@@ -925,20 +956,35 @@ fn main() {
                     }
                     "autostart" => {
                         let manager = app.autolaunch();
-                        let result = manager.is_enabled().and_then(|enabled| {
-                            if enabled {
-                                manager.disable().map(|_| false)
-                            } else {
-                                manager.enable().map(|_| true)
+                        let previous = autostart_confirmed.load(Ordering::SeqCst);
+                        let mut confirmed_before = previous;
+                        let operation_error = match manager.is_enabled() {
+                            Ok(enabled) => {
+                                confirmed_before = enabled;
+                                autostart_confirmed.store(enabled, Ordering::SeqCst);
+                                let result = if enabled {
+                                    manager.disable()
+                                } else {
+                                    manager.enable()
+                                };
+                                result.err().map(|error| error.to_string())
                             }
-                        });
-                        match result {
-                            Ok(enabled) => autostart_menu.set_checked(enabled).unwrap(),
-                            Err(error) => show_error_dialog(
-                                app,
-                                "Codex Taskboard 自启动设置失败",
-                                &error.to_string(),
-                            ),
+                            Err(error) => Some(error.to_string()),
+                        };
+                        let sync_error = match manager.is_enabled() {
+                            Ok(enabled) => {
+                                autostart_confirmed.store(enabled, Ordering::SeqCst);
+                                autostart_menu.set_checked(enabled).unwrap();
+                                None
+                            }
+                            Err(error) => {
+                                autostart_menu.set_checked(confirmed_before).unwrap();
+                                autostart_confirmed.store(confirmed_before, Ordering::SeqCst);
+                                Some(error.to_string())
+                            }
+                        };
+                        if let Some(error) = operation_error.or(sync_error) {
+                            show_error_dialog(app, "Codex Taskboard 自启动设置失败", &error);
                         }
                     }
                     "quit" => {
