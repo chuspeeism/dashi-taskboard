@@ -36,7 +36,7 @@ test("project automation state is device-local and scoped by taskboard project",
 test("automation requests use the exact Codex host message contract", () => {
   assert.match(appSource, /type: "taskboard:automation-request"/);
   assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list"/);
-  assert.match(appSource, /taskboardProjectId: selectedProjectId/);
+  assert.match(appSource, /context: AutomationRequestContext[\s\S]*?taskboardProjectId: context\.taskboardProjectId/);
   assert.match(appSource, /codexProjectId/);
   assert.match(appSource, /projectName: selectedProject\.name/);
   assert.match(appSource, /workspacePath/);
@@ -111,7 +111,7 @@ test("unavailable automation state has one notice, clears stale errors, and cann
   );
   assert.match(
     reconcileSource,
-    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return;/,
+    /if \(!automationRequestContext\) \{\s*setAutomationError\(null\);\s*return;/,
   );
   assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
 });
@@ -149,18 +149,18 @@ test("opening settings and changing projects reconcile with the host list", () =
     appSource.indexOf("const reconcileProjectAutomation"),
     appSource.indexOf("const saveProjectAutomation"),
   );
-  const saveSource = appSource.slice(
-    appSource.indexOf("const saveProjectAutomation"),
-    appSource.indexOf("function openTaskDetail"),
+  const drainSource = appSource.slice(
+    appSource.indexOf("const drainQueuedAutomationSaves"),
+    appSource.indexOf("const reconcileProjectAutomation"),
   );
   assert.match(
     reconcileSource,
-    /sendAutomationRequest\(\s*"list",\s*options,\s*stored\?\.automationId,\s*\)/,
+    /sendAutomationRequest\(\s*"list",\s*options,\s*automationRequestContext,\s*stored\?\.automationId,\s*\)/,
   );
   assert.doesNotMatch(reconcileSource, /"apply-policy"/);
   assert.match(
-    saveSource,
-    /sendAutomationRequest\("apply-policy", options, stored\?\.automationId\)/,
+    drainSource,
+    /sendAutomationRequest\(\s*"apply-policy",\s*queuedSave\.options,\s*queuedSave\.context,\s*previousRecord\?\.automationId,\s*\)/,
   );
   assert.match(appSource, /const policy = isAutomationHostPolicy\(response\.policy\) \? response\.policy : null/);
   assert.match(appSource, /const item = \(isAutomationHostItem\(response\.item\) \? response\.item : undefined\)\s*\?\? items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
@@ -171,5 +171,5 @@ test("opening settings and changing projects reconcile with the host list", () =
   assert.match(appSource, /enabledByUser: policy\.enabledByUser/);
   assert.match(appSource, /quotaAware: policy\.quotaAware/);
   assert.match(appSource, /automationId: undefined,[\s\S]*?status: "PAUSED"/);
-  assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
+  assert.match(drainSource, /writeProjectAutomation\(queuedSave\.projectId, previousRecord\)/);
 });
