@@ -554,7 +554,7 @@ fn start_launcher_locked(
             return;
         }
         thread::sleep(Duration::from_secs(2));
-        let recovery_result = {
+        let (recovery_result, recovery_generation) = {
             let _lifecycle = event_state.lifecycle.lock().unwrap();
             if event_state.generation.load(Ordering::SeqCst) != recovery_token
                 || event_state.intentional_stop.load(Ordering::SeqCst)
@@ -562,13 +562,20 @@ fn start_launcher_locked(
             {
                 return;
             }
-            start_launcher_locked(&event_app, &event_state)
+            let result = start_launcher_locked(&event_app, &event_state);
+            let generation = event_state.generation.load(Ordering::SeqCst);
+            (result, generation)
         };
         if let Err(error) = recovery_result {
             append_log(&event_state, &format!("Launcher recovery failed: {error}"));
             update_snapshot(&event_app, &event_state, |snapshot| {
-                snapshot.phase = "error".into();
-                snapshot.message = error.clone();
+                if event_state.generation.load(Ordering::SeqCst) == recovery_generation
+                    && snapshot.child_pid.is_none()
+                {
+                    snapshot.phase = "error".into();
+                    snapshot.message = error.clone();
+                    snapshot.open_signal_pid = None;
+                }
             });
             show_error_dialog(
                 &event_app,
@@ -594,7 +601,7 @@ fn restart_launcher(
     app: &AppHandle,
     state: &Arc<LauncherState>,
 ) -> Result<LauncherSnapshot, String> {
-    let result = {
+    let (result, result_generation) = {
         let _lifecycle = state.lifecycle.lock().unwrap();
         if state.intentional_stop.load(Ordering::SeqCst) {
             return Ok(state.snapshot.lock().unwrap().clone());
@@ -608,15 +615,19 @@ fn restart_launcher(
         if result.is_err() {
             state.intentional_stop.store(false, Ordering::SeqCst);
         }
-        result
+        let generation = state.generation.load(Ordering::SeqCst);
+        (result, generation)
     };
     if let Err(error) = &result {
         let error = error.clone();
         update_snapshot(app, state, |snapshot| {
-            snapshot.phase = "error".into();
-            snapshot.message = format!("任务面板启动失败：{error}");
-            snapshot.child_pid = None;
-            snapshot.open_signal_pid = None;
+            if state.generation.load(Ordering::SeqCst) == result_generation
+                && snapshot.child_pid.is_none()
+            {
+                snapshot.phase = "error".into();
+                snapshot.message = format!("任务面板启动失败：{error}");
+                snapshot.open_signal_pid = None;
+            }
         });
     }
     result
