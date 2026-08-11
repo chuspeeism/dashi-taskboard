@@ -7,6 +7,7 @@ import {
   type ClipboardEvent,
   type KeyboardEventHandler,
 } from "react";
+import { definitions } from "mdast-util-definitions";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -45,6 +46,7 @@ interface MarkdownAstNode {
   };
   children?: MarkdownAstNode[];
   alt?: string | null;
+  identifier?: string;
   url?: string;
 }
 
@@ -93,7 +95,9 @@ function imageSegment(file: File): InlineImageSegment {
 export function createInlineMediaSegments(text = ""): InlineMediaSegment[] {
   const segments: InlineMediaSegment[] = [];
   const images: Array<{ start: number; end: number; alt: string; url: string }> = [];
-  const nodes = [inlineMediaMarkdownParser.parse(text) as MarkdownAstNode];
+  const root = inlineMediaMarkdownParser.parse(text);
+  const getDefinition = definitions(root);
+  const nodes = [root as MarkdownAstNode];
 
   while (nodes.length > 0) {
     const node = nodes.pop()!;
@@ -104,6 +108,17 @@ export function createInlineMediaSegments(text = ""): InlineMediaSegment[] {
         alt: node.alt ?? "",
         url: node.url!,
       });
+    }
+    if (node.type === "imageReference") {
+      const definition = getDefinition(node.identifier);
+      if (definition) {
+        images.push({
+          start: node.position.start.offset,
+          end: node.position.end.offset,
+          alt: node.alt ?? "",
+          url: definition.url,
+        });
+      }
     }
     if (node.children) nodes.push(...node.children);
   }

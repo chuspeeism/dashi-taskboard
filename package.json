@@ -43,6 +43,7 @@
     "@lobehub/icons-static-svg": "^1.94.0",
     "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
+    "mdast-util-definitions": "^6.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
