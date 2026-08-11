@@ -16,10 +16,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
     ActivationPolicy, AppHandle, Emitter, Manager,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use uuid::Uuid;
@@ -51,6 +52,7 @@ struct LauncherPidRecord {
 struct LauncherState {
     child: Mutex<Option<u32>>,
     snapshot: Mutex<LauncherSnapshot>,
+    status_menu: Mutex<Option<MenuItem<tauri::Wry>>>,
     intentional_stop: AtomicBool,
     update_flow_in_progress: AtomicBool,
     update_in_progress: AtomicBool,
@@ -81,6 +83,7 @@ impl LauncherState {
                 app_path: None,
                 child_pid: None,
             }),
+            status_menu: Mutex::new(None),
             intentional_stop: AtomicBool::new(false),
             update_flow_in_progress: AtomicBool::new(false),
             update_in_progress: AtomicBool::new(false),
@@ -151,6 +154,14 @@ fn update_snapshot(
         update(&mut snapshot);
         snapshot.clone()
     };
+    if let Some(status_menu) = state.status_menu.lock().unwrap().as_ref() {
+        let status = match snapshot.phase.as_str() {
+            "running" => "运行状态：正常",
+            "error" => "运行状态：异常",
+            _ => "运行状态：启动中",
+        };
+        let _ = status_menu.set_text(status);
+    }
     let _ = app.emit("launcher-status", snapshot.clone());
     snapshot
 }
@@ -509,6 +520,30 @@ fn restart_launcher(
     result
 }
 
+fn open_taskboard(state: &LauncherState) -> Result<(), String> {
+    let pid = state
+        .child
+        .lock()
+        .unwrap()
+        .ok_or_else(|| "任务面板服务尚未启动".to_string())?;
+    if unsafe { libc::kill(pid as i32, libc::SIGUSR2) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let app_path = state
+        .snapshot
+        .lock()
+        .unwrap()
+        .app_path
+        .clone()
+        .ok_or_else(|| "无法定位 Codex App".to_string())?;
+    StdCommand::new("/usr/bin/open")
+        .arg("-a")
+        .arg(app_path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 async fn check_for_startup_update(
     app: &AppHandle,
     state: &Arc<LauncherState>,
@@ -547,39 +582,46 @@ async fn install_update(
     app: &AppHandle,
     state: &Arc<LauncherState>,
     update: Update,
+    check_update: &MenuItem<tauri::Wry>,
 ) -> Result<(), String> {
     let update_version = update.version.clone();
-    update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = format!("正在下载版本 {update_version}…");
+    state.update_in_progress.store(true, Ordering::SeqCst);
+    let snapshot = update_snapshot(app, state, |snapshot| {
+        snapshot.update_message = format!("正在下载 {update_version}…");
         snapshot.update_available = false;
     });
+    check_update.set_text(&snapshot.update_message).unwrap();
     let progress_app = app.clone();
     let progress_state = Arc::clone(state);
     let progress_version = update_version.clone();
+    let progress_menu = check_update.clone();
     let finish_app = app.clone();
     let finish_state = Arc::clone(state);
+    let finish_menu = check_update.clone();
     let mut downloaded = 0_u64;
     let bytes = match update
         .download(
             move |chunk_length, content_length| {
                 downloaded = downloaded.saturating_add(chunk_length as u64);
-                update_snapshot(&progress_app, &progress_state, |snapshot| {
+                let snapshot = update_snapshot(&progress_app, &progress_state, |snapshot| {
                     snapshot.update_message = match content_length.filter(|total| *total > 0) {
                         Some(total) => format!(
-                            "正在下载版本 {progress_version}：{}%",
+                            "正在下载 {progress_version} · {}%",
                             downloaded
                                 .saturating_mul(100)
                                 .saturating_div(total)
                                 .min(100)
                         ),
-                        None => format!("正在下载版本 {progress_version}…"),
+                        None => format!("正在下载 {progress_version}…"),
                     };
                 });
+                progress_menu.set_text(&snapshot.update_message).unwrap();
             },
             move || {
-                update_snapshot(&finish_app, &finish_state, |snapshot| {
-                    snapshot.update_message = "下载完成，正在验证更新签名…".into();
+                let snapshot = update_snapshot(&finish_app, &finish_state, |snapshot| {
+                    snapshot.update_message = "正在验证更新…".into();
                 });
+                finish_menu.set_text(&snapshot.update_message).unwrap();
             },
         )
         .await
@@ -587,23 +629,25 @@ async fn install_update(
         Ok(bytes) => bytes,
         Err(error) => {
             append_log(state, &format!("Update download failed: {error}"));
-            update_snapshot(app, state, |snapshot| {
+            state.update_in_progress.store(false, Ordering::SeqCst);
+            let snapshot = update_snapshot(app, state, |snapshot| {
                 snapshot.update_message = format!("更新下载或签名验证失败：{error}");
                 snapshot.update_available = true;
             });
+            check_update.set_text(&snapshot.update_message).unwrap();
             return Err(error.to_string());
         }
     };
 
-    update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = "更新签名验证通过，正在安装…".into();
+    let snapshot = update_snapshot(app, state, |snapshot| {
+        snapshot.update_message = "正在安装更新…".into();
     });
+    check_update.set_text(&snapshot.update_message).unwrap();
     {
         let _lifecycle = state.lifecycle.lock().unwrap();
         if state.intentional_stop.load(Ordering::SeqCst) {
             return Err("App exit is in progress".into());
         }
-        state.update_in_progress.store(true, Ordering::SeqCst);
         stop_managed_child_locked(app, state);
     }
     if let Err(error) = update.install(&bytes) {
@@ -626,7 +670,7 @@ async fn install_update(
                 "Taskboard restarted after update installation failure",
             );
         }
-        update_snapshot(app, state, |snapshot| {
+        let snapshot = update_snapshot(app, state, |snapshot| {
             snapshot.update_message = format!("更新安装失败：{error}");
             snapshot.update_available = true;
             if let Some(restart_error) = &restart_error {
@@ -634,6 +678,7 @@ async fn install_update(
                 snapshot.message = format!("任务面板恢复失败：{restart_error}");
             }
         });
+        check_update.set_text(&snapshot.update_message).unwrap();
         return Err(error.to_string());
     }
 
@@ -641,21 +686,30 @@ async fn install_update(
         state,
         &format!("Installed update {update_version}; restarting"),
     );
-    update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = format!("版本 {update_version} 已安装，正在重启…");
+    let snapshot = update_snapshot(app, state, |snapshot| {
+        snapshot.update_message = "正在重启…".into();
     });
+    check_update.set_text(&snapshot.update_message).unwrap();
     app.restart()
 }
 
-fn finish_update_flow(state: &LauncherState, check_update: &MenuItem<tauri::Wry>) {
+fn finish_update_flow(
+    state: &LauncherState,
+    check_update: &MenuItem<tauri::Wry>,
+    quit: &MenuItem<tauri::Wry>,
+) {
     state.update_flow_in_progress.store(false, Ordering::SeqCst);
+    state.update_in_progress.store(false, Ordering::SeqCst);
+    check_update.set_text("检查更新").unwrap();
     check_update.set_enabled(true).unwrap();
+    quit.set_enabled(true).unwrap();
 }
 
 async fn offer_update(
     app: &AppHandle,
     state: &Arc<LauncherState>,
     check_update: &MenuItem<tauri::Wry>,
+    quit: &MenuItem<tauri::Wry>,
     show_current_version: bool,
 ) {
     if state
@@ -677,7 +731,7 @@ async fn offer_update(
                     &format!("无法检查更新。请稍后重试。\n\n{error}"),
                 );
             }
-            finish_update_flow(state, check_update);
+            finish_update_flow(state, check_update, quit);
             return;
         }
     };
@@ -689,7 +743,7 @@ async fn offer_update(
                 .buttons(MessageDialogButtons::Ok)
                 .blocking_show();
         }
-        finish_update_flow(state, check_update);
+        finish_update_flow(state, check_update, quit);
         return;
     };
 
@@ -708,11 +762,12 @@ async fn offer_update(
         .blocking_show();
     if !install_now {
         append_log(state, &format!("Update {version} deferred by user"));
-        finish_update_flow(state, check_update);
+        finish_update_flow(state, check_update, quit);
         return;
     }
     append_log(state, &format!("Update {version} accepted by user"));
-    if let Err(error) = install_update(app, state, update).await {
+    quit.set_enabled(false).unwrap();
+    if let Err(error) = install_update(app, state, update, check_update).await {
         append_log(state, &format!("Update installation failed: {error}"));
         let service_recovered = state.snapshot.lock().unwrap().child_pid.is_some();
         let service_message = if service_recovered {
@@ -725,13 +780,17 @@ async fn offer_update(
             "Codex Taskboard 更新失败",
             &format!("更新未完成。{service_message}\n\n请稍后重试。详情见启动日志。\n\n{error}"),
         );
-        finish_update_flow(state, check_update);
+        finish_update_flow(state, check_update, quit);
     }
 }
 
 fn main() {
     let app = tauri::Builder::default()
         .enable_macos_default_menu(false)
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -759,18 +818,56 @@ fn main() {
             let state = Arc::new(LauncherState::new(
                 data_directory,
                 log_directory,
-                version,
+                version.clone(),
                 instance_lock,
             ));
             app.manage(state.clone());
 
+            let app_info = MenuItem::with_id(
+                app,
+                "app-info",
+                format!("{} - {version}", app.package_info().name),
+                false,
+                None::<&str>,
+            )?;
+            let launcher_status = MenuItem::with_id(
+                app,
+                "launcher-status",
+                "运行状态：启动中",
+                false,
+                None::<&str>,
+            )?;
+            *state.status_menu.lock().unwrap() = Some(launcher_status.clone());
+            let open_taskboard_item =
+                MenuItem::with_id(app, "open-taskboard", "打开任务面板", true, None::<&str>)?;
             let check_update =
                 MenuItem::with_id(app, "check-update", "检查更新", false, None::<&str>)?;
             let restart_codex =
-                MenuItem::with_id(app, "restart-codex", "重新启动 Codex", true, None::<&str>)?;
+                MenuItem::with_id(app, "restart-codex", "重新打开 Codex", true, None::<&str>)?;
+            let autostart = CheckMenuItem::with_id(
+                app,
+                "autostart",
+                "开机自启动",
+                true,
+                app.autolaunch().is_enabled()?,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&check_update, &restart_codex, &quit])?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &app_info,
+                    &launcher_status,
+                    &open_taskboard_item,
+                    &restart_codex,
+                    &check_update,
+                    &autostart,
+                    &quit,
+                ],
+            )?;
             let check_update_menu = check_update.clone();
+            let quit_menu = quit.clone();
+            let autostart_menu = autostart.clone();
             TrayIconBuilder::new()
                 .icon(tauri::include_image!("icons/tray-codex.png"))
                 .icon_as_template(true)
@@ -784,8 +881,26 @@ fn main() {
                         let state = Arc::clone(state.inner());
                         let app = app.clone();
                         let check_update = check_update_menu.clone();
+                        let quit = quit_menu.clone();
                         tauri::async_runtime::spawn(async move {
-                            offer_update(&app, &state, &check_update, true).await;
+                            offer_update(&app, &state, &check_update, &quit, true).await;
+                        });
+                    }
+                    "open-taskboard" => {
+                        let Some(state) = app.try_state::<Arc<LauncherState>>() else {
+                            return;
+                        };
+                        let state = Arc::clone(state.inner());
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) = open_taskboard(&state) {
+                                append_log(&state, &format!("Launcher menu open failed: {error}"));
+                                show_error_dialog(
+                                    &app,
+                                    "Codex Taskboard 打开失败",
+                                    &format!("{error}\n\n请确认 Codex 正在运行。"),
+                                );
+                            }
                         });
                     }
                     "restart-codex" => {
@@ -808,6 +923,24 @@ fn main() {
                             }
                         });
                     }
+                    "autostart" => {
+                        let manager = app.autolaunch();
+                        let result = manager.is_enabled().and_then(|enabled| {
+                            if enabled {
+                                manager.disable().map(|_| false)
+                            } else {
+                                manager.enable().map(|_| true)
+                            }
+                        });
+                        match result {
+                            Ok(enabled) => autostart_menu.set_checked(enabled).unwrap(),
+                            Err(error) => show_error_dialog(
+                                app,
+                                "Codex Taskboard 自启动设置失败",
+                                &error.to_string(),
+                            ),
+                        }
+                    }
                     "quit" => {
                         let Some(state) = app.try_state::<Arc<LauncherState>>() else {
                             return;
@@ -827,18 +960,21 @@ fn main() {
             let periodic_update_app = app.handle().clone();
             let periodic_update_state = Arc::clone(&state);
             let periodic_check_update = check_update.clone();
+            let periodic_quit = quit.clone();
             thread::spawn(move || loop {
                 thread::sleep(UPDATE_CHECK_INTERVAL);
                 let app_handle = periodic_update_app.clone();
                 let state = Arc::clone(&periodic_update_state);
                 let check_update = periodic_check_update.clone();
+                let quit = periodic_quit.clone();
                 tauri::async_runtime::spawn(async move {
-                    offer_update(&app_handle, &state, &check_update, false).await;
+                    offer_update(&app_handle, &state, &check_update, &quit, false).await;
                 });
             });
 
             let app_handle = app.handle().clone();
             let startup_check_update = check_update.clone();
+            let startup_quit = quit.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = start_launcher(&app_handle, &state) {
                     append_log(&state, &format!("Launcher startup failed: {error}"));
@@ -854,7 +990,14 @@ fn main() {
                         ),
                     );
                 }
-                offer_update(&app_handle, &state, &startup_check_update, false).await;
+                offer_update(
+                    &app_handle,
+                    &state,
+                    &startup_check_update,
+                    &startup_quit,
+                    false,
+                )
+                .await;
             });
             Ok(())
         })

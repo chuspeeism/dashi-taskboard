@@ -1569,6 +1569,23 @@ async function main() {
   let codexProcess = null;
   let cdpRuntime = null;
   const injectedTargets = new Map();
+  let openPending = false;
+  const requestTaskboardOpen = () => {
+    const connection = injectedTargets.values().next().value;
+    if (!connection) {
+      openPending = true;
+      return;
+    }
+    openPending = false;
+    connection.send("Runtime.evaluate", {
+      expression: "window.__codexTaskboardInjection__?.open()",
+      returnByValue: true,
+    }).catch((error) => {
+      openPending = true;
+      console.error(`Waiting to open Taskboard: ${error.message}`);
+    });
+  };
+  if (options.watch) process.on("SIGUSR2", requestTaskboardOpen);
   let stopping = false;
   let wakeStop;
   const stopRequested = new Promise((resolve) => {
@@ -1683,7 +1700,8 @@ async function main() {
     if (firstResults.length > 0) {
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
     }
-    let openPending = options.open && firstResults.length === 0;
+    if (firstResults.length === 0 && options.open) openPending = true;
+    else if (openPending) requestTaskboardOpen();
     let idleAfterNormalExit = false;
 
     if (!options.watch) {
@@ -1801,6 +1819,7 @@ async function main() {
     if (options.watch) {
       process.removeListener("SIGINT", requestStop);
       process.removeListener("SIGTERM", requestStop);
+      process.removeListener("SIGUSR2", requestTaskboardOpen);
       await cleanup();
     }
   }
