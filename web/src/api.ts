@@ -30,9 +30,14 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 };
 
 let currentUserActor = DEFAULT_USER_ACTOR;
+let apiText = (_chinese: string, english: string) => english;
 
 export function setCurrentUserActor(actor?: ActorIdentity) {
   currentUserActor = actor?.type === "user" ? actor : DEFAULT_USER_ACTOR;
+}
+
+export function setApiText(text: typeof apiText) {
+  apiText = text;
 }
 
 interface ApiErrorBody {
@@ -49,7 +54,7 @@ export class ApiError extends Error {
   readonly details?: unknown;
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.error?.message ?? `Request failed (${status})`);
+    super(body.error?.message ?? apiText(`请求失败（${status}）`, `Request failed (${status})`));
     this.name = "ApiError";
     this.status = status;
     this.code = body.error?.code ?? "REQUEST_FAILED";
@@ -81,7 +86,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, {
       error: {
         code: "SERVICE_UNAVAILABLE",
-        message: "无法连接本地 Taskboard 服务，请重新通过 Taskboard 启动 Codex。",
+        message: apiText(
+          "无法连接本地 Taskboard 服务，请重新通过 Taskboard 启动 Codex。",
+          "Could not connect to the local Taskboard service. Start Codex from Taskboard again.",
+        ),
       },
     });
   }

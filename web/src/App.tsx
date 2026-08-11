@@ -41,6 +41,7 @@ import {
   removeTaskRelation,
   resolveTaskboardUrl,
   restoreTask as restoreTaskRequest,
+  setApiText,
   setCurrentUserActor,
   uploadAttachment,
   updateTask as updateTaskRequest,
@@ -430,12 +431,6 @@ function workspaceName(path?: string): string | null {
   return parts.at(-1) ?? path;
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong while loading your issues.";
-}
-
 function isAutomationHostItem(value: unknown): value is AutomationHostItem {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Partial<AutomationHostItem>;
@@ -699,6 +694,15 @@ export function App() {
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
   const textRef = useRef(text);
   textRef.current = text;
+  setApiText(text);
+  function errorMessage(error: unknown): string {
+    if (error instanceof ApiError) return error.message;
+    if (error instanceof Error) return error.message;
+    return textRef.current(
+      "加载议题时出现问题。",
+      "Something went wrong while loading your issues.",
+    );
+  }
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef<"list" | "save" | null>(null);
   const loadedAutomationProjectIdsRef = useRef(new Set<string>());
@@ -1966,7 +1970,10 @@ export function App() {
         candidate.id === previous.id ? previous : candidate,
       )));
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "That issue changed elsewhere. The board has been refreshed."
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     } finally {
