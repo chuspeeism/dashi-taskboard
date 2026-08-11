@@ -919,7 +919,11 @@ export function WorkflowBoard({
           ...source,
           id: duplicateId,
           selected: false,
-          data: { ...source.data, title: `${source.data.title} 副本` },
+          data: {
+            ...source.data,
+            title: `${source.data.title} 副本`,
+            systemCopyDepth: (source.data.systemCopyDepth ?? 0) + 1,
+          },
         },
       ];
       commitNodes(layoutPlanChildren(nextNodes, source.parentId, siblingIds));
@@ -933,7 +937,11 @@ export function WorkflowBoard({
           id: duplicateId,
           selected: false,
           parentId: undefined,
-          data: { ...source.data, title: `${source.data.title} 副本` },
+          data: {
+            ...source.data,
+            title: `${source.data.title} 副本`,
+            systemCopyDepth: (source.data.systemCopyDepth ?? 0) + 1,
+          },
         },
       ];
       const nextFlow = insertWorkflowNode(

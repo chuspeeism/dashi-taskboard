@@ -107,7 +107,10 @@ export function WorkflowInspector({
               <input
                 type="text"
                 value={data.title}
-                onChange={(event) => onChange({ title: event.target.value })}
+                onChange={(event) => onChange({
+                  title: event.target.value,
+                  systemCopyDepth: 0,
+                })}
               />
             </label>
             <label>

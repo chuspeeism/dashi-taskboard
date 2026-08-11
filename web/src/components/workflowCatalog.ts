@@ -849,7 +849,7 @@ function workflowNodeBaseDisplayTitle(data: WorkflowNodeData, text: WorkflowText
   const copySuffix = " 副本";
   let baseTitle = data.title;
   let copyCount = 0;
-  while (baseTitle.endsWith(copySuffix)) {
+  while (copyCount < (data.systemCopyDepth ?? 0) && baseTitle.endsWith(copySuffix)) {
     baseTitle = baseTitle.slice(0, -copySuffix.length);
     copyCount += 1;
   }

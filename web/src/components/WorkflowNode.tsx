@@ -19,6 +19,7 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   kind: string;
   eyebrow: string;
   title: string;
+  systemCopyDepth?: number;
   displayTitle?: string;
   description: string;
   displayDescription?: string;
