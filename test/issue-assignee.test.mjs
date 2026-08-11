@@ -20,7 +20,7 @@ test("issue model and editor preserve a concrete assignee identity", async () =>
   assert.match(typesSource, /export interface TaskDraft \{[\s\S]*?assigneeTarget\?: AssigneeTarget/);
   assert.match(appSource, /assigneeTarget/);
   assert.match(editorSource, /currentUser: ActorIdentity/);
-  assert.match(editorSource, /ariaLabel="负责人"/);
+  assert.match(editorSource, /ariaLabel=\{text\("负责人", "Assignee"\)\}/);
   assert.match(editorSource, /CODEX_AGENT_ACTOR/);
 });
 
@@ -32,7 +32,7 @@ test("issue detail and cards expose the same assignee identity", async () => {
     source("web/src/styles.css"),
   ]);
 
-  assert.match(detailSource, /detail-property-label">负责人/);
+  assert.match(detailSource, /detail-property-label">\{text\("负责人", "Assignee"\)\}/);
   assert.match(detailSource, /saveTask\(\{ assigneeTarget \}, "assignee"\)/);
   assert.match(cardSource, /value=\{actorKey\(task\.assignee\)\}/);
   assert.match(avatarSource, /codex-agent-logo\.png/);

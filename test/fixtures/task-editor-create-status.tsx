@@ -45,7 +45,7 @@ createRoot(document.getElementById("root")!).render(
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     const createButton = [...document.querySelectorAll("button")]
-      .find((button) => button.textContent === "创建议题");
+      .find((button) => button.textContent === "Create issue");
     if (!(createButton instanceof HTMLButtonElement)) {
       document.documentElement.dataset.error = "create button not found";
       return;

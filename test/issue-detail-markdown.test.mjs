@@ -29,7 +29,7 @@ test("issue detail renders descriptions and comments with GFM markdown", () => {
   );
   assert.match(
     detailSource,
-    /\{description \? <DescriptionDocument value=\{description\} \/> : "添加描述…"\}/,
+    /\{description\s*\?\s*<DescriptionDocument value=\{description\} \/>\s*:\s*text\("添加描述…", "Add description…"\)\}/,
   );
   assert.match(
     detailSource,
