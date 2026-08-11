@@ -157,6 +157,9 @@ function fileSize(value: number): string {
 
 async function downloadAttachmentFile(attachment: Attachment) {
   const response = await fetch(resolveTaskboardUrl(attachmentDownloadUrl(attachment)));
+  if (!response.ok) {
+    throw new ApiError(response.status, await response.json().catch(() => ({})));
+  }
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
