@@ -1044,6 +1044,7 @@ kbd {
 .search-field:focus-within,
 .search-field.has-value {
   width: min(148px, 21vw);
+  background: var(--surface-hover);
 }
 
 .search-field input {
@@ -6011,6 +6012,11 @@ kbd {
   max-height: inherit;
 }
 
+.task-form.is-creating {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .dialog-header,
 .dialog-footer {
   display: flex;
@@ -6088,7 +6094,7 @@ kbd {
   display: block;
 }
 
-.composer-title input,
+.composer-title textarea,
 .composer-description textarea {
   width: 100%;
   padding: 0;
@@ -6098,8 +6104,10 @@ kbd {
   color: var(--text-primary);
 }
 
-.composer-title input {
-  height: 34px;
+.composer-title textarea {
+  min-height: 34px;
+  overflow: hidden;
+  resize: none;
   font-size: 18px;
   font-weight: 600;
   line-height: 28.8px;
@@ -6131,7 +6139,7 @@ kbd {
   min-height: 100px;
 }
 
-.composer-title input::placeholder,
+.composer-title textarea::placeholder,
 .composer-description textarea::placeholder,
 .property-control input::placeholder,
 .codex-link-row input::placeholder {
@@ -11577,11 +11585,22 @@ kbd {
   padding: 0;
 }
 
+:where(:root[data-theme="dark"]) .gantt_task_scale .gantt_scale_line + .gantt_scale_line {
+  border-top-color: rgba(255, 255, 255, .1) !important;
+}
+
 .gantt_row,
 .gantt_task_row {
   border-top: 0 !important;
   border-bottom: 0 !important;
 }
+:where(:root[data-theme="dark"]) .gantt_grid,
+:where(:root[data-theme="dark"]) .gantt_grid_data,
+:where(:root[data-theme="dark"]) .gantt_task,
+:where(:root[data-theme="dark"]) .gantt_data_area,
+:where(:root[data-theme="dark"]) .gantt_task_bg,
+:where(:root[data-theme="dark"]) .gantt_row:not(.is-group),
+:where(:root[data-theme="dark"]) .gantt_task_row:not(.is-group) { background: var(--bg) !important; }
 .gantt_row:not(.is-group):hover,
 .gantt_task_row:not(.is-group):hover,
 .gantt_row:not(.is-group).is-linked-hover,

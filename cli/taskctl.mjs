@@ -79,6 +79,7 @@ const COMMAND_OPTIONS = new Map([
   ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
   ["comment delete", new Set(["thread-id", "if-version", "json"])],
   ["attachment download", new Set(["output", "json"])],
+  ["attachment upload", new Set(["file", "task", "comment", "content-type", "json"])],
   ["context current", new Set(["cwd", "json"])],
 ]);
 
@@ -182,7 +183,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download, context current",
+      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -291,6 +292,9 @@ async function execute(parsed, overrides) {
     case "attachment download":
       expectOperandCount(parsed, 1);
       return downloadAttachment(api, parsed.operands[0], parsed.options, overrides);
+    case "attachment upload":
+      expectOperandCount(parsed, 0);
+      return uploadAttachment(api, parsed.options, overrides);
     case "context current":
       expectOperandCount(parsed, 0);
       return currentContext(api, parsed.options, overrides);
@@ -383,6 +387,44 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
         size: Number(response.headers.get("content-length")) || bytes.byteLength,
       };
     },
+    async upload(pathname, { body, contentType, filename }) {
+      let response;
+      try {
+        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": contentType,
+            "x-taskboard-client": "taskctl",
+            "x-taskboard-filename": encodeURIComponent(filename),
+          },
+          body,
+        });
+      } catch (error) {
+        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+          code: "SERVICE_UNAVAILABLE",
+          exitCode: 3,
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const payload = await readResponse(response);
+      if (!response.ok) {
+        const apiError = extractApiError(payload, response.status);
+        throw new TaskctlError(apiError.message, {
+          code: apiError.code,
+          exitCode: response.status === 409 ? 5 : 4,
+          details: apiError.details,
+        });
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
+          code: "INVALID_RESPONSE",
+          exitCode: 4,
+        });
+      }
+      return payload;
+    },
   };
 }
 
@@ -405,6 +447,86 @@ async function downloadAttachment(api, attachmentId, options, overrides) {
     contentType: downloaded.contentType,
     size: downloaded.size,
   };
+}
+
+async function uploadAttachment(api, options, overrides) {
+  const taskId = options.task;
+  const commentId = options.comment;
+  if (Boolean(taskId) === Boolean(commentId)) {
+    throw usageError("attachment upload requires exactly one of --task or --comment");
+  }
+
+  const filePath = resolveInputPath(requiredOption(options, "file"), overrides);
+  const read = overrides.readFile ?? readFile;
+  let bytes;
+  try {
+    bytes = await read(filePath);
+  } catch (error) {
+    throw new TaskctlError(`Cannot read attachment file: ${filePath}`, {
+      code: "FILE_READ_FAILED",
+      exitCode: 2,
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const filename = path.basename(filePath);
+  if (!filename || filename === "." || filename === "..") {
+    throw usageError("Attachment --file must include a valid filename");
+  }
+
+  const contentType = options["content-type"]
+    ? String(options["content-type"]).trim().toLowerCase()
+    : guessContentType(filename);
+  if (!contentType) {
+    throw usageError("--content-type cannot be empty");
+  }
+
+  const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const pathname = taskId
+    ? `${taskPath(taskId)}/attachments`
+    : `${commentPath(commentId)}/attachments`;
+  const payload = await api.upload(pathname, {
+    body,
+    contentType,
+    filename,
+  });
+
+  return {
+    attachment: payload.attachment ?? null,
+    file: filePath,
+    target: taskId
+      ? { type: "task", id: taskId }
+      : { type: "comment", id: commentId },
+  };
+}
+
+function guessContentType(filename) {
+  switch (path.extname(filename).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".svg":
+      return "image/svg+xml";
+    case ".md":
+      return "text/markdown";
+    case ".txt":
+      return "text/plain";
+    case ".json":
+      return "application/json";
+    case ".pdf":
+      return "application/pdf";
+    case ".html":
+    case ".htm":
+      return "text/html";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 async function cloudLogin(api, rawUrl, actorName, overrides) {

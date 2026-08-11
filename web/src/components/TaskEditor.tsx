@@ -129,7 +129,7 @@ export function TaskEditor({
 }: TaskEditorProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const backdropPointerRef = useRef({ down: false, up: false });
-  const titleRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
   const createSubmitIntentRef = useRef(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -174,6 +174,31 @@ export function TaskEditor({
       if (dialogRef.current?.open) dialogRef.current.close();
     };
   }, []);
+
+  useEffect(() => {
+    const titleElement = titleRef.current;
+    if (!titleElement) return;
+    const resizeTitle = () => {
+      titleElement.style.height = "0px";
+      titleElement.style.height = `${titleElement.scrollHeight}px`;
+    };
+    resizeTitle();
+
+    let titleWidth = titleElement.clientWidth;
+    let resizeFrame = 0;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = titleElement.clientWidth;
+      if (nextWidth === titleWidth) return;
+      titleWidth = nextWidth;
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(resizeTitle);
+    });
+    observer.observe(titleElement);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(resizeFrame);
+    };
+  }, [title]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -225,17 +250,17 @@ export function TaskEditor({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLFormElement>) {
-    if (task || event.key !== "Enter") return;
-    if (event.metaKey || event.ctrlKey) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key !== "Enter") return;
+    if (!task && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       createSubmitIntentRef.current = true;
       event.currentTarget.requestSubmit();
       return;
     }
-    if (event.target === titleRef.current) {
-      event.preventDefault();
-      descriptionComposerRef.current?.focus();
-    }
+    if (event.target !== titleRef.current) return;
+    event.preventDefault();
+    if (task) event.currentTarget.requestSubmit();
   }
 
   function addAttachments(files: FileList | File[]) {
@@ -302,7 +327,7 @@ export function TaskEditor({
         if (backdropClick && !saving) cancelEditor();
       }}
     >
-      <form className="task-form" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
+      <form className={`task-form${task ? "" : " is-creating"}`} onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
         <header className="dialog-header">
           <div className="dialog-context">
             <strong id="task-dialog-title">{task ? task.identifier : "新建议题"}</strong>
@@ -320,7 +345,7 @@ export function TaskEditor({
         <div className="form-body">
           <label className="composer-title">
             <span className="sr-only">标题</span>
-            <input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Issue title" maxLength={240} autoComplete="off" />
+            <textarea ref={titleRef} rows={1} value={title} onChange={(event) => setTitle(event.target.value.replace(/\n/g, ""))} placeholder="Issue title" maxLength={240} autoComplete="off" />
           </label>
           {task ? (
             <label className="composer-description">
