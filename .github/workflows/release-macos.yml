@@ -3,7 +3,7 @@ name: Release macOS
 on:
   push:
     tags:
-      - "app-v*"
+      - "v*"
 
 permissions:
   contents: write
@@ -69,7 +69,7 @@ jobs:
             echo "package.json、Cargo.toml 和 tauri.conf.json 的版本必须一致。" >&2
             exit 1
           fi
-          if [[ "$RELEASE_TAG" != "app-v$PACKAGE_VERSION" ]]; then
+          if [[ "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]]; then
             echo "发布标签必须与应用版本一致。" >&2
             exit 1
           fi
@@ -110,7 +110,7 @@ jobs:
             return 0;
           };
           for (const tag of fs.readFileSync(process.env.RELEASE_TAGS, "utf8").split(/\r?\n/)) {
-            const match = /^app-v(\d+(?:\.\d+)*)$/.exec(tag);
+            const match = /^(?:app-)?v(\d+(?:\.\d+)*)$/.exec(tag);
             if (match && compare(match[1].split(".").map(Number), current) >= 0) {
               console.error(`已有相同或更高版本的 Release：${tag}`);
               process.exit(1);
@@ -293,7 +293,9 @@ jobs:
             --target "$GITHUB_SHA" \
             --draft \
             --title "Codex Taskboard $RELEASE_TAG" \
-            --notes "macOS universal 安装包。此 Release 等待受保护的 promotion job 完成远程复验后发布。" \
+            --notes "Codex Taskboard 将任务看板直接集成到 Codex，支持任务创建、状态管理、会话关联、Worktree 开发协作和进度追踪。
+
+          本版本优化了任务搜索、Dashboard 展示、详情页浏览位置与链接复制，并改善了 Codex 内置浏览器登录状态和 macOS 状态栏图标。" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
@@ -334,7 +336,7 @@ jobs:
           set -euo pipefail
           API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" || "$RELEASE_TAG" != "app-v$PACKAGE_VERSION" ]]; then
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" || "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]]; then
             echo "promotion checkout、标签和应用版本不一致。" >&2
             exit 1
           fi
@@ -372,8 +374,8 @@ jobs:
                 .conditions.ref_name.include[]?;
                 . == $tag_ref or
                 (
-                  . == "refs/tags/app-v*" and
-                  ($tag_ref | test("^refs/tags/app-v[^/]*$"))
+                  . == "refs/tags/v*" and
+                  ($tag_ref | test("^refs/tags/v[^/]*$"))
                 )
               ) and
               ((.conditions.ref_name.exclude | type) == "array") and

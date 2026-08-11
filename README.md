@@ -108,7 +108,7 @@ npm start
 
 ## 发布 macOS App
 
-`.github/workflows/check.yml` 在 PR 中使用 macOS runner 准备内置 Node，并构建真实的 unsigned universal App bundle。`.github/workflows/release-macos.yml` 只接受 `app-v*` 标签推送。构建 job 验证标签提交属于 `main`，并确认 `package.json`、`Cargo.toml` 和 `tauri.conf.json` 的版本一致，然后使用 Node.js 22、Rust 1.88 和两个 macOS Rust target 构建 universal 包并创建 GitHub Draft Release。它同时保存 4 个上传资产的可信 SHA-256 manifest。独立的 `macos-release` promotion job 从 Draft 重新下载全部资产，对比 manifest，并重新执行签名、公证、Team ID、Updater 公钥、`latest.json` 和 App/DMG/updater 内容一致性验证。验证通过后，该 job 发布 Release，并确认 Release 已不可变且最终资产摘要未变化。所有第三方 Action 都锁定到完整提交 SHA。
+`.github/workflows/check.yml` 在 PR 中使用 macOS runner 准备内置 Node，并构建真实的 unsigned universal App bundle。`.github/workflows/release-macos.yml` 只接受 `v*` 标签推送。构建 job 验证标签提交属于 `main`，并确认 `package.json`、`Cargo.toml` 和 `tauri.conf.json` 的版本一致，然后使用 Node.js 22、Rust 1.88 和两个 macOS Rust target 构建 universal 包并创建 GitHub Draft Release。它同时保存 4 个上传资产的可信 SHA-256 manifest。独立的 `macos-release` promotion job 从 Draft 重新下载全部资产，对比 manifest，并重新执行签名、公证、Team ID、Updater 公钥、`latest.json` 和 App/DMG/updater 内容一致性验证。验证通过后，该 job 发布 Release，并确认 Release 已不可变且最终资产摘要未变化。所有第三方 Action 都锁定到完整提交 SHA。
 
 内置 Node 版本固定为 `22.23.2`。arm64 与 x64 安装包的 SHA-256 已写入 `scripts/prepare-tauri-app.mjs`，构建不会信任与安装包同源、临时下载的校验清单。
 
@@ -136,20 +136,20 @@ npm start
 
 发布前还必须完成以下仓库设置：
 
-- 启用覆盖当前 `app-v*` 标签的 active tag ruleset。`exclude` 必须为空，`bypass_actors` 必须为空，并启用禁止更新和禁止删除规则。
+- 启用覆盖当前 `v*` 标签的 active tag ruleset。`exclude` 必须为空，`bypass_actors` 必须为空，并启用禁止更新和禁止删除规则。
 - 创建 `macos-release` environment，配置必需审核人，并启用“禁止发起人自行审核”。
 - 启用 immutable releases。promotion 在发布前检查此设置，并在发布后校验 Release API 的 `immutable: true` 和每个资产的 SHA-256。
 
-### 发布 `app-v0.2.0`
+### 发布 `v0.2.2`
 
-1. 在 PR 中把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本同步为 `0.2.0`。
+1. 在 PR 中把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本同步为目标版本。
 2. 合并已审核的 PR。
 3. 确认所有 GitHub Secrets 和上述仓库发布设置已配置。
 4. 在已合并提交上创建并推送标签：
 
    ```bash
-   git tag -a app-v0.2.0 -m "Codex Taskboard 0.2.0"
-   git push origin app-v0.2.0
+   git tag -a v0.2.2 -m "Codex Taskboard 0.2.2"
+   git push origin v0.2.2
    ```
 
 5. 等待构建 job 创建 Draft Release。不要在 GitHub Release 页面直接发布。
