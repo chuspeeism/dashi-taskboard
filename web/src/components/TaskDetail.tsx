@@ -1134,14 +1134,16 @@ export function TaskDetail({
                                   </span>
                                   <span><strong>{attachment.filename}</strong><small>{fileSize(attachment.size)}</small></span>
                                 </a>
-                                <button
-                                  type="button"
-                                  aria-label={`删除 ${attachment.filename}`}
-                                  title="删除附件"
-                                  onClick={() => setPendingAttachmentDelete(attachment)}
-                                >
-                                  <LinearIcon name="trash" />
-                                </button>
+                                {editingId !== comment.id && (
+                                  <button
+                                    type="button"
+                                    aria-label={`删除 ${attachment.filename}`}
+                                    title="删除附件"
+                                    onClick={() => setPendingAttachmentDelete(attachment)}
+                                  >
+                                    <LinearIcon name="trash" />
+                                  </button>
+                                )}
                               </li>
                             ))}
                         </ul>
