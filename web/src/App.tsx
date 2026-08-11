@@ -750,12 +750,14 @@ export function App() {
   const selectedProjectAutomation = projectAutomations[selectedProjectId];
   const automationProjectContext = useMemo(() => {
     if (!embedded || window.parent === window) {
-      return { unavailableReason: "仅可在 Codex App 中使用" };
+      return { unavailableReason: text("仅可在 Codex App 中使用", "Available only in the Codex app") };
     }
     if (!isLocalTaskboardOrigin(new URL(document.baseURI).origin)) {
-      return { unavailableReason: "仅本地任务面板可用" };
+      return { unavailableReason: text("仅本地任务面板可用", "Available only on the local taskboard") };
     }
-    if (!selectedProject) return { unavailableReason: "请先选择项目" };
+    if (!selectedProject) {
+      return { unavailableReason: text("请先选择项目", "Select a project first") };
+    }
 
     const directCodexProject = hostContext?.projects?.some(
       (project) => project.id === selectedProject.id,
@@ -774,10 +776,16 @@ export function App() {
       )?.id;
 
     if (!workspacePath || !codexProjectId) {
-      return { unavailableReason: "请先在 Codex 中添加并映射该项目目录" };
+      return { unavailableReason: text(
+        "请先在 Codex 中添加并映射该项目目录",
+        "Add and map this project directory in Codex first",
+      ) };
     }
     if (!manageTaskboardSkillPath) {
-      return { unavailableReason: "任务面板还没有读取到 Skill 路径" };
+      return { unavailableReason: text(
+        "任务面板还没有读取到 Skill 路径",
+        "Taskboard has not received the Skill path",
+      ) };
     }
     return { workspacePath, codexProjectId, unavailableReason: null };
   }, [
@@ -786,6 +794,7 @@ export function App() {
     hostContext,
     manageTaskboardSkillPath,
     selectedProject,
+    text,
   ]);
   const automationRequestContext = useMemo<AutomationRequestContext | null>(() => {
     if (
@@ -936,7 +945,10 @@ export function App() {
     const response = new Promise<AutomationHostResponse>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         pendingAutomationRequestsRef.current.delete(requestId);
-        reject(new Error("Codex 自动化没有响应，请稍后重试"));
+        reject(new Error(textRef.current(
+          "Codex 自动化没有响应，请稍后重试",
+          "Codex automation did not respond. Try again later.",
+        )));
       }, 10_000);
       pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
     });
@@ -996,7 +1008,9 @@ export function App() {
         });
       } catch (error) {
         writeProjectAutomation(queuedSave.projectId, previousRecord);
-        setAutomationError(error instanceof Error ? error.message : "无法更新自动化");
+        setAutomationError(error instanceof Error
+          ? error.message
+          : textRef.current("无法更新自动化", "Could not update automation."));
       } finally {
         automationRequestInFlightRef.current = null;
         setAutomationPending(false);
@@ -1085,7 +1099,9 @@ export function App() {
         reasoningEffort: item.reasoningEffort,
       });
     } catch (error) {
-      setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
+      setAutomationError(error instanceof Error
+        ? error.message
+        : text("无法读取自动化状态", "Could not read the automation status."));
     } finally {
       loadedAutomationProjectIdsRef.current.add(projectId);
       automationRequestInFlightRef.current = null;
@@ -1096,6 +1112,7 @@ export function App() {
     automationRequestContext,
     drainQueuedAutomationSaves,
     sendAutomationRequest,
+    text,
     writeProjectAutomation,
   ]);
 

@@ -166,8 +166,8 @@ test("chat renders Markdown, public thinking steps and never renders host-only f
   assert.match(chatSource, /ReactMarkdown/);
   assert.match(chatSource, /remarkPlugins=\{\[remarkGfm\]\}/);
   assert.match(chatSource, /ai-chat-thinking-steps/);
-  assert.match(chatSource, /aria-label="停止生成"/);
-  assert.match(chatSource, /aria-label="发送消息"/);
+  assert.match(chatSource, /aria-label=\{text\("停止生成", "Stop generating"\)\}/);
+  assert.match(chatSource, /aria-label=\{text\("发送消息", "Send message"\)\}/);
   assert.doesNotMatch(chatSource, /origin\.workspacePath/);
   assert.doesNotMatch(chatSource, /codexThreadId/);
   assert.doesNotMatch(chatSource, /manageTaskboardSkillPath/);
@@ -230,7 +230,7 @@ test("SSE hints are coalesced and custom panel resize handles do not clip narrow
 
 test("history exposes deletion of local records without adding rename controls", () => {
   assert.match(chatSource, /deleteAiChatThread\(/);
-  assert.match(chatSource, /aria-label=\{`删除对话 \$\{thread\.title\}`\}/);
-  assert.match(chatSource, /window\.confirm\(`删除本地对话“\$\{thread\.title\}”\？`\)/);
+  assert.match(chatSource, /aria-label=\{text\(`删除对话 \$\{thread\.title\}`, `Delete chat \$\{thread\.title\}`\)\}/);
+  assert.match(chatSource, /window\.confirm\(text\(\s*`删除本地对话“\$\{thread\.title\}”？`,\s*`Delete local chat “\$\{thread\.title\}”\?`,\s*\)\)/);
   assert.doesNotMatch(chatSource, /重命名对话|renameAiChatThread/);
 });
