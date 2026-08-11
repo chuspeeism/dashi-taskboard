@@ -178,8 +178,26 @@ export function TaskEditor({
   useEffect(() => {
     const titleElement = titleRef.current;
     if (!titleElement) return;
-    titleElement.style.height = "0px";
-    titleElement.style.height = `${titleElement.scrollHeight}px`;
+    const resizeTitle = () => {
+      titleElement.style.height = "0px";
+      titleElement.style.height = `${titleElement.scrollHeight}px`;
+    };
+    resizeTitle();
+
+    let titleWidth = titleElement.clientWidth;
+    let resizeFrame = 0;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = titleElement.clientWidth;
+      if (nextWidth === titleWidth) return;
+      titleWidth = nextWidth;
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(resizeTitle);
+    });
+    observer.observe(titleElement);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(resizeFrame);
+    };
   }, [title]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -232,16 +250,16 @@ export function TaskEditor({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLFormElement>) {
-    if (task || event.key !== "Enter") return;
-    if (event.metaKey || event.ctrlKey) {
+    if (event.key !== "Enter") return;
+    if (!task && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       createSubmitIntentRef.current = true;
       event.currentTarget.requestSubmit();
       return;
     }
-    if (event.target === titleRef.current) {
-      event.preventDefault();
-    }
+    if (event.target !== titleRef.current || event.metaKey || event.ctrlKey) return;
+    event.preventDefault();
+    if (task) event.currentTarget.requestSubmit();
   }
 
   function addAttachments(files: FileList | File[]) {
