@@ -122,11 +122,11 @@ test("automation changes submit immediately with model-specific effort normaliza
   assert.match(menuSource, /const submitChange = \(next: AutomationOptions\) => \{[\s\S]*?setDraft\(next\);[\s\S]*?onChange\(next\);[\s\S]*?\}/);
   assert.match(menuSource, /submitChange\(withAutomationModel\(draft, event\.target\.value as AutomationModel\)\)/);
   assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map/);
-  assert.match(menuSource, /<option key=\{effort\} value=\{effort\}>\{EFFORT_LABELS\[effort\]\}<\/option>/);
-  assert.match(menuSource, /low: "轻度"/);
-  assert.match(menuSource, /xhigh: "极高 \(xhigh\)"/);
-  assert.match(menuSource, /max: "最高"/);
-  assert.match(menuSource, /ultra: "极高 \(ultra\)"/);
+  assert.match(menuSource, /<option key=\{effort\} value=\{effort\}>\{text\(\.\.\.EFFORT_LABELS\[effort\]\)\}<\/option>/);
+  assert.match(menuSource, /low: \["轻度", "Low"\]/);
+  assert.match(menuSource, /xhigh: \["极高 \(xhigh\)", "Extra high \(xhigh\)"\]/);
+  assert.match(menuSource, /max: \["最高", "Maximum"\]/);
+  assert.match(menuSource, /ultra: \["极高 \(ultra\)", "Ultra"\]/);
   assert.doesNotMatch(menuSource, />取消</);
   assert.doesNotMatch(menuSource, />保存</);
   assert.doesNotMatch(menuSource, /project-automation-actions/);
