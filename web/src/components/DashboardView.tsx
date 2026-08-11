@@ -340,7 +340,7 @@ export function DashboardView({
     : labelCounts
   ).map((item, index) => ({
     ...item,
-    color: item.label === "__other__" ? "#e2e2e2" : LABEL_COLORS[index % LABEL_COLORS.length],
+    color: item.label === "__other__" ? "var(--dashboard-other-label-color)" : LABEL_COLORS[index % LABEL_COLORS.length],
   }));
   const maximumVisibleLabelCount = Math.max(1, ...visibleLabelCounts.map((item) => item.count));
 

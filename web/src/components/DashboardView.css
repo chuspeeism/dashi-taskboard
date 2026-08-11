@@ -1,5 +1,6 @@
 .dashboard-view.dashboard-view {
   --dashboard-summary-text: #502bf5;
+  --dashboard-other-label-color: #e2e2e2;
   --dashboard-contribution-1: #f9e1d7;
   --dashboard-contribution-2: #f6c5b1;
   --dashboard-contribution-3: #f8aa89;
@@ -11,6 +12,7 @@
 
 :root[data-theme="dark"] .dashboard-view.dashboard-view {
   --dashboard-summary-text: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
+  --dashboard-other-label-color: rgba(255, 255, 255, .2);
   --dashboard-contribution-1: color-mix(in srgb, #e98155 22%, var(--surface-muted));
   --dashboard-contribution-2: color-mix(in srgb, #e98155 42%, var(--surface-muted));
   --dashboard-contribution-3: color-mix(in srgb, #e98155 68%, var(--surface-muted));
