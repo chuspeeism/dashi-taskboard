@@ -191,6 +191,11 @@ interface ProjectAutomationRecord {
   reasoningEffort: AutomationReasoningEffort;
 }
 
+type ProjectAutomationOptions = Pick<
+  ProjectAutomationRecord,
+  "enabledByUser" | "quotaAware" | "intervalMinutes" | "model" | "reasoningEffort"
+>;
+
 type ProjectAutomations = Record<string, ProjectAutomationRecord>;
 
 interface AutomationHostItem {
@@ -663,8 +668,13 @@ export function App() {
 
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
-  const automationRequestInFlightRef = useRef(false);
+  const automationRequestInFlightRef = useRef<"list" | "save" | null>(null);
   const loadedAutomationProjectIdsRef = useRef(new Set<string>());
+  const queuedAutomationSaveRef = useRef<{
+    projectId: string;
+    options: ProjectAutomationOptions;
+  } | null>(null);
+  const saveProjectAutomationRef = useRef<(options: ProjectAutomationOptions) => void>(() => {});
   const projectAutomationsRef = useRef(projectAutomations);
 
   const setAnnouncement = useCallback((message: string) => {
@@ -872,10 +882,7 @@ export function App() {
 
   const sendAutomationRequest = useCallback((
     operation: "ensure-active" | "pause" | "list" | "apply-policy",
-    options: Pick<
-      ProjectAutomationRecord,
-      "enabledByUser" | "quotaAware" | "intervalMinutes" | "model" | "reasoningEffort"
-    >,
+    options: ProjectAutomationOptions,
     automationId?: string,
   ) => {
     if (
@@ -929,7 +936,7 @@ export function App() {
     if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return;
     const stored = projectAutomationsRef.current[selectedProjectId];
     const initialLoad = !loadedAutomationProjectIdsRef.current.has(selectedProjectId);
-    automationRequestInFlightRef.current = true;
+    automationRequestInFlightRef.current = "list";
     if (initialLoad) setAutomationPending(true);
     setAutomationError(null);
     try {
@@ -1002,9 +1009,14 @@ export function App() {
     } catch (error) {
       setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
     } finally {
+      const queuedSave = queuedAutomationSaveRef.current;
+      if (queuedSave?.projectId === selectedProjectId) queuedAutomationSaveRef.current = null;
       loadedAutomationProjectIdsRef.current.add(selectedProjectId);
-      automationRequestInFlightRef.current = false;
+      automationRequestInFlightRef.current = null;
       if (initialLoad) setAutomationPending(false);
+      if (queuedSave?.projectId === selectedProjectId) {
+        saveProjectAutomationRef.current(queuedSave.options);
+      }
     }
   }, [
     automationProjectContext,
@@ -1013,22 +1025,20 @@ export function App() {
     writeProjectAutomation,
   ]);
 
-  const saveProjectAutomation = useCallback(async (options: {
-    enabledByUser: boolean;
-    quotaAware: boolean;
-    intervalMinutes: AutomationIntervalMinutes;
-    model: AutomationModel;
-    reasoningEffort: AutomationReasoningEffort;
-  }) => {
+  const saveProjectAutomation = useCallback(async (options: ProjectAutomationOptions) => {
     const stored = projectAutomations[selectedProjectId];
     if (
       !selectedProjectId
       || automationProjectContext.unavailableReason
       || !automationProjectContext.codexProjectId
-      || automationRequestInFlightRef.current
     ) return;
+    if (automationRequestInFlightRef.current === "list") {
+      queuedAutomationSaveRef.current = { projectId: selectedProjectId, options };
+      return;
+    }
+    if (automationRequestInFlightRef.current) return;
     const previousRecord = stored;
-    automationRequestInFlightRef.current = true;
+    automationRequestInFlightRef.current = "save";
     setAutomationPending(true);
     setAutomationError(null);
     try {
@@ -1049,7 +1059,7 @@ export function App() {
       writeProjectAutomation(selectedProjectId, previousRecord);
       setAutomationError(error instanceof Error ? error.message : "无法更新自动化");
     } finally {
-      automationRequestInFlightRef.current = false;
+      automationRequestInFlightRef.current = null;
       setAutomationPending(false);
     }
   }, [
@@ -1059,6 +1069,7 @@ export function App() {
     sendAutomationRequest,
     writeProjectAutomation,
   ]);
+  saveProjectAutomationRef.current = saveProjectAutomation;
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
