@@ -1970,7 +1970,7 @@ export function App() {
         candidate.id === previous.id ? previous : candidate,
       )));
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? text(
+        ? textRef.current(
           "该议题已在其他位置更新，看板已重新同步。",
           "This issue changed elsewhere. The board has been synced.",
         )
