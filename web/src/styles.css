@@ -1044,6 +1044,7 @@ kbd {
 .search-field:focus-within,
 .search-field.has-value {
   width: min(148px, 21vw);
+  background: var(--surface-hover);
 }
 
 .search-field input {
