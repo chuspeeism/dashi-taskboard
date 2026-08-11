@@ -7,6 +7,9 @@ import {
   type ClipboardEvent,
   type KeyboardEventHandler,
 } from "react";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import type { Attachment } from "../types";
 import { attachmentContentUrl, resolvePersistedAttachmentUrl } from "../api";
 import { useTaskboardI18n } from "../i18n";
@@ -34,6 +37,17 @@ interface PersistedImageSegment {
   url: string;
 }
 
+interface MarkdownAstNode {
+  type: string;
+  position: {
+    start: { offset: number };
+    end: { offset: number };
+  };
+  children?: MarkdownAstNode[];
+  alt?: string | null;
+  url?: string;
+}
+
 export type InlineMediaSegment = InlineTextSegment | InlineImageSegment | PersistedImageSegment;
 export type PendingInlineImage = InlineImageSegment;
 type InlineMediaError = string | readonly [string, string];
@@ -55,6 +69,7 @@ interface InlineMediaComposerProps {
 }
 
 let segmentSequence = 0;
+const inlineMediaMarkdownParser = unified().use(remarkParse).use(remarkGfm);
 
 function segmentId(prefix: string): string {
   segmentSequence += 1;
@@ -77,20 +92,35 @@ function imageSegment(file: File): InlineImageSegment {
 
 export function createInlineMediaSegments(text = ""): InlineMediaSegment[] {
   const segments: InlineMediaSegment[] = [];
-  const imagePattern = /!\[((?:\\.|[^\]\\])*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+["'][^)]*["'])?\)/g;
+  const images: Array<{ start: number; end: number; alt: string; url: string }> = [];
+  const nodes = [inlineMediaMarkdownParser.parse(text) as MarkdownAstNode];
+
+  while (nodes.length > 0) {
+    const node = nodes.pop()!;
+    if (node.type === "image") {
+      images.push({
+        start: node.position.start.offset,
+        end: node.position.end.offset,
+        alt: node.alt ?? "",
+        url: node.url!,
+      });
+    }
+    if (node.children) nodes.push(...node.children);
+  }
+
+  images.sort((a, b) => a.start - b.start);
   let offset = 0;
 
-  for (const match of text.matchAll(imagePattern)) {
-    const index = match.index;
-    if (index > offset) segments.push(textSegment(text.slice(offset, index)));
+  for (const image of images) {
+    if (image.start > offset) segments.push(textSegment(text.slice(offset, image.start)));
     segments.push({
       id: segmentId("image"),
       type: "persisted-image",
-      markdown: match[0],
-      alt: match[1].replace(/\\([\\\[\]])/g, "$1"),
-      url: match[2] ?? match[3],
+      markdown: text.slice(image.start, image.end),
+      alt: image.alt,
+      url: image.url,
     });
-    offset = index + match[0].length;
+    offset = image.end;
   }
 
   if (offset < text.length) segments.push(textSegment(text.slice(offset)));
