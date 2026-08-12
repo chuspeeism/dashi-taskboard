@@ -130,11 +130,18 @@ type DetailSourceScroll =
   | { projectId: string; view: "list"; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
 type ActionError = string | readonly [string, string];
-type LoadError = {
-  source: "projects" | "tasks";
+type ProjectLoadError = {
+  source: "projects";
+  operation: "initial" | "refresh";
   requestId: number;
   message: string;
 };
+type TasksLoadError = {
+  source: "tasks";
+  requestId: number;
+  message: string;
+};
+type LoadError = ProjectLoadError | TasksLoadError;
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
 
@@ -629,7 +636,9 @@ export function App() {
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
-  const [loadError, setLoadError] = useState<LoadError | null>(null);
+  const [projectLoadError, setProjectLoadError] = useState<ProjectLoadError | null>(null);
+  const [tasksLoadError, setTasksLoadError] = useState<TasksLoadError | null>(null);
+  const loadError: LoadError | null = projectLoadError ?? tasksLoadError;
   const [actionError, setActionError] = useState<ActionError | null>(null);
   const actionErrorText = actionError === null
     ? null
@@ -1439,8 +1448,8 @@ export function App() {
 
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
     const requestId = ++projectsRequestRef.current;
-    setLoadError((current) => (
-      current?.source === "projects" ? { ...current, requestId } : current
+    setProjectLoadError((current) => (
+      current?.operation === "initial" ? { ...current, requestId } : current
     ));
     try {
       const [nextProjects, metadata, workspaces] = await Promise.all([
@@ -1477,12 +1486,17 @@ export function App() {
           ?? nextProjects[0]?.id
           ?? GLOBAL_PROJECT_ID;
       });
-      setLoadError((current) => (
-        current?.source === "projects" && current.requestId === requestId ? null : current
+      setProjectLoadError((current) => (
+        current?.operation === "initial" && current.requestId === requestId ? null : current
       ));
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === projectsRequestRef.current) {
-        setLoadError({ source: "projects", requestId, message: errorMessage(error) });
+        setProjectLoadError({
+          source: "projects",
+          operation: "initial",
+          requestId,
+          message: errorMessage(error),
+        });
       }
     }
   }, []);
@@ -1495,19 +1509,24 @@ export function App() {
 
   const refreshProjectList = useCallback(async () => {
     const requestId = ++projectsRequestRef.current;
-    setLoadError((current) => (
-      current?.source === "projects" ? { ...current, requestId } : current
+    setProjectLoadError((current) => (
+      current?.operation === "refresh" ? { ...current, requestId } : current
     ));
     try {
       const nextProjects = await listProjects();
       if (requestId !== projectsRequestRef.current) return;
       setProjects(nextProjects);
-      setLoadError((current) => (
-        current?.source === "projects" && current.requestId === requestId ? null : current
+      setProjectLoadError((current) => (
+        current?.operation === "refresh" && current.requestId === requestId ? null : current
       ));
     } catch (error) {
       if (requestId === projectsRequestRef.current) {
-        setLoadError({ source: "projects", requestId, message: errorMessage(error) });
+        setProjectLoadError({
+          source: "projects",
+          operation: "refresh",
+          requestId,
+          message: errorMessage(error),
+        });
       }
     }
   }, []);
@@ -1518,8 +1537,8 @@ export function App() {
   ) => {
     const requestId = ++tasksRequestRef.current;
     if (!options.quiet) setTasksLoading(true);
-    setLoadError((current) => (
-      current?.source === "tasks" ? { ...current, requestId } : current
+    setTasksLoadError((current) => (
+      current ? { ...current, requestId } : current
     ));
     try {
       const [nextTasks, nextArchivedTasks] = await Promise.all([
@@ -1530,12 +1549,12 @@ export function App() {
       setTasks(sortTasks(nextTasks));
       setArchivedTasks(sortTasks(nextArchivedTasks));
       setHasLoadedTasks(true);
-      setLoadError((current) => (
-        current?.source === "tasks" && current.requestId === requestId ? null : current
+      setTasksLoadError((current) => (
+        current?.requestId === requestId ? null : current
       ));
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === tasksRequestRef.current) {
-        setLoadError({ source: "tasks", requestId, message: errorMessage(error) });
+        setTasksLoadError({ source: "tasks", requestId, message: errorMessage(error) });
       }
     } finally {
       if (!options.quiet && requestId === tasksRequestRef.current) setTasksLoading(false);
@@ -2727,8 +2746,10 @@ export function App() {
               type="button"
               onClick={() => {
                 setActionError(null);
-                if (loadError?.source === "projects") void refreshProjectList();
-                else if (selectedProjectId) void refreshTasks(selectedProjectId);
+                if (loadError?.source === "projects") {
+                  if (loadError.operation === "initial") void loadProjectList();
+                  else void refreshProjectList();
+                } else if (selectedProjectId) void refreshTasks(selectedProjectId);
                 else void loadProjectList();
               }}
             >
