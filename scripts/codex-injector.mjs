@@ -1931,10 +1931,18 @@ async function main() {
             );
             continue;
           }
-          throw error;
+          if (
+            !launchedCodex
+            || (launchedCodex.exitCode === null && launchedCodex.signalCode === null)
+          ) {
+            throw error;
+          }
         }
-        const managedCodexExited = managedCodex && !isManagedCodexRunning(managedCodex);
-        if (managedCodexExited) {
+        const launchedCodexExited = options.cdpPipe
+          ? codexProcess
+            && (codexProcess.exitCode !== null || codexProcess.signalCode !== null)
+          : managedCodex && !isManagedCodexRunning(managedCodex);
+        if (launchedCodexExited) {
           injectedTargets.forEach((connection) => {
             unregisterQuotaPolicyCdp(connection);
             connection.close();
@@ -1942,6 +1950,25 @@ async function main() {
           injectedTargets.clear();
           cdpRuntime?.close();
           cdpRuntime = null;
+          if (options.cdpPipe) {
+            const exitCode = codexProcess.exitCode;
+            codexProcess = null;
+            if (exitCode === 0) {
+              idleAfterNormalExit = true;
+              console.error(
+                "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
+              );
+              continue;
+            }
+            console.error("Codex exited unexpectedly; restarting it for the taskboard launcher.");
+            try {
+              await startManagedCodex();
+              if (options.open) openRequestGeneration += 1;
+            } catch (restartError) {
+              console.error(`Waiting to restart Codex: ${restartError.message}`);
+            }
+            continue;
+          }
           managedCodex = null;
           idleAfterNormalExit = true;
           console.error(
