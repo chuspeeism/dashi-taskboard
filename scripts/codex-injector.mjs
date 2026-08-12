@@ -181,10 +181,12 @@ async function isTaskboardReachable() {
   }
 }
 
-async function waitUntilReachable(url, timeoutMs) {
+async function waitUntilReachable(url, timeoutMs, shouldStop = () => false) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (shouldStop()) throw new Error(`Stopped waiting for ${url}`);
     if (await isReachable(url)) return;
+    if (shouldStop()) throw new Error(`Stopped waiting for ${url}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`Timed out waiting for ${url}`);
@@ -340,13 +342,15 @@ function isManagedCodexRunning(record) {
   return result.status === 0 && result.stdout.trimEnd() === record.command;
 }
 
-async function launchCodexWithLaunchServices(appPath, port) {
+async function launchCodexWithLaunchServices(appPath, port, shouldStop = () => false) {
   const existing = managedCodexProcess(appPath);
   if (existing && managedCodexUsesPort(existing, port)) return existing;
   if (existing) await stopManagedCodex(existing);
+  if (shouldStop()) throw new Error("Managed Codex launch stopped");
   if (await isReachable(`http://127.0.0.1:${port}/json/version`)) {
     throw new Error(`Codex CDP port ${port} is already in use`);
   }
+  if (shouldStop()) throw new Error("Managed Codex launch stopped");
 
   const launcher = spawn(
     "/usr/bin/open",
@@ -1670,7 +1674,9 @@ async function main() {
 
   let codexProcess = null;
   let managedCodex = null;
+  let managedCodexLaunchPromise = null;
   let cdpRuntime = null;
+  let runtimePublishPromise = null;
   const injectedTargets = new Map();
   let openRequestGeneration = options.open ? 1 : 0;
   let openedRequestGeneration = 0;
@@ -1718,6 +1724,9 @@ async function main() {
     if (stopping) return;
     stopping = true;
     wakeStop();
+    cleanup().catch((error) => {
+      console.error(`Cleanup failed: ${error.message}`);
+    });
   };
   const detached = !options.watch;
   const supervisor = createTaskboardSupervisor({
@@ -1733,16 +1742,45 @@ async function main() {
     },
   });
 
+  const publishRuntime = async () => {
+    const pending = publishTaskboardRuntime();
+    runtimePublishPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (runtimePublishPromise === pending) runtimePublishPromise = null;
+    }
+  };
+
   const startManagedCodex = async () => {
+    if (stopping) return;
     if (options.cdpPipe) {
       const launched = await launchCodexWithPipe(options.appPath);
       codexProcess = launched.child;
       cdpRuntime = pipeCdpRuntime(launched.browser);
       return;
     }
-    managedCodex = await launchCodexWithLaunchServices(options.appPath, options.port);
-    await waitUntilReachable(cdpVersionUrl, 30_000);
-    cdpRuntime = tcpCdpRuntime(options.port);
+    const launchPromise = launchCodexWithLaunchServices(
+      options.appPath,
+      options.port,
+      () => stopping,
+    );
+    managedCodexLaunchPromise = launchPromise;
+    try {
+      managedCodex = await launchPromise;
+    } catch (error) {
+      if (!stopping) throw error;
+    } finally {
+      if (managedCodexLaunchPromise === launchPromise) managedCodexLaunchPromise = null;
+    }
+    if (stopping) return;
+    try {
+      await waitUntilReachable(cdpVersionUrl, 30_000, () => stopping);
+    } catch (error) {
+      if (stopping) return;
+      throw error;
+    }
+    if (!stopping) cdpRuntime = tcpCdpRuntime(options.port);
   };
 
   let cleanupPromise = null;
@@ -1756,8 +1794,32 @@ async function main() {
       injectedTargets.clear();
       cdpRuntime?.close();
       cdpRuntime = null;
+      const supervisorCleanupPromise = supervisor.stop();
+      const runtimeCleanupPromise = (async () => {
+        const pendingRuntimePublish = runtimePublishPromise;
+        if (pendingRuntimePublish) {
+          try {
+            await pendingRuntimePublish;
+          } catch (_) {}
+        }
+        await removeTaskboardRuntime();
+      })();
+      supervisorCleanupPromise.catch(() => {});
+      runtimeCleanupPromise.catch(() => {});
+      const pendingManagedCodexLaunch = managedCodexLaunchPromise;
+      if (pendingManagedCodexLaunch) {
+        try {
+          await pendingManagedCodexLaunch;
+        } catch (_) {}
+      }
       const launchedCodex = codexProcess;
-      const launchedManagedCodex = managedCodex;
+      let launchedManagedCodex = managedCodex;
+      if (!launchedManagedCodex && !options.cdpPipe) {
+        const discovered = managedCodexProcess(options.appPath);
+        if (discovered && managedCodexUsesPort(discovered, options.port)) {
+          launchedManagedCodex = discovered;
+        }
+      }
       codexProcess = null;
       managedCodex = null;
       if (launchedManagedCodex) await stopManagedCodex(launchedManagedCodex);
@@ -1782,12 +1844,16 @@ async function main() {
           ]);
         }
       }
-      await supervisor.stop();
-      await removeTaskboardRuntime();
+      await Promise.all([supervisorCleanupPromise, runtimeCleanupPromise]);
     })();
     return cleanupPromise;
   };
+  if (options.watch) {
+    process.once("SIGINT", requestStop);
+    process.once("SIGTERM", requestStop);
+  }
   try {
+    if (stopping) return;
     let cdpReachable = false;
     if (!options.cdpPipe) {
       cdpReachable = await isReachable(cdpVersionUrl);
@@ -1799,10 +1865,16 @@ async function main() {
         throw new Error(`Codex CDP is not listening on 127.0.0.1:${options.port}`);
       }
     }
+    if (stopping) return;
 
     await supervisor.ensure({ force: true });
-    await publishTaskboardRuntime();
-    if (options.launch) await importCodexBrowserProfile();
+    if (stopping) return;
+    await publishRuntime();
+    if (stopping) return;
+    if (options.launch) {
+      await importCodexBrowserProfile();
+      if (stopping) return;
+    }
 
     if (options.cdpPipe || !cdpReachable) {
       await startManagedCodex();
@@ -1815,8 +1887,10 @@ async function main() {
       }
       cdpRuntime = tcpCdpRuntime(options.port);
     }
+    if (stopping) return;
 
     const { source, sourceHash } = await currentInjectionSource();
+    if (stopping) return;
     let firstResults = [];
     const firstOpenGeneration = openRequestGeneration;
     const shouldOpenFirstTarget = firstOpenGeneration > openedRequestGeneration;
@@ -1837,6 +1911,7 @@ async function main() {
       if (!options.watch) throw error;
       console.error(`Waiting for Codex renderer: ${error.message}`);
     }
+    if (stopping) return;
     if (firstResults.length > 0) {
       if (shouldOpenFirstTarget) {
         openedRequestGeneration = Math.max(openedRequestGeneration, firstOpenGeneration);
@@ -1853,8 +1928,6 @@ async function main() {
       return;
     }
 
-    process.once("SIGINT", requestStop);
-    process.once("SIGTERM", requestStop);
     while (!stopping) {
       await Promise.race([
         new Promise((resolve) => setTimeout(resolve, 2_000)),
@@ -1863,7 +1936,7 @@ async function main() {
       if (stopping) break;
       try {
         const service = await supervisor.ensure();
-        if (service.restarted) await publishTaskboardRuntime();
+        if (service.restarted && !stopping) await publishRuntime();
       } catch (error) {
         console.error(`Waiting for Taskboard service: ${error.message}`);
       }

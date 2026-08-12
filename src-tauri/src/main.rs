@@ -26,6 +26,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use uuid::Uuid;
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
@@ -270,6 +271,16 @@ fn terminate_process_group(pid: u32) {
     }
 }
 
+fn stop_launcher_process_group(pid: u32) {
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    if !wait_for_process_group_exit(pid, LAUNCHER_STOP_TIMEOUT) {
+        send_process_group_signal(pid, libc::SIGKILL);
+        let _ = wait_for_process_group_exit(pid, Duration::from_secs(1));
+    }
+}
+
 fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let output = StdCommand::new("/bin/ps")
         .args(["-p", &record.pid.to_string(), "-o", "command="])
@@ -289,7 +300,7 @@ fn stop_recorded_child(state: &LauncherState) {
         .and_then(|content| serde_json::from_str::<LauncherPidRecord>(&content).ok());
     if let Some(record) = record {
         if process_matches_record(&record) {
-            terminate_process_group(record.pid);
+            stop_launcher_process_group(record.pid);
         }
     }
     let _ = fs::remove_file(&state.pid_record_path);
@@ -325,7 +336,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     state.intentional_stop.store(true, Ordering::SeqCst);
     if let Some(pid) = state.child.lock().unwrap().take() {
         append_log(state, &format!("Stopping launcher child {pid}"));
-        terminate_process_group(pid);
+        stop_launcher_process_group(pid);
         clear_pid_record(state, pid);
     }
     update_snapshot(app, state, |snapshot| {
