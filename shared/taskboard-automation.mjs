@@ -63,7 +63,7 @@ export function buildTaskboardAutomationPrompt(request) {
   const taskctlCommand = buildTaskctlCommand(request);
   return [
     `[$manage-taskboard](${request.skillPath}) e-taskboard 每 ${request.intervalMinutes} 分钟检查任务面板中的「${request.projectName}」项目（项目 ID：${request.taskboardProjectId}，项目目录：${request.workspacePath}）。`,
-    `本轮所有 taskctl 操作都使用完整命令前缀 ${taskctlCommand}，不要使用 PATH 中的 taskctl。`,
+    `本轮所有 taskctl 操作都使用完整命令前缀 ${taskctlCommand}，并在 Codex exec_command 中以 sandbox_permissions=require_escalated 执行；不要使用 PATH 中的 taskctl。`,
     `开始时先运行 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status todo --json。若没有 todo，使用 Codex automation_update 将名为「${automationName}」的当前自动化设为 PAUSED，保留其他字段，然后结束；不要创建或打开新的任务会话。`,
     "每次仅处理一个 todo：选定后先用 issue get 读取最新议题内容，并用 comment list 读取全部评论。根据描述和最新评论判断是否允许开始；若其中写明等待、暂不执行或当前不应开始，立即跳过并报告，不改状态。评论也包含已完成后被打回的返工要求。",
     "确认允许开始后，必须在读取代码、下载附件、分析或实施前，使用刚读取的 version 将仍可认领的 todo 移到 in_progress；写入成功前不得继续。不得认领已被其他会话绑定或其他 Agent 领取的议题。",
@@ -80,7 +80,7 @@ function buildTaskctlCommand(request) {
   const command = `${shellQuote(process.execPath)} ${shellQuote(cliPath)}`;
   const runtimeFilePath = process.env.CODEX_TASKBOARD_RUNTIME_FILE;
   return runtimeFilePath
-    ? `CODEX_TASKBOARD_RUNTIME_FILE=${shellQuote(runtimeFilePath)} ${command}`
+    ? `${command} --runtime-file ${shellQuote(runtimeFilePath)}`
     : command;
 }
 

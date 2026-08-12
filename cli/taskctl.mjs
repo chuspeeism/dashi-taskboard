@@ -17,6 +17,7 @@ export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
 
 const BOOLEAN_OPTIONS = new Set(["json"]);
+const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
@@ -188,7 +189,10 @@ async function execute(parsed, overrides) {
   }
   validateOptions(parsed.options, allowedOptions);
 
-  const env = overrides.env ?? process.env;
+  const processEnv = overrides.env ?? process.env;
+  const env = parsed.options["runtime-file"] === undefined
+    ? processEnv
+    : { ...processEnv, CODEX_TASKBOARD_RUNTIME_FILE: parsed.options["runtime-file"] };
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
   const api = createApiClient(overrides, {
     baseUrl: usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
@@ -838,7 +842,7 @@ function optionalField(name, value) {
 
 function validateOptions(options, allowedOptions) {
   for (const name of Object.keys(options)) {
-    if (!allowedOptions.has(name)) {
+    if (!allowedOptions.has(name) && !GLOBAL_OPTIONS.has(name)) {
       throw usageError(`Unknown option --${name}`);
     }
   }

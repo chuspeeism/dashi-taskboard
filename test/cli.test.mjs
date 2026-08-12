@@ -76,6 +76,27 @@ test("CODEX_TASKBOARD_URL overrides the service origin", async () => {
   assert.equal(requestedUrl.toString(), "https://tasks.example.test/api/projects");
 });
 
+test("--runtime-file reads the launcher endpoint without a leading environment assignment", async () => {
+  let requestedUrl;
+  const result = await run(
+    ["project", "list", "--runtime-file", "/tmp/taskboard-runtime.json"],
+    async (url) => {
+      requestedUrl = url;
+      return response({ projects: [] });
+    },
+    {
+      env: {},
+      readFile: async (filePath) => {
+        assert.equal(filePath, "/tmp/taskboard-runtime.json");
+        return JSON.stringify({ version: 1, url: "http://127.0.0.1:51550/token" });
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(requestedUrl.toString(), "http://127.0.0.1:51550/token/api/projects");
+});
+
 test("project create sends id, name, and an absolute workspace path", async () => {
   let requestBody;
   const result = await run(
