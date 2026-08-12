@@ -63,14 +63,14 @@ test("other tasks is a closed-by-default non-modal panel with archived issues", 
 });
 
 test("search and filters feed the same status buckets used by the board and panel", () => {
-  assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search\) && matchesTaskFilters\(task, filters\)/);
+  assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search, language\) && matchesTaskFilters\(task, filters\)/);
   assert.match(appSource, /TASK_STATUSES\.map\(\(status\) => \[status, filteredTasks\.filter\(\(task\) => task\.status === status\)\]\)/);
   assert.match(appSource, /tasks=\{tasksByStatus\[status\]\}/);
   assert.match(appSource, /tasksByStatus=\{tasksByStatus\}/);
   assert.match(appSource, /archivedTasks=\{filteredArchivedTasks\}/);
   assert.match(appSource, /hasActiveFilters=\{hasActiveTaskFilters\}/);
   assert.match(panelSource, /const tasks = archived \? archivedTasks : tasksByStatus\[activeTab\]/);
-  assert.match(panelSource, /hasActiveFilters \? "当前筛选下无匹配议题"/);
+  assert.match(panelSource, /hasActiveFilters\s*\? text\("当前筛选下无匹配议题", "No issues match the current filters"\)/);
   assert.match(boardColumnSource, /tasks\.length === 0 && <div className="column-empty">\{emptyMessage\}<\/div>/);
 });
 

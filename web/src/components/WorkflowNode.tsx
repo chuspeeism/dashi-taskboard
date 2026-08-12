@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { useTaskboardI18n } from "../i18n";
 import { LinearIcon, type LinearIconName } from "./LinearIcon";
+import { workflowText } from "./workflowI18n";
 import { WorkflowMark } from "./WorkflowMark";
 
 export type WorkflowNodeTone =
@@ -17,8 +19,10 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   kind: string;
   eyebrow: string;
   title: string;
+  systemCopyDepth?: number;
   displayTitle?: string;
   description: string;
+  displayDescription?: string;
   meta: string;
   icon: LinearIconName;
   logo?: string;
@@ -97,6 +101,7 @@ function StepMenu({
   onDelete?: () => void;
   onDuplicate?: () => void;
 }) {
+  const { text } = useTaskboardI18n();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -151,7 +156,7 @@ function StepMenu({
         ref={triggerRef}
         className="workflow-step-menu-trigger"
         type="button"
-        aria-label="步骤操作"
+        aria-label={text("步骤操作", "Step actions")}
         aria-expanded={open}
         onClick={(event) => {
           event.stopPropagation();
@@ -178,7 +183,7 @@ function StepMenu({
               }}
             >
               <LinearIcon name="copy" />
-              <span>复制步骤</span>
+              <span>{text("复制步骤", "Duplicate step")}</span>
             </button>
           )}
           {canDelete && (
@@ -193,7 +198,7 @@ function StepMenu({
               }}
             >
               <LinearIcon name="trash" />
-              <span>删除步骤</span>
+              <span>{text("删除步骤", "Delete step")}</span>
             </button>
           )}
         </div>,
@@ -204,6 +209,8 @@ function StepMenu({
 }
 
 export function WorkflowNode({ data, selected, isConnectable, parentId }: NodeProps<WorkflowCanvasNode>) {
+  const { text } = useTaskboardI18n();
+
   if (data.kind.startsWith("flow-")) {
     const hasOutput = data.kind !== "flow-end";
     return (
@@ -255,7 +262,9 @@ export function WorkflowNode({ data, selected, isConnectable, parentId }: NodePr
           type="target"
           position={Position.Top}
           isConnectable={isConnectable}
-          aria-label={data.inputLabel ?? "步骤输入"}
+          aria-label={data.inputLabel === undefined
+            ? text("步骤输入", "Step input")
+            : workflowText(text, data.inputLabel)}
         />
         <header className="workflow-plan-container-header">
           <span className="workflow-node-icon" aria-hidden="true">
@@ -277,24 +286,29 @@ export function WorkflowNode({ data, selected, isConnectable, parentId }: NodePr
           />
         </header>
         <div className="workflow-plan-container-summary">
-          <p>{data.description}</p>
+          <p>{data.displayDescription ?? data.description}</p>
         </div>
         <div className="workflow-plan-drop-zone">
-          {(data.childCount ?? 0) === 0 && <span>执行计划中还没有步骤</span>}
+          {(data.childCount ?? 0) === 0 && (
+            <span>{text("执行计划中还没有步骤", "No steps in the execution plan")}</span>
+          )}
         </div>
         <footer className="workflow-plan-container-footer">
-          <span>从上到下执行 · {data.childCount ?? 0} 步</span>
+          <span>{text(
+            `从上到下执行 · ${data.childCount ?? 0} 步`,
+            `Runs top to bottom · ${data.childCount ?? 0} ${(data.childCount ?? 0) === 1 ? "step" : "steps"}`,
+          )}</span>
           <button
             className="workflow-plan-add-inline nodrag nopan"
             type="button"
-            aria-label="向执行计划添加步骤"
+            aria-label={text("向执行计划添加步骤", "Add a step to the execution plan")}
             onClick={(event) => {
               event.stopPropagation();
               data.onAddChild?.();
             }}
           >
             <LinearIcon name="plus" />
-            <span>添加步骤</span>
+            <span>{text("添加步骤", "Add step")}</span>
           </button>
         </footer>
         <Handle
@@ -302,7 +316,9 @@ export function WorkflowNode({ data, selected, isConnectable, parentId }: NodePr
           type="source"
           position={Position.Bottom}
           isConnectable={isConnectable}
-          aria-label={data.outputLabel ?? "步骤输出"}
+          aria-label={data.outputLabel === undefined
+            ? text("步骤输出", "Step output")
+            : workflowText(text, data.outputLabel)}
         />
       </article>
     );
@@ -318,7 +334,9 @@ export function WorkflowNode({ data, selected, isConnectable, parentId }: NodePr
         type="target"
         position={Position.Top}
         isConnectable={isConnectable}
-        aria-label={data.inputLabel ?? "步骤输入"}
+        aria-label={data.inputLabel === undefined
+          ? text("步骤输入", "Step input")
+          : workflowText(text, data.inputLabel)}
       />
       <header className="workflow-node-header">
         <span className="workflow-node-icon" aria-hidden="true">
@@ -340,22 +358,28 @@ export function WorkflowNode({ data, selected, isConnectable, parentId }: NodePr
         />
       </header>
       <div className="workflow-node-body">
-        <p>{data.description}</p>
-        <span>{data.meta}</span>
+        <p>{data.displayDescription ?? data.description}</p>
+        <span>{workflowText(text, data.meta)}</span>
       </div>
       <footer className="workflow-node-footer">
         <span className={`workflow-node-state${data.configured ? " is-configured" : " needs-config"}`}>
           <i aria-hidden="true" />
-          {data.configured ? "已配置" : "需要配置"}
+          {data.configured
+            ? text("已配置", "Configured")
+            : text("需要配置", "Needs configuration")}
         </span>
-        <span>{data.isTrigger ? "触发步骤" : `步骤 ${data.stepNumber ?? ""}`}</span>
+        <span>{data.isTrigger
+          ? text("触发步骤", "Trigger step")
+          : text(`步骤 ${data.stepNumber ?? ""}`, `Step ${data.stepNumber ?? ""}`)}</span>
       </footer>
       <Handle
         className="workflow-sequence-handle workflow-sequence-handle-output"
         type="source"
         position={Position.Bottom}
         isConnectable={isConnectable}
-        aria-label={data.outputLabel ?? "步骤输出"}
+        aria-label={data.outputLabel === undefined
+          ? text("步骤输出", "Step output")
+          : workflowText(text, data.outputLabel)}
       />
     </article>
   );

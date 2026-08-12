@@ -1,4 +1,5 @@
 import { LinearIcon } from "./LinearIcon";
+import { useTaskboardI18n } from "../i18n";
 
 export const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024;
 
@@ -41,6 +42,7 @@ export function PendingAttachments({
   className = "",
   onRemove,
 }: PendingAttachmentsProps) {
+  const { text } = useTaskboardI18n();
   if (files.length === 0) return null;
 
   return (
@@ -50,7 +52,12 @@ export function PendingAttachments({
           <li key={fileKey(file)}>
             <span className="composer-attachment-file-icon" aria-hidden="true"><LinearIcon name="file" /></span>
             <span className="composer-attachment-copy"><strong>{file.name}</strong><span>{fileSize(file.size)} · {uploadLabel}</span></span>
-            <button type="button" disabled={disabled} aria-label={`移除 ${file.name}`} onClick={() => onRemove(index)}>
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label={text(`移除 ${file.name}`, `Remove ${file.name}`)}
+              onClick={() => onRemove(index)}
+            >
               <LinearIcon name="close" />
             </button>
           </li>

@@ -9,6 +9,7 @@ import {
   type TaskPriority,
 } from "../types";
 import { labelPresentation } from "../labels";
+import { taskPriorityLabel, useTaskboardI18n } from "../i18n";
 import { CODEX_AGENT_ACTOR, actorKey, assigneeTargetForActor } from "../actors";
 import type {
   TaskCardPresentation,
@@ -22,14 +23,6 @@ import { TaskConversationMenu } from "./TaskConversationMenu";
 import { TaskboardIcon } from "./TaskboardIcon";
 import completeIcon from "../assets/figma-taskboard/card-complete.svg";
 import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
-
-const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  none: "无优先级",
-  urgent: "紧急",
-  high: "高",
-  medium: "中",
-  low: "低",
-};
 
 interface TaskCardProps {
   task: Task;
@@ -52,14 +45,15 @@ interface TaskCardProps {
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
-function calendarDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" })
+function calendarDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
     .format(new Date(`${value}T12:00:00`));
 }
 
-function createdDate(value: string) {
-  return `${new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" })
-    .format(new Date(value))}创建`;
+function createdDate(value: string, locale: string, text: (chinese: string, english: string) => string) {
+  const formatted = new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
+    .format(new Date(value));
+  return text(`${formatted}创建`, `Created ${formatted}`);
 }
 
 function elapsedTime(startedAt: string | null, now: number) {
@@ -138,6 +132,7 @@ function ProcessingProgress({
 }: {
   presentation: TaskCardPresentation;
 }) {
+  const { text } = useTaskboardI18n();
   const { processing } = presentation;
   const hasProgress = processing.total !== null
     && processing.total > 0
@@ -146,7 +141,7 @@ function ProcessingProgress({
 
   const total = processing.total!;
   const completed = Math.max(0, Math.min(processing.completed!, total));
-  const label = `处理进度 ${completed}/${total}`;
+  const label = text(`处理进度 ${completed}/${total}`, `Processing progress ${completed}/${total}`);
 
   return (
     <div className="card-progress-row">
@@ -172,13 +167,16 @@ function ProcessingStatusRow({
   now: number;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }) {
+  const { text } = useTaskboardI18n();
   const elapsed = elapsedTime(presentation.processing.startedAt, now);
   const running = presentation.processing.running;
   return (
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
       <span className="task-processing-label">
-        {running ? (elapsed ? `已处理 ${elapsed}...` : "正在处理...") : "暂停处理"}
+        {running
+          ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
+          : text("暂停处理", "Processing paused")}
       </span>
       <span className="task-processing-spacer" aria-hidden="true" />
       {presentation.conversations.length > 0 && (
@@ -192,11 +190,15 @@ function ProcessingStatusRow({
 }
 
 function ParticipantAvatars({ participants }: { participants: ActorIdentity[] }) {
+  const { text } = useTaskboardI18n();
   if (participants.length === 0) return null;
   return (
     <span
       className="task-participants"
-      aria-label={`参与人：${participants.map((participant) => participant.name).join("、")}`}
+      aria-label={text(
+        `参与人：${participants.map((participant) => participant.name).join("、")}`,
+        `Participants: ${participants.map((participant) => participant.name).join(", ")}`,
+      )}
     >
       {participants.map((participant) => (
         <ActorAvatar
@@ -210,10 +212,11 @@ function ParticipantAvatars({ participants }: { participants: ActorIdentity[] })
 }
 
 function TaskLabels({ task }: { task: Task }) {
+  const { language } = useTaskboardI18n();
   return (
     <>
       {task.labels.slice(0, 2).map((label) => {
-        const presentation = labelPresentation(label);
+        const presentation = labelPresentation(label, language);
         return (
           <span className={`label-chip${presentation.tone ? ` label-chip-${presentation.tone}` : ""}`} key={label}>
             {presentation.tone && <i aria-hidden="true" />}
@@ -222,7 +225,7 @@ function TaskLabels({ task }: { task: Task }) {
         );
       })}
       {task.labels.length > 2 && (
-        <span className="label-more" title={task.labels.slice(2).map((label) => labelPresentation(label).name).join(", ")}>
+        <span className="label-more" title={task.labels.slice(2).map((label) => labelPresentation(label, language).name).join(", ")}>
           +{task.labels.length - 2}
         </span>
       )}
@@ -243,12 +246,13 @@ function PriorityControl({
   onOpenChange: (open: boolean) => void;
   onChange: (priority: TaskPriority) => void;
 }) {
+  const { language, text } = useTaskboardI18n();
   return (
     <TaskPropertyPicker
       value={task.priority}
       options={TASK_PRIORITIES.map((priority) => ({
         value: priority,
-        label: PRIORITY_LABELS[priority],
+        label: taskPriorityLabel(language, priority),
         icon: <LinearPriorityIcon priority={priority} />,
         className: `priority-${priority}`,
       }))}
@@ -256,8 +260,11 @@ function PriorityControl({
       disabled={disabled}
       className="card-property-control"
       triggerClassName={`priority-chip priority-chip-${task.priority}`}
-      ariaLabel={`${task.identifier} 优先级`}
-      title={`优先级：${PRIORITY_LABELS[task.priority]}`}
+      ariaLabel={text(`${task.identifier} 优先级`, `${task.identifier} priority`)}
+      title={text(
+        `优先级：${taskPriorityLabel(language, task.priority)}`,
+        `Priority: ${taskPriorityLabel(language, task.priority)}`,
+      )}
       onOpenChange={onOpenChange}
       onChange={onChange}
     />
@@ -273,13 +280,14 @@ function DueDateControl({
   disabled: boolean;
   onChange: (dueDate: string | null) => void;
 }) {
+  const { locale, text } = useTaskboardI18n();
   if (!task.dueDate) return null;
   return (
-    <label className="due-date-chip card-property-control" title={`截止日期 ${task.dueDate}`}>
-      <TaskboardIcon name="calendar" /> {calendarDate(task.dueDate)}
+    <label className="due-date-chip card-property-control" title={text(`截止日期 ${task.dueDate}`, `Due date ${task.dueDate}`)}>
+      <TaskboardIcon name="calendar" /> {calendarDate(task.dueDate, locale)}
       <input
         type="date"
-        aria-label={`${task.identifier} 截止日期`}
+        aria-label={text(`${task.identifier} 截止日期`, `${task.identifier} due date`)}
         value={task.dueDate}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value || null)}
@@ -301,15 +309,16 @@ function AssigneeControl({
   disabled: boolean;
   onChange: (target: AssigneeTarget) => void;
 }) {
+  const { text } = useTaskboardI18n();
   const options = [task.assignee, currentUser, CODEX_AGENT_ACTOR]
     .filter((actor, index, actors) => (
       actors.findIndex((candidate) => actorKey(candidate) === actorKey(actor)) === index
     ));
   return (
-    <label className="task-participants-control card-property-control" title={`负责人：${task.assignee.name}`}>
+    <label className="task-participants-control card-property-control" title={text(`负责人：${task.assignee.name}`, `Assignee: ${task.assignee.name}`)}>
       <ParticipantAvatars participants={participants} />
       <select
-        aria-label={`${task.identifier} 负责人`}
+        aria-label={text(`${task.identifier} 负责人`, `${task.identifier} assignee`)}
         value={actorKey(task.assignee)}
         disabled={disabled}
         onChange={(event) => {
@@ -320,7 +329,7 @@ function AssigneeControl({
       >
         {options.map((actor) => (
           <option value={actorKey(actor)} key={actorKey(actor)}>
-            {actor.id === currentUser.id ? `${actor.name}（我）` : actor.name}
+            {actor.id === currentUser.id ? text(`${actor.name}（我）`, `${actor.name} (me)`) : actor.name}
           </option>
         ))}
       </select>
@@ -348,6 +357,7 @@ export function TaskCard({
   onDragEnd,
   onOpenConversation,
 }: TaskCardProps) {
+  const { locale, text } = useTaskboardI18n();
   const [propertyMenu, setPropertyMenu] = useState<"priority" | "labels" | null>(null);
   const [savingProperty, setSavingProperty] = useState<"priority" | "labels" | "dueDate" | "assignee" | null>(null);
   const creator: ActorIdentity = {
@@ -402,7 +412,7 @@ export function TaskCard({
       <button
         className="task-card-open"
         type="button"
-        aria-label={`打开 ${task.identifier}: ${task.title}`}
+        aria-label={text(`打开 ${task.identifier}: ${task.title}`, `Open ${task.identifier}: ${task.title}`)}
         onClick={() => onEdit(task)}
       />
 
@@ -410,20 +420,20 @@ export function TaskCard({
         <span className="card-reference">
           <span className="task-identifier">ID: {task.identifier}</span>
         </span>
-        {presentation.unread && <span className="task-unread-dot" aria-label="有未读更新" />}
+        {presentation.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
         {task.status === "in_review" && onComplete && (
           <button
             className="task-card-complete"
             type="button"
-            aria-label={`完成 ${task.identifier}`}
-            title="完成"
+            aria-label={text(`完成 ${task.identifier}`, `Complete ${task.identifier}`)}
+            title={text("完成", "Complete")}
             onClick={(event) => {
               event.stopPropagation();
               onComplete(task);
             }}
           >
             <img src={completeIcon} alt="" aria-hidden="true" />
-            <span>完成</span>
+            <span>{text("完成", "Complete")}</span>
           </button>
         )}
         {variant === "sidebar" && (
@@ -435,7 +445,7 @@ export function TaskCard({
               disabled={propertyDisabled}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
             />
-            <span>{createdDate(task.createdAt)}</span>
+            <span>{createdDate(task.createdAt, locale, text)}</span>
           </span>
         )}
       </div>
@@ -447,7 +457,7 @@ export function TaskCard({
       )}
 
       {showsProperties && (
-        <div className="card-properties" aria-label="议题属性">
+        <div className="card-properties" aria-label={text("议题属性", "Issue properties")}>
           {task.priority !== "none" && (
             <PriorityControl
               task={task}

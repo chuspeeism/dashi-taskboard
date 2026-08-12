@@ -16,7 +16,7 @@ if (!appPath || !outputDirectory || !releaseTag) {
 }
 
 const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
-if (releaseTag !== `app-v${packageJson.version}`) {
+if (releaseTag !== `v${packageJson.version}`) {
   throw new Error("Release tag does not match package.json version");
 }
 

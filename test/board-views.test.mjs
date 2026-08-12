@@ -23,14 +23,14 @@ test("the taskboard defaults to issues and exposes the current project views", (
     /function readProjectBoardView\(projectId: string\): BoardView \{\s*const view = [^;]+;\s*return [\s\S]*?\? view\s*: "issues";\s*\}/,
   );
   assert.match(appSource, /useState<BoardView>\(\(\) => readProjectBoardView\(initialProjectId\)\)/);
-  assert.match(appSource, />\s*Dashboard\s*<\/button>/);
-  assert.match(appSource, />\s*议题看板\s*<\/button>/);
-  assert.match(appSource, />\s*列表视图\s*<\/button>/);
-  assert.match(appSource, />\s*甘特图\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("仪表盘", "Dashboard"\)\}\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("议题看板", "Issue board"\)\}\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("列表视图", "List"\)\}\s*<\/button>/);
+  assert.match(appSource, />\s*\{text\("甘特图", "Gantt"\)\}\s*<\/button>/);
   assert.match(appSource, /aria-pressed=\{boardView === "issues"\}/);
   assert.match(appSource, /onClick=\{\(\) => selectBoardView\("issues"\)\}/);
   assert.match(appSource, /const SHOW_WORKFLOW_BOARD_ENTRY = false/);
-  assert.match(appSource, /SHOW_WORKFLOW_BOARD_ENTRY && \([\s\S]*?>\s*节点模式\s*<\/button>/);
+  assert.match(appSource, /SHOW_WORKFLOW_BOARD_ENTRY && \([\s\S]*?>\s*\{text\("节点模式", "Workflow"\)\}\s*<\/button>/);
   assert.match(appSource, /function changeProject[\s\S]*?setBoardView\(readProjectBoardView\(projectId\)\)/);
   assert.doesNotMatch(appSource, /<span>活跃<\/span>|<span>积压事项<\/span>|所有议题|add-view/);
 });
@@ -45,7 +45,7 @@ test("secondary views lazy-load while issue controls remain isolated", () => {
   assert.match(appSource, /onWorkflowsChange=\{setWorkflowOptions\}/);
   assert.match(workflowSource, /export function WorkflowBoard\(/);
   assert.match(workflowSource, /from "@xyflow\/react"/);
-  assert.match(workflowSource, /aria-label="流程编排区"/);
+  assert.match(workflowSource, /aria-label=\{text\("流程编排区", "Workflow canvas"\)\}/);
   assert.match(workflowSource, /nodesConnectable=\{false\}/);
   assert.match(workflowSource, /connectOnClick=\{false\}/);
   assert.doesNotMatch(workflowSource, /MiniMap|onConnect=|aria-label="节点库"|workflow-library/);
@@ -88,13 +88,13 @@ test("workflow tabs switch independent sequences, create blank workflows and ren
   assert.match(workflowSource, /const \[workflowTabs, setWorkflowTabs\] = useState<WorkflowTab\[\]>/);
   assert.match(workflowSource, /function activateWorkflow[\s\S]*?setNodes\(snapshot\.nodes\)[\s\S]*?setFlow\(snapshot\.flow\)/);
   assert.match(workflowSource, /function createWorkflow[\s\S]*?createWorkflowFlow\(\)[\s\S]*?nodes: \[\][\s\S]*?flow: emptyFlow[\s\S]*?setWorkflowTabs/);
-  assert.match(workflowSource, /className="workflow-tabs" role="tablist"/);
+  assert.match(workflowSource, /className="workflow-tabs"[\s\S]*?role="tablist"[\s\S]*?aria-label=\{text\(/);
   assert.match(workflowSource, /role="tab"[\s\S]*?aria-selected=\{active\}/);
   assert.match(workflowSource, /function handleWorkflowTabKeyDown[\s\S]*?ArrowLeft[\s\S]*?ArrowRight[\s\S]*?Home[\s\S]*?End/);
-  assert.match(workflowSource, /aria-label="新建流程"/);
+  assert.match(workflowSource, /aria-label=\{text\("新建流程", "Create workflow"\)\}/);
   assert.match(workflowSource, /const \[renamingWorkflowId, setRenamingWorkflowId\] = useState/);
   assert.match(workflowSource, /onDoubleClick=\{\(\) => startWorkflowRename\(workflow\)\}/);
-  assert.match(workflowSource, /aria-label="流程名称"[\s\S]*?event\.key === "Enter"[\s\S]*?event\.key === "Escape"/);
+  assert.match(workflowSource, /aria-label=\{text\("流程名称", "Workflow name"\)\}[\s\S]*?event\.key === "Enter"[\s\S]*?event\.key === "Escape"/);
   assert.match(styles, /\.workflow-tab\.is-active \{[\s\S]*?border-bottom: 0[\s\S]*?background: var\(--bg\)/);
   assert.doesNotMatch(styles, /\.workflow-tab\.is-active::after/);
 });
@@ -205,21 +205,21 @@ test("the on-demand inspector exposes real capabilities and the existing node co
   assert.match(apiSource, /export async function listWorkflowCapabilities[\s\S]*?\/api\/workflow-capabilities/);
   assert.match(typesSource, /export interface WorkflowCapabilities[\s\S]*?skills: WorkflowCapabilityOption\[\][\s\S]*?mcpServers: WorkflowMcpServerOption\[\]/);
   assert.match(workflowSource, /listWorkflowCapabilities\(workspacePath, controller\.signal\)/);
-  assert.match(inspectorSource, /aria-label="可用 Skill"/);
+  assert.match(inspectorSource, /aria-label=\{text\("可用 Skill", "Available Skills"\)\}/);
   assert.match(inspectorSource, /capabilities\?\.skills/);
-  assert.match(inspectorSource, /未发现可用 Skill/);
-  assert.match(inspectorSource, /aria-label="可用 MCP Server"/);
+  assert.match(inspectorSource, /text\("未发现可用 Skill", "No available Skills found"\)/);
+  assert.match(inspectorSource, /aria-label=\{text\("可用 MCP Server", "Available MCP Servers"\)\}/);
   assert.match(inspectorSource, /capabilities\?\.mcpServers/);
-  assert.match(inspectorSource, /未发现可用 MCP Server/);
-  assert.match(inspectorSource, /aria-label="Claude Code 模型"/);
+  assert.match(inspectorSource, /text\("未发现可用 MCP Server", "No available MCP Servers found"\)/);
+  assert.match(inspectorSource, /aria-label=\{text\("Claude Code 模型", "Claude Code model"\)\}/);
   assert.match(inspectorSource, /Claude Sonnet[\s\S]*?Claude Opus[\s\S]*?Claude Haiku/);
-  assert.match(inspectorSource, /推理强度/);
-  assert.match(inspectorSource, /规划要求/);
-  assert.match(inspectorSource, /议题选择/);
+  assert.match(inspectorSource, /text\("推理强度", "Reasoning effort"\)/);
+  assert.match(inspectorSource, /text\("规划要求", "Planning requirements"\)/);
+  assert.match(inspectorSource, /text\("议题选择", "Issue selection"\)/);
   for (const action of ["改变状态", "添加评论", "添加标签", "设置优先级", "附加流程运行产物", "记录执行该议题的 Codex 对话"]) {
     assert.match(inspectorSource, new RegExp(action));
   }
-  assert.match(inspectorSource, /额外说明/);
+  assert.match(inspectorSource, /text\("额外说明", "Additional instructions"\)/);
   assert.match(workflowSource, /selectedNode && \([\s\S]*?<WorkflowInspector/);
 });
 
@@ -227,14 +227,14 @@ test("Git and issue configuration render the selected action in each step title"
   for (const action of ["查看状态", "提交更改", "拉取更新", "推送分支", "创建分支", "切换分支", "合并分支", "创建 Worktree"]) {
     assert.match(catalogSource, new RegExp(action));
   }
-  assert.match(inspectorSource, /aria-label="Git 操作"/);
-  assert.match(inspectorSource, /aria-label="Git 提交说明"/);
-  assert.match(inspectorSource, /aria-label="Git 远程仓库"/);
-  assert.match(inspectorSource, /aria-label="Git Worktree 分支"/);
-  assert.match(inspectorSource, /aria-label="Git Worktree 目录"/);
-  assert.match(inspectorSource, /aria-label="议题触发状态"/);
+  assert.match(inspectorSource, /aria-label=\{text\("Git 操作", "Git operation"\)\}/);
+  assert.match(inspectorSource, /aria-label=\{text\("Git 提交说明", "Git commit message"\)\}/);
+  assert.match(inspectorSource, /aria-label=\{text\("Git 远程仓库", "Git remote"\)\}/);
+  assert.match(inspectorSource, /aria-label=\{text\("Git Worktree 分支", "Git worktree branch"\)\}/);
+  assert.match(inspectorSource, /aria-label=\{text\("Git Worktree 目录", "Git worktree directory"\)\}/);
+  assert.match(inspectorSource, /aria-label=\{text\("议题触发状态", "Issue trigger status"\)\}/);
   assert.match(catalogSource, /function workflowNodeDisplayTitle[\s\S]*?data\.kind === "git"[\s\S]*?data\.kind === "issue-trigger"[\s\S]*?data\.kind === "issue-update"/);
-  assert.match(workflowSource, /displayTitle: workflowNodeDisplayTitle\(node\.data\)/);
+  assert.match(workflowSource, /displayTitle: workflowNodeDisplayTitle\(node\.data, text\)/);
   assert.match(workflowNodeSource, /data\.displayTitle \?\? data\.title/);
 });
 
@@ -260,8 +260,8 @@ test("steps are inserted from sequence connectors through a searchable grouped c
     workflowSource,
     /insertWorkflowNode\([\s\S]*?pickerTarget\.sequenceRef[\s\S]*?pickerTarget\.index/,
   );
-  assert.match(workflowSource, /aria-label="添加第一个步骤"/);
+  assert.match(workflowSource, /aria-label=\{text\("添加第一个步骤", "Add the first step"\)\}/);
   assert.match(pickerSource, /role="dialog"/);
-  assert.match(pickerSource, /placeholder="搜索应用或动作…"/);
+  assert.match(pickerSource, /placeholder=\{text\("搜索应用或动作…", "Search apps or actions…"\)\}/);
   assert.match(pickerSource, /onSelect\(item\)/);
 });

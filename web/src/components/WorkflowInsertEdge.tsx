@@ -4,6 +4,7 @@ import {
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
+import { useTaskboardI18n } from "../i18n";
 import { LinearIcon } from "./LinearIcon";
 
 export interface WorkflowInsertEdgeData extends Record<string, unknown> {
@@ -29,6 +30,7 @@ export function WorkflowInsertEdge({
   markerEnd,
   data,
 }: EdgeProps<WorkflowSequenceEdge>) {
+  const { text } = useTaskboardI18n();
   const points = data?.points?.length
     ? data.points
     : [{ x: sourceX, y: sourceY }, { x: targetX, y: targetY }];
@@ -59,15 +61,17 @@ export function WorkflowInsertEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}
           >
-            {data.conditionOutcome === "true" ? "成立" : "不成立"}
+            {data.conditionOutcome === "true"
+              ? text("成立", "True")
+              : text("不成立", "False")}
           </span>
         )}
         {data?.onInsert && Number.isFinite(buttonX) && Number.isFinite(buttonY) && (
           <button
             className="workflow-sequence-add nodrag nopan"
             type="button"
-            aria-label="在此处添加步骤"
-            title="添加步骤"
+            aria-label={text("在此处添加步骤", "Add a step here")}
+            title={text("添加步骤", "Add step")}
             style={{
               transform: `translate(-50%, -50%) translate(${buttonX}px, ${buttonY}px)`,
             }}

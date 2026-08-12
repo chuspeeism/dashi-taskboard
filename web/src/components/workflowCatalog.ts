@@ -12,6 +12,7 @@ import vercelLogo from "@lobehub/icons-static-svg/icons/vercel.svg";
 import xLogo from "../assets/x-logo-black.png";
 import type { WorkflowCapabilities } from "../types";
 import type { WorkflowNodeData } from "./WorkflowNode";
+import { workflowText, type WorkflowText } from "./workflowI18n";
 export { WORKFLOW_TRIGGER_KINDS, isWorkflowTriggerKind } from "../../../shared/workflow-control-flow.mjs";
 
 export type WorkflowGroup =
@@ -722,6 +723,34 @@ export const PALETTE_ITEMS: PaletteItem[] = [
   },
 ];
 
+const WORKFLOW_NODE_DEFAULT_TEXT: Record<
+  string,
+  Partial<Record<"title" | "description", readonly string[]>>
+> = {
+  "basic-planning": {
+    title: ["拆解议题执行计划"],
+    description: ["生成步骤、依赖和验收条件"],
+  },
+  skill: { description: ["运行一个已安装的 Skill"] },
+  mcp: { description: ["连接一个已配置的 MCP Server"] },
+  "nano-banana": {
+    title: ["生成预览素材"],
+    description: ["根据议题内容生成预览图"],
+  },
+  "cloudflare-deploy": {
+    title: ["部署预览版本"],
+    description: ["构建并发布项目预览"],
+  },
+  "codex-review": {
+    title: ["审核交付结果"],
+    description: ["检查产物、测试与验收条件"],
+  },
+  "issue-update": {
+    title: ["提交审核"],
+    description: ["追加结果评论并更新状态"],
+  },
+};
+
 export function paletteData(kind: string): WorkflowNodeData {
   return PALETTE_ITEMS.find((item) => item.data.kind === kind)!.data;
 }
@@ -744,46 +773,125 @@ export function capabilityNodeMeta(
   data: WorkflowNodeData,
   capabilities: WorkflowCapabilities | null,
   failed: boolean,
+  text: WorkflowText,
 ): string {
   if (data.kind === "issue-create") {
-    const status = optionLabel(ISSUE_STATUSES, data.createIssueStatus ?? "todo");
-    const priority = optionLabel(ISSUE_PRIORITIES, data.createIssuePriority ?? "none");
-    return `初始状态 · ${status} · 优先级 ${priority}`;
+    const status = workflowOptionLabel(text, ISSUE_STATUSES, data.createIssueStatus ?? "todo");
+    const priority = workflowOptionLabel(text, ISSUE_PRIORITIES, data.createIssuePriority ?? "none");
+    return text(
+      `初始状态 · ${optionLabel(ISSUE_STATUSES, data.createIssueStatus ?? "todo")} · 优先级 ${optionLabel(ISSUE_PRIORITIES, data.createIssuePriority ?? "none")}`,
+      `Initial status · ${status} · Priority ${priority}`,
+    );
   }
   if (data.kind === "rss-trigger") {
     const source = rssSourceLabel(data.rssFeedUrl);
-    return source ? `RSS · ${source}` : "尚未设置 RSS 订阅地址";
+    return source ? `RSS · ${source}` : text("尚未设置 RSS 订阅地址", "RSS feed URL not set");
   }
   if (data.kind === "twitter-post") {
     const content = data.twitterPostContent?.trim();
-    return content ? `发布内容 · ${twitterPostSummary(content)}` : "尚未填写发布内容";
+    return content
+      ? text(`发布内容 · ${twitterPostSummary(content)}`, `Content · ${twitterPostSummary(content)}`)
+      : text("尚未填写发布内容", "Content not set");
   }
   if (data.kind === "custom-code") {
-    return `运行环境 · ${optionLabel(CODE_RUNTIMES, data.codeRuntime ?? "shell")}`;
+    return text(
+      `运行环境 · ${optionLabel(CODE_RUNTIMES, data.codeRuntime ?? "shell")}`,
+      `Runtime · ${workflowOptionLabel(text, CODE_RUNTIMES, data.codeRuntime ?? "shell")}`,
+    );
   }
   if (data.kind === "run-tests") {
-    return `测试范围 · ${optionLabel(TEST_SCOPES, data.testScope ?? "related")}`;
+    return text(
+      `测试范围 · ${optionLabel(TEST_SCOPES, data.testScope ?? "related")}`,
+      `Test scope · ${workflowOptionLabel(text, TEST_SCOPES, data.testScope ?? "related")}`,
+    );
   }
   if (data.kind === "skill") {
-    if (!capabilities) return "正在读取可用 Skill";
-    if (failed) return "无法读取可用 Skill";
+    if (!capabilities) return text("正在读取可用 Skill", "Loading available skills");
+    if (failed) return text("无法读取可用 Skill", "Could not load available skills");
     const skill = capabilities.skills.find((option) => option.id === data.selectedSkill);
     if (skill) return `${skill.label} · Skill`;
-    return data.selectedSkill ? "所选 Skill 当前不可用" : "尚未选择 Skill";
+    return data.selectedSkill
+      ? text("所选 Skill 当前不可用", "Selected skill is unavailable")
+      : text("尚未选择 Skill", "No skill selected");
   }
   if (data.kind === "mcp") {
-    if (!capabilities) return "正在读取可用 MCP Server";
-    if (failed) return "无法读取可用 MCP Server";
+    if (!capabilities) return text("正在读取可用 MCP Server", "Loading available MCP servers");
+    if (failed) return text("无法读取可用 MCP Server", "Could not load available MCP servers");
     const server = capabilities.mcpServers.find((option) => option.id === data.selectedMcpServer);
     if (server) return `${server.label} · ${server.transport}`;
-    return data.selectedMcpServer ? "所选 MCP Server 当前不可用" : "尚未选择 MCP Server";
+    return data.selectedMcpServer
+      ? text("所选 MCP Server 当前不可用", "Selected MCP server is unavailable")
+      : text("尚未选择 MCP Server", "No MCP server selected");
   }
-  return data.meta;
+  return workflowText(text, data.meta);
 }
 
-function formatActionTitle(title: string, actions: string[]): string {
+function workflowOptionLabel(
+  text: WorkflowText,
+  options: readonly { value: string; label: string }[],
+  value: string | undefined,
+): string {
+  return workflowText(text, optionLabel(options, value));
+}
+
+function isWorkflowNodeDefaultText(
+  data: WorkflowNodeData,
+  field: "title" | "description",
+  value: string,
+): boolean {
+  const catalogData = PALETTE_ITEMS.find((item) => item.data.kind === data.kind)?.data;
+  if (!catalogData) return false;
+  const templateValues = WORKFLOW_NODE_DEFAULT_TEXT[data.kind]?.[field] ?? [];
+  return value === catalogData[field] || templateValues.includes(value);
+}
+
+export function workflowNodeSystemCopyDepth(data: WorkflowNodeData): number {
+  if (data.systemCopyDepth !== undefined) return data.systemCopyDepth;
+  const copySuffix = " 副本";
+  let title = data.title;
+  let copyDepth = 0;
+  while (title.endsWith(copySuffix)) {
+    title = title.slice(0, -copySuffix.length);
+    copyDepth += 1;
+  }
+  return copyDepth;
+}
+
+function workflowNodeBaseDisplayTitle(data: WorkflowNodeData, text: WorkflowText): string {
+  const copySuffix = " 副本";
+  let baseTitle = data.title;
+  let copyCount = 0;
+  const systemCopyDepth = workflowNodeSystemCopyDepth(data);
+  while (copyCount < systemCopyDepth && baseTitle.endsWith(copySuffix)) {
+    baseTitle = baseTitle.slice(0, -copySuffix.length);
+    copyCount += 1;
+  }
+  const displayTitle = isWorkflowNodeDefaultText(data, "title", baseTitle)
+    ? workflowText(text, baseTitle)
+    : baseTitle;
+  return displayTitle + text(" 副本", " copy").repeat(copyCount);
+}
+
+export function workflowNodeDisplayDescription(
+  data: WorkflowNodeData,
+  text: WorkflowText,
+): string {
+  if (data.kind === "issue-trigger") {
+    const statusValue = data.triggerStatus ?? "todo";
+    const systemDescription = "状态变为「" + optionLabel(ISSUE_STATUSES, statusValue) + "」时触发";
+    if (data.description === systemDescription) {
+      const status = workflowOptionLabel(text, ISSUE_STATUSES, statusValue);
+      return text(systemDescription, "Trigger when status changes to ‘" + status + "’");
+    }
+  }
+  return isWorkflowNodeDefaultText(data, "description", data.description)
+    ? workflowText(text, data.description)
+    : data.description;
+}
+
+function formatActionTitle(title: string, actions: string[], text: WorkflowText): string {
   if (actions.length === 0) return title;
-  const visibleActions = actions.slice(0, 2).join("、");
+  const visibleActions = actions.slice(0, 2).join(text("、", ", "));
   const remaining = actions.length > 2 ? ` +${actions.length - 2}` : "";
   return `${title} · ${visibleActions}${remaining}`;
 }
@@ -799,18 +907,19 @@ function twitterPostSummary(value: string): string {
   return normalized.length > 36 ? `${normalized.slice(0, 36)}…` : normalized;
 }
 
-export function workflowNodeDisplayTitle(data: WorkflowNodeData): string {
+export function workflowNodeDisplayTitle(data: WorkflowNodeData, text: WorkflowText): string {
+  const displayTitle = workflowNodeBaseDisplayTitle(data, text);
   if (data.kind === "issue-create") {
     const issueTitle = data.createIssueTitle?.trim();
-    return formatActionTitle(data.title, issueTitle ? [issueTitle] : []);
+    return formatActionTitle(displayTitle, issueTitle ? [issueTitle] : [], text);
   }
   if (data.kind === "rss-trigger") {
     const source = rssSourceLabel(data.rssFeedUrl);
-    return formatActionTitle(data.title, source ? [source] : []);
+    return formatActionTitle(displayTitle, source ? [source] : [], text);
   }
   if (data.kind === "twitter-post") {
     const content = data.twitterPostContent?.trim();
-    return formatActionTitle(data.title, content ? [twitterPostSummary(content)] : []);
+    return formatActionTitle(displayTitle, content ? [twitterPostSummary(content)] : [], text);
   }
   if (data.kind === "condition") {
     const field = CONDITION_FIELDS.find(
@@ -821,54 +930,60 @@ export function workflowNodeDisplayTitle(data: WorkflowNodeData): string {
     ) ?? field.defaultOperator;
     const value = data.conditionValue || field.defaultValue;
     const valueLabel = field.value === "issue-status"
-      ? optionLabel(ISSUE_STATUSES, value)
+      ? workflowOptionLabel(text, ISSUE_STATUSES, value)
       : field.value === "issue-priority"
-        ? optionLabel(ISSUE_PRIORITIES, value)
+        ? workflowOptionLabel(text, ISSUE_PRIORITIES, value)
         : value;
-    return formatActionTitle(data.title, [
-      `${field.label} ${optionLabel(CONDITION_OPERATORS, operatorValue)} ${valueLabel || "未设置"}`,
-    ]);
+    return formatActionTitle(displayTitle, [
+      `${workflowText(text, field.label)} ${workflowOptionLabel(text, CONDITION_OPERATORS, operatorValue)} ${valueLabel || text("未设置", "Not set")}`,
+    ], text);
   }
   if (data.kind === "feishu-message") {
-    return formatActionTitle(data.title, [
-      optionLabel(FEISHU_MESSAGE_RECIPIENTS, data.feishuRecipientType ?? "self"),
-    ]);
+    return formatActionTitle(displayTitle, [
+      workflowOptionLabel(text, FEISHU_MESSAGE_RECIPIENTS, data.feishuRecipientType ?? "self"),
+    ], text);
   }
   if (data.kind === "git") {
-    return formatActionTitle(data.title, [
-      optionLabel(GIT_OPERATIONS, data.gitOperation ?? "commit"),
-    ]);
+    return formatActionTitle(displayTitle, [
+      workflowOptionLabel(text, GIT_OPERATIONS, data.gitOperation ?? "commit"),
+    ], text);
   }
   if (data.kind === "custom-code") {
-    return formatActionTitle(data.title, [
-      optionLabel(CODE_RUNTIMES, data.codeRuntime ?? "shell"),
-    ]);
+    return formatActionTitle(displayTitle, [
+      workflowOptionLabel(text, CODE_RUNTIMES, data.codeRuntime ?? "shell"),
+    ], text);
   }
   if (data.kind === "run-tests") {
-    return formatActionTitle(data.title, [
-      optionLabel(TEST_SCOPES, data.testScope ?? "related"),
-    ]);
+    return formatActionTitle(displayTitle, [
+      workflowOptionLabel(text, TEST_SCOPES, data.testScope ?? "related"),
+    ], text);
   }
   if (data.kind === "issue-trigger") {
-    const status = optionLabel(ISSUE_STATUSES, data.triggerStatus ?? "todo");
-    return formatActionTitle(data.title, [`进入${status}`]);
+    const status = workflowOptionLabel(text, ISSUE_STATUSES, data.triggerStatus ?? "todo");
+    return formatActionTitle(displayTitle, [text(`进入${status}`, `Moved to ${status}`)], text);
   }
   if (data.kind === "issue-update") {
     const actions = [
       data.changeStatus
-        ? `状态 → ${optionLabel(ISSUE_STATUSES, data.targetStatus ?? "in_review")}`
+        ? text(
+            `状态 → ${optionLabel(ISSUE_STATUSES, data.targetStatus ?? "in_review")}`,
+            `Status → ${workflowOptionLabel(text, ISSUE_STATUSES, data.targetStatus ?? "in_review")}`,
+          )
         : "",
-      data.addComment ? "添加评论" : "",
-      data.addLabels ? "添加标签" : "",
+      data.addComment ? text("添加评论", "Add comment") : "",
+      data.addLabels ? text("添加标签", "Add labels") : "",
       data.setPriority
-        ? `优先级 → ${optionLabel(ISSUE_PRIORITIES, data.targetPriority ?? "none")}`
+        ? text(
+            `优先级 → ${optionLabel(ISSUE_PRIORITIES, data.targetPriority ?? "none")}`,
+            `Priority → ${workflowOptionLabel(text, ISSUE_PRIORITIES, data.targetPriority ?? "none")}`,
+          )
         : "",
-      data.attachArtifacts ? "附加产物" : "",
-      data.recordConversation ? "记录对话" : "",
+      data.attachArtifacts ? text("附加产物", "Attach artifacts") : "",
+      data.recordConversation ? text("记录对话", "Record conversation") : "",
     ].filter(Boolean);
-    return formatActionTitle(data.title, actions);
+    return formatActionTitle(displayTitle, actions, text);
   }
-  return data.title;
+  return displayTitle;
 }
 
 export function workflowNodeConfigured(

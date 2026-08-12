@@ -36,7 +36,7 @@ test("project automation state is device-local and scoped by taskboard project",
 test("automation requests use the exact Codex host message contract", () => {
   assert.match(appSource, /type: "taskboard:automation-request"/);
   assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list"/);
-  assert.match(appSource, /taskboardProjectId: selectedProjectId/);
+  assert.match(appSource, /context: AutomationRequestContext[\s\S]*?taskboardProjectId: context\.taskboardProjectId/);
   assert.match(appSource, /codexProjectId/);
   assert.match(appSource, /projectName: selectedProject\.name/);
   assert.match(appSource, /workspacePath/);
@@ -62,7 +62,7 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.doesNotMatch(menuSource, /statusStarted|statusTodo/);
   assert.match(menuSource, /aria-busy=\{pending/);
   assert.match(menuSource, /自动认领/);
-  assert.match(menuSource, /status === "ACTIVE" \? "自动认领中" : "自动化"/);
+  assert.match(menuSource, /aria-label=\{status === "ACTIVE"\s*\? text\("自动认领中", "Auto-claiming"\)\s*: text\("自动化", "Automation"\)\}/);
   assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
   assert.match(menuSource, /自动认领开关/);
   assert.match(menuSource, /5, 10, 15, 30, 60/);
@@ -111,7 +111,7 @@ test("unavailable automation state has one notice, clears stale errors, and cann
   );
   assert.match(
     reconcileSource,
-    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return false;/,
+    /if \(!automationRequestContext\) \{\s*setAutomationError\(null\);\s*return;/,
   );
   assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
 });
@@ -122,11 +122,11 @@ test("automation changes submit immediately with model-specific effort normaliza
   assert.match(menuSource, /const submitChange = \(next: AutomationOptions\) => \{[\s\S]*?setDraft\(next\);[\s\S]*?onChange\(next\);[\s\S]*?\}/);
   assert.match(menuSource, /submitChange\(withAutomationModel\(draft, event\.target\.value as AutomationModel\)\)/);
   assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map/);
-  assert.match(menuSource, /<option key=\{effort\} value=\{effort\}>\{EFFORT_LABELS\[effort\]\}<\/option>/);
-  assert.match(menuSource, /low: "轻度"/);
-  assert.match(menuSource, /xhigh: "极高 \(xhigh\)"/);
-  assert.match(menuSource, /max: "最高"/);
-  assert.match(menuSource, /ultra: "极高 \(ultra\)"/);
+  assert.match(menuSource, /<option key=\{effort\} value=\{effort\}>\{text\(\.\.\.EFFORT_LABELS\[effort\]\)\}<\/option>/);
+  assert.match(menuSource, /low: \["轻度", "Low"\]/);
+  assert.match(menuSource, /xhigh: \["极高 \(xhigh\)", "Extra high \(xhigh\)"\]/);
+  assert.match(menuSource, /max: \["最高", "Maximum"\]/);
+  assert.match(menuSource, /ultra: \["极高 \(ultra\)", "Ultra"\]/);
   assert.doesNotMatch(menuSource, />取消</);
   assert.doesNotMatch(menuSource, />保存</);
   assert.doesNotMatch(menuSource, /project-automation-actions/);
@@ -144,94 +144,23 @@ test("pending completion reconciles the optimistic draft to confirmed host state
   assert.match(menuSource, /disabled=\{disabled\}/);
 });
 
-test("host context heartbeats do not repeatedly disable native automation selects", () => {
-  assert.match(
-    appSource,
-    /const automationContextReconcileKey = \[[\s\S]*?selectedProjectId,[\s\S]*?automationProjectContext\.codexProjectId[\s\S]*?automationProjectContext\.workspacePath[\s\S]*?automationProjectContext\.unavailableReason[\s\S]*?manageTaskboardSkillPath,[\s\S]*?\]\.join\("\\u0000"\)/,
+test("unchanged host heartbeats do not repeat automation status requests", () => {
+  const contextSource = appSource.slice(
+    appSource.indexOf("const automationRequestContext"),
+    appSource.indexOf("const detailTask"),
   );
-  assert.match(appSource, /const lastAutomationContextReconcileKeyRef = useRef\(""\)/);
-  const reconcileSource = appSource.slice(
-    appSource.indexOf("const reconcileProjectAutomation"),
-    appSource.indexOf("const saveProjectAutomation"),
-  );
-  assert.match(reconcileSource, /useCallback\(\(passive = false\) =>/);
-  assert.match(reconcileSource, /if \(!passive\) setAutomationPending\(true\)/);
-  assert.match(reconcileSource, /if \(!passive\) setAutomationPending\(false\)/);
   assert.match(
-    appSource,
-    /if \(lastAutomationContextReconcileKeyRef\.current === automationContextReconcileKey\) return;\s*setAutomationError\(null\);\s*if \(reconcileProjectAutomation\(\)\) \{\s*lastAutomationContextReconcileKeyRef\.current = automationContextReconcileKey;\s*\}/,
+    contextSource,
+    /\}, \[\s*automationProjectContext\.codexProjectId,\s*automationProjectContext\.workspacePath,\s*manageTaskboardSkillPath,\s*selectedProject\?\.id,\s*selectedProject\?\.name,\s*\]\);/,
+  );
+  assert.doesNotMatch(
+    contextSource,
+    /\}, \[automationProjectContext, manageTaskboardSkillPath, selectedProject\]\);/,
   );
   assert.match(
     appSource,
-    /if \(lastAutomationContextReconcileKeyRef\.current !== automationContextReconcileKey\) return;\s*reconcileProjectAutomation\(true\);/,
+    /void reconcileProjectAutomation\(\);\s*\}, \[selectedProjectId, reconcileProjectAutomation\]\);/,
   );
-  assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
-});
-
-test("an in-flight context switch retries after pending reconciliation completes", () => {
-  const reconcileSource = appSource.slice(
-    appSource.indexOf("const reconcileProjectAutomation"),
-    appSource.indexOf("const saveProjectAutomation"),
-  );
-  assert.match(reconcileSource, /automationRequestInFlightRef\.current\) return false/);
-  assert.match(reconcileSource, /automationRequestInFlightRef\.current = true/);
-  assert.match(reconcileSource, /const request = \(async \(\) => \{/);
-  assert.match(reconcileSource, /setAutomationPending\(false\)/);
-  assert.match(reconcileSource, /setAutomationReconcileRevision\(\(current\) => current \+ 1\)/);
-  assert.match(
-    appSource,
-    /\}, \[automationContextReconcileKey, automationReconcileRevision, reconcileProjectAutomation\]\)/,
-  );
-  assert.match(reconcileSource, /return true;/);
-});
-
-test("automation changes wait for a passive refresh without crossing semantic contexts", () => {
-  const saveSource = appSource.slice(
-    appSource.indexOf("const saveProjectAutomation"),
-    appSource.indexOf("function openTaskDetail"),
-  );
-  assert.match(appSource, /const passiveAutomationRequestRef = useRef<Promise<void> \| null>\(null\)/);
-  assert.match(saveSource, /if \(passiveAutomationRequestRef\.current\) await passiveAutomationRequestRef\.current/);
-  assert.match(
-    saveSource,
-    /automationContextReconcileKeyRef\.current !== requestContextKey\s*\|\| automationRequestInFlightRef\.current/,
-  );
-  assert.match(saveSource, /const stored = projectAutomationsRef\.current\[selectedProjectId\]/);
-});
-
-test("automation changes coalesce to the latest edit while a passive refresh is pending", async () => {
-  const saveSource = appSource.slice(
-    appSource.indexOf("const saveProjectAutomation"),
-    appSource.indexOf("function openTaskDetail"),
-  );
-  assert.match(appSource, /const automationSaveRevisionRef = useRef\(0\)/);
-  const revisionIndex = saveSource.indexOf("const saveRevision = ++automationSaveRevisionRef.current");
-  const passiveWaitIndex = saveSource.indexOf(
-    "if (passiveAutomationRequestRef.current) await passiveAutomationRequestRef.current",
-  );
-  const latestEditGuardIndex = saveSource.indexOf(
-    "automationSaveRevisionRef.current !== saveRevision",
-  );
-  assert.ok(revisionIndex >= 0);
-  assert.ok(passiveWaitIndex > revisionIndex);
-  assert.ok(latestEditGuardIndex > passiveWaitIndex);
-
-  let currentRevision = 0;
-  let releasePassiveRefresh;
-  const passiveRefresh = new Promise((resolve) => {
-    releasePassiveRefresh = resolve;
-  });
-  const committed = [];
-  async function save(value) {
-    const saveRevision = ++currentRevision;
-    await passiveRefresh;
-    if (currentRevision !== saveRevision) return;
-    committed.push(value);
-  }
-  const saves = [save("first"), save("latest")];
-  releasePassiveRefresh();
-  await Promise.all(saves);
-  assert.deepEqual(committed, ["latest"]);
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {
@@ -239,18 +168,18 @@ test("opening settings and changing projects reconcile with the host list", () =
     appSource.indexOf("const reconcileProjectAutomation"),
     appSource.indexOf("const saveProjectAutomation"),
   );
-  const saveSource = appSource.slice(
-    appSource.indexOf("const saveProjectAutomation"),
-    appSource.indexOf("function openTaskDetail"),
+  const drainSource = appSource.slice(
+    appSource.indexOf("const drainQueuedAutomationSaves"),
+    appSource.indexOf("const reconcileProjectAutomation"),
   );
   assert.match(
     reconcileSource,
-    /sendAutomationRequest\(\s*"list",\s*options,\s*stored\?\.automationId,\s*\)/,
+    /sendAutomationRequest\(\s*"list",\s*options,\s*automationRequestContext,\s*stored\?\.automationId,\s*\)/,
   );
   assert.doesNotMatch(reconcileSource, /"apply-policy"/);
   assert.match(
-    saveSource,
-    /sendAutomationRequest\("apply-policy", options, stored\?\.automationId\)/,
+    drainSource,
+    /sendAutomationRequest\(\s*"apply-policy",\s*queuedSave\.options,\s*queuedSave\.context,\s*previousRecord\?\.automationId,\s*\)/,
   );
   assert.match(appSource, /const policy = isAutomationHostPolicy\(response\.policy\) \? response\.policy : null/);
   assert.match(appSource, /const item = \(isAutomationHostItem\(response\.item\) \? response\.item : undefined\)\s*\?\? items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
@@ -261,5 +190,5 @@ test("opening settings and changing projects reconcile with the host list", () =
   assert.match(appSource, /enabledByUser: policy\.enabledByUser/);
   assert.match(appSource, /quotaAware: policy\.quotaAware/);
   assert.match(appSource, /automationId: undefined,[\s\S]*?status: "PAUSED"/);
-  assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
+  assert.match(drainSource, /writeProjectAutomation\(queuedSave\.projectId, previousRecord\)/);
 });
