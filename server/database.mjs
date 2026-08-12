@@ -1471,7 +1471,7 @@ export class TaskboardDatabase {
     this.#requireVersion(current, version);
     const activityChanges = taskFieldChanges(current, changes);
     const targetProject = Object.hasOwn(changes, "projectId")
-      ? this.database.prepare("SELECT id, name, workspace_path FROM projects WHERE id = ?").get(changes.projectId)
+      ? this.database.prepare("SELECT id, name, workspace_path, labels FROM projects WHERE id = ?").get(changes.projectId)
       : null;
     if (Object.hasOwn(changes, "projectId") && !targetProject) {
       throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${changes.projectId}' does not exist`);
