@@ -678,6 +678,7 @@ export function App() {
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
   const [automationError, setAutomationError] = useState<string | null>(null);
+  const [automationReconcileRevision, setAutomationReconcileRevision] = useState(0);
   const [announcement, setAnnouncementValue] = useState("");
   const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
   const tasksRequestRef = useRef(0);
@@ -706,6 +707,7 @@ export function App() {
   }
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef<"list" | "save" | null>(null);
+  const automationReconcileQueuedRef = useRef(false);
   const loadedAutomationProjectIdsRef = useRef(new Set<string>());
   const queuedAutomationSavesRef = useRef(new Map<string, QueuedProjectAutomationSave>());
   const projectAutomationsRef = useRef(projectAutomations);
@@ -993,6 +995,12 @@ export function App() {
     return response;
   }, []);
 
+  const retryQueuedAutomationReconcile = useCallback(() => {
+    if (!automationReconcileQueuedRef.current) return;
+    automationReconcileQueuedRef.current = false;
+    setAutomationReconcileRevision((revision) => revision + 1);
+  }, []);
+
   const drainQueuedAutomationSaves = useCallback(async (preferredProjectId?: string) => {
     if (automationRequestInFlightRef.current) return;
     let nextProjectId = preferredProjectId;
@@ -1001,7 +1009,7 @@ export function App() {
         nextProjectId ? queuedAutomationSavesRef.current.get(nextProjectId) : undefined
       ) ?? queuedAutomationSavesRef.current.values().next().value;
       nextProjectId = undefined;
-      if (!queuedSave) return;
+      if (!queuedSave) break;
       queuedAutomationSavesRef.current.delete(queuedSave.projectId);
       const previousRecord = projectAutomationsRef.current[queuedSave.projectId];
       automationRequestInFlightRef.current = "save";
@@ -1036,14 +1044,18 @@ export function App() {
         setAutomationPending(false);
       }
     }
-  }, [sendAutomationRequest, writeProjectAutomation]);
+    retryQueuedAutomationReconcile();
+  }, [retryQueuedAutomationReconcile, sendAutomationRequest, writeProjectAutomation]);
 
   const reconcileProjectAutomation = useCallback(async () => {
     if (!automationRequestContext) {
       setAutomationError(null);
       return;
     }
-    if (automationRequestInFlightRef.current) return;
+    if (automationRequestInFlightRef.current) {
+      automationReconcileQueuedRef.current = true;
+      return;
+    }
     const projectId = automationRequestContext.taskboardProjectId;
     const stored = projectAutomationsRef.current[projectId];
     const initialLoad = !loadedAutomationProjectIdsRef.current.has(projectId);
@@ -1317,7 +1329,7 @@ export function App() {
   useEffect(() => {
     setAutomationError(null);
     void reconcileProjectAutomation();
-  }, [selectedProjectId, reconcileProjectAutomation]);
+  }, [automationReconcileRevision, selectedProjectId, reconcileProjectAutomation]);
 
   useEffect(() => {
     if (

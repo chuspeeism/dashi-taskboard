@@ -159,7 +159,7 @@ test("unchanged host heartbeats do not repeat automation status requests", () =>
   );
   assert.match(
     appSource,
-    /void reconcileProjectAutomation\(\);\s*\}, \[selectedProjectId, reconcileProjectAutomation\]\);/,
+    /void reconcileProjectAutomation\(\);\s*\}, \[automationReconcileRevision, selectedProjectId, reconcileProjectAutomation\]\);/,
   );
 });
 
@@ -179,6 +179,31 @@ test("quota-aware host policy status uses a throttled refresh", () => {
   );
   assert.match(effectsSource, /return \(\) => window\.clearInterval\(timer\)/);
   assert.doesNotMatch(effectsSource, /setInterval\([^)]*1_000/);
+});
+
+test("context changes blocked by an in-flight automation request are retried", () => {
+  const drainSource = appSource.slice(
+    appSource.indexOf("const drainQueuedAutomationSaves"),
+    appSource.indexOf("const reconcileProjectAutomation"),
+  );
+  const reconcileSource = appSource.slice(
+    appSource.indexOf("const reconcileProjectAutomation"),
+    appSource.indexOf("const saveProjectAutomation"),
+  );
+  assert.match(appSource, /const automationReconcileQueuedRef = useRef\(false\)/);
+  assert.match(
+    reconcileSource,
+    /if \(automationRequestInFlightRef\.current\) \{\s*automationReconcileQueuedRef\.current = true;\s*return;/,
+  );
+  assert.match(drainSource, /retryQueuedAutomationReconcile\(\)/);
+  assert.match(
+    appSource,
+    /setAutomationReconcileRevision\(\(revision\) => revision \+ 1\)/,
+  );
+  assert.match(
+    appSource,
+    /\}, \[automationReconcileRevision, selectedProjectId, reconcileProjectAutomation\]\);/,
+  );
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {
