@@ -16,7 +16,14 @@ import {
 export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
 
+const sourceRuntimeFile = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  ".data",
+  "launcher-runtime.json",
+);
 const BOOLEAN_OPTIONS = new Set(["json"]);
+const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
@@ -188,7 +195,10 @@ async function execute(parsed, overrides) {
   }
   validateOptions(parsed.options, allowedOptions);
 
-  const env = overrides.env ?? process.env;
+  const processEnv = overrides.env ?? process.env;
+  const env = parsed.options["runtime-file"] === undefined
+    ? processEnv
+    : { ...processEnv, CODEX_TASKBOARD_RUNTIME_FILE: parsed.options["runtime-file"] };
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
   const api = createApiClient(overrides, {
     baseUrl: usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
@@ -838,7 +848,7 @@ function optionalField(name, value) {
 
 function validateOptions(options, allowedOptions) {
   for (const name of Object.keys(options)) {
-    if (!allowedOptions.has(name)) {
+    if (!allowedOptions.has(name) && !GLOBAL_OPTIONS.has(name)) {
       throw usageError(`Unknown option --${name}`);
     }
   }
@@ -914,13 +924,18 @@ function resolveApiUrl(baseUrl, pathname) {
 
 async function resolveTaskboardBaseUrl(env, overrides) {
   if (env.CODEX_TASKBOARD_URL !== undefined) return env.CODEX_TASKBOARD_URL;
-  const descriptorPath = env.CODEX_TASKBOARD_RUNTIME_FILE;
-  if (!descriptorPath) return DEFAULT_API_URL;
+  const configuredDescriptorPath = env.CODEX_TASKBOARD_RUNTIME_FILE;
+  const descriptorPath = configuredDescriptorPath ?? sourceRuntimeFile;
   let descriptor;
   try {
-    const read = overrides.readFile ?? readFile;
+    const read = configuredDescriptorPath === undefined
+      ? readFile
+      : (overrides.readFile ?? readFile);
     descriptor = JSON.parse(await read(descriptorPath, "utf8"));
   } catch (error) {
+    if (configuredDescriptorPath === undefined && error?.code === "ENOENT") {
+      return DEFAULT_API_URL;
+    }
     throw new TaskctlError("Cannot read the active Taskboard launcher endpoint", {
       code: "SERVICE_UNAVAILABLE",
       exitCode: 3,

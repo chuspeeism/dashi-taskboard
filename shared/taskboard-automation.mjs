@@ -80,7 +80,7 @@ function buildTaskctlCommand(request) {
   const command = `${shellQuote(process.execPath)} ${shellQuote(cliPath)}`;
   const runtimeFilePath = process.env.CODEX_TASKBOARD_RUNTIME_FILE;
   return runtimeFilePath
-    ? `CODEX_TASKBOARD_RUNTIME_FILE=${shellQuote(runtimeFilePath)} ${command}`
+    ? `${command} --runtime-file ${shellQuote(runtimeFilePath)}`
     : command;
 }
 
