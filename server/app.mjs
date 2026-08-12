@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, open, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import os from "node:os";
@@ -16,6 +16,7 @@ import {
   isTaskStatus,
 } from "../shared/domain.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
+import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
@@ -155,7 +156,7 @@ function isTrustedNetworkHost(hostname) {
   return false;
 }
 
-function assertTrustedNetworkRequest(request) {
+function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false) {
   let host;
   try {
     host = new URL(`http://${request.headers.host ?? ""}`).hostname;
@@ -169,6 +170,7 @@ function assertTrustedNetworkRequest(request) {
   const origin = request.headers.origin;
   if (!origin) return;
   if (TRUSTED_EMBED_ORIGINS.has(origin)) return;
+  if (allowOpaqueOrigin && origin === "null") return;
   let originHost;
   try {
     originHost = new URL(origin).hostname;
@@ -487,6 +489,12 @@ function parseProjectCreate(body) {
     throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
   }
   return { id, name, workspacePath };
+}
+
+function parseProjectLabel(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["label"]));
+  return stringField(body.label, "label", { required: true, maxLength: 64 });
 }
 
 function parseThreadId(value) {
@@ -1098,20 +1106,24 @@ function parseWorktrees(output) {
   return contexts;
 }
 
-async function scanDevelopmentContexts(workspacePath) {
+async function scanDevelopmentContexts(workspacePath, processEnv = process.env) {
   if (!workspacePath) return { workspacePath: null, contexts: [] };
+  const environment = withoutTaskboardLauncherEnvironment(processEnv);
   try {
     const rootResult = await execFileAsync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
+      env: environment,
       timeout: 4_000,
       maxBuffer: 1024 * 1024,
     });
     const root = rootResult.stdout.trim();
     const [branchesResult, worktreesResult] = await Promise.all([
       execFileAsync("git", ["-C", root, "for-each-ref", "--format=%(refname:short)", "refs/heads"], {
+        env: environment,
         timeout: 4_000,
         maxBuffer: 1024 * 1024,
       }),
       execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain"], {
+        env: environment,
         timeout: 4_000,
         maxBuffer: 1024 * 1024,
       }),
@@ -1129,10 +1141,11 @@ async function scanDevelopmentContexts(workspacePath) {
   }
 }
 
-async function discoverSkills(codexExecutable, workspacePath) {
+async function discoverSkills(codexExecutable, workspacePath, processEnv) {
   const entries = await new Promise((resolve, reject) => {
     const child = spawn(codexExecutable, ["app-server", "--stdio"], {
       cwd: workspacePath,
+      env: processEnv,
       stdio: ["pipe", "pipe", "ignore"],
     });
     let settled = false;
@@ -1243,8 +1256,9 @@ async function discoverSkills(codexExecutable, workspacePath) {
   return [...unique.values()].sort((left, right) => left.label.localeCompare(right.label));
 }
 
-async function discoverMcpServers(codexExecutable) {
+async function discoverMcpServers(codexExecutable, processEnv) {
   const result = await execFileAsync(codexExecutable, ["mcp", "list", "--json"], {
+    env: processEnv,
     timeout: 8_000,
     maxBuffer: 2 * 1024 * 1024,
   });
@@ -1268,10 +1282,10 @@ async function discoverMcpServers(codexExecutable) {
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
-async function discoverWorkflowCapabilities(resolved, workspacePath) {
+async function discoverWorkflowCapabilities(resolved, workspacePath, processEnv) {
   const [skills, mcpServers] = await Promise.all([
-    discoverSkills(resolved.codexExecutable, workspacePath),
-    discoverMcpServers(resolved.codexExecutable),
+    discoverSkills(resolved.codexExecutable, workspacePath, processEnv),
+    discoverMcpServers(resolved.codexExecutable, processEnv),
   ]);
   return { skills, mcpServers };
 }
@@ -1282,11 +1296,24 @@ export function resolveServerOptions(options = {}) {
     ? path.resolve(configuredDataDirectory)
     : path.join(PROJECT_ROOT, ".data");
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const instanceToken = String(
+    options.instanceToken ?? process.env.CODEX_TASKBOARD_INSTANCE_TOKEN ?? "",
+  ).trim();
+  if (instanceToken && !/^[a-z0-9-]{16,128}$/i.test(instanceToken)) {
+    throw new Error("CODEX_TASKBOARD_INSTANCE_TOKEN must be an identifier");
+  }
+  const instanceSecret = String(
+    options.instanceSecret ?? process.env.CODEX_TASKBOARD_INSTANCE_SECRET ?? "",
+  ).trim();
+  if (instanceToken && !/^[a-f0-9-]{32,128}$/i.test(instanceSecret)) {
+    throw new Error("CODEX_TASKBOARD_INSTANCE_SECRET must be set in launcher mode");
+  }
   return {
     dataDirectory,
     databasePath: options.databasePath ?? path.join(dataDirectory, "taskboard.sqlite"),
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
+    clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
     skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-taskboard", "SKILL.md"),
     codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
@@ -1294,6 +1321,11 @@ export function resolveServerOptions(options = {}) {
       ?? path.join(codexHome, ".codex-global-state.json"),
     codexProcessesPath: options.codexProcessesPath
       ?? path.join(codexHome, "process_manager", "chat_processes.json"),
+    instanceToken,
+    instanceSecret,
+    version: String(
+      options.version ?? process.env.CODEX_TASKBOARD_VERSION ?? "development",
+    ).trim(),
   };
 }
 
@@ -1315,8 +1347,42 @@ export function resolveHost(value = process.env.CODEX_TASKBOARD_HOST ?? "0.0.0.0
 
 export function createTaskboardServer(options = {}) {
   const resolved = resolveServerOptions(options);
+  const codexProcessEnvironment = withoutTaskboardLauncherEnvironment(
+    options.processEnv ?? process.env,
+  );
+  const routePrefix = resolved.instanceToken ? `/${resolved.instanceToken}` : "";
   const database = new TaskboardDatabase(resolved.databasePath);
   const events = new EventHub();
+  let clientStorageWrite = Promise.resolve();
+
+  async function readClientStorage() {
+    try {
+      const value = JSON.parse(await readFile(resolved.clientStoragePath, "utf8"));
+      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    } catch (error) {
+      if (error.code === "ENOENT") return {};
+      throw error;
+    }
+  }
+
+  async function updateClientStorage(body) {
+    assertPlainObject(body);
+    assertAllowedKeys(body, new Set(["key", "value"]));
+    const key = stringField(body.key, "key", { required: true, maxLength: 512 });
+    const value = stringField(body.value, "value", { nullable: true, maxLength: 100_000 });
+    clientStorageWrite = clientStorageWrite.catch(() => {}).then(async () => {
+      const entries = await readClientStorage();
+      if (value === null) delete entries[key];
+      else entries[key] = value;
+      await mkdir(path.dirname(resolved.clientStoragePath), { recursive: true });
+      const temporaryPath = `${resolved.clientStoragePath}.${process.pid}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(entries)}\n`, { mode: 0o600 });
+      await chmod(temporaryPath, 0o600);
+      await rename(temporaryPath, resolved.clientStoragePath);
+      await chmod(resolved.clientStoragePath, 0o600);
+    });
+    await clientStorageWrite;
+  }
   const cloudConfig = options.cloudConfigStore ?? createCloudConfigStore({
     configPath: resolved.cloudConfigPath,
   });
@@ -1328,10 +1394,18 @@ export function createTaskboardServer(options = {}) {
       const config = await cloudConfig.read();
       const workspacePath = config.projectMappings[projectId];
       if (!workspacePath) return null;
-      const result = await scanDevelopmentContexts(workspacePath);
+      const result = await scanDevelopmentContexts(workspacePath, codexProcessEnvironment);
       return result.contexts.find((candidate) => (
         candidate.type === "worktree" && candidate.branch === context.branch
       )) ?? null;
+    },
+    assertTaskProjectMoveAllowed: (taskId, targetProjectId) => {
+      if (!database.hasAiChatThreadProjectConflict(taskId, targetProjectId)) return;
+      throw new CloudProxyError(
+        409,
+        "AI_CHAT_PROJECT_MOVE_BLOCKED",
+        "Delete issue-linked AI conversations before moving the issue to another project",
+      );
     },
   });
   async function readCloudJson(pathname) {
@@ -1370,7 +1444,11 @@ export function createTaskboardServer(options = {}) {
           database,
         );
       } catch (error) {
-        if (!(error instanceof ApiError) || error.code !== "PROJECT_WORKSPACE_UNAVAILABLE") {
+        if (
+          !(error instanceof ApiError)
+          || error.code !== "PROJECT_WORKSPACE_UNAVAILABLE"
+          || projectId !== DEFAULT_PROJECT_ID
+        ) {
           throw error;
         }
         resolvedWorkspace = {
@@ -1427,11 +1505,13 @@ export function createTaskboardServer(options = {}) {
     codexExecutable: resolved.codexExecutable,
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
+    processEnv: codexProcessEnvironment,
     resolveContext: resolveAiChatContext,
   });
   const projectSummary = new ProjectSummaryService({
     database,
     codexExecutable: resolved.codexExecutable,
+    processEnv: codexProcessEnvironment,
     workspacePath: PROJECT_ROOT,
   });
   const aiEventResponses = new Set();
@@ -1498,13 +1578,16 @@ export function createTaskboardServer(options = {}) {
       } catch {}
     }
 
-    const turnStates = new Map();
+    let runningTurnId = null;
     for (const record of records) {
       const payload = record?.payload;
       if (record?.type !== "event_msg" || typeof payload?.turn_id !== "string") continue;
-      if (payload.type === "task_started") turnStates.set(payload.turn_id, true);
-      if (payload.type === "task_complete" || payload.type === "turn_aborted") {
-        turnStates.set(payload.turn_id, false);
+      if (payload.type === "task_started") runningTurnId = payload.turn_id;
+      if (
+        (payload.type === "task_complete" || payload.type === "turn_aborted")
+        && payload.turn_id === runningTurnId
+      ) {
+        runningTurnId = null;
       }
     }
 
@@ -1542,7 +1625,7 @@ export function createTaskboardServer(options = {}) {
     const state = {
       completed: progress?.completed ?? null,
       total: progress?.total ?? null,
-      running: [...turnStates.values()].some(Boolean),
+      running: runningTurnId !== null,
     };
     codexSessionStateCache.set(sessionPath, {
       size: sessionStat.size,
@@ -1556,7 +1639,52 @@ export function createTaskboardServer(options = {}) {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     try {
-      assertTrustedNetworkRequest(request);
+      const incomingUrl = new URL(request.url, "http://127.0.0.1");
+      if (resolved.instanceToken && incomingUrl.pathname !== "/health") {
+        if (incomingUrl.pathname === routePrefix) {
+          response.writeHead(301, { location: `${incomingUrl.pathname}/${incomingUrl.search}` });
+          response.end();
+          return;
+        }
+        if (
+          incomingUrl.pathname !== routePrefix
+          && !incomingUrl.pathname.startsWith(`${routePrefix}/`)
+        ) {
+          throw new ApiError(404, "NOT_FOUND", "Route not found");
+        }
+        request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
+      }
+
+      assertTrustedNetworkRequest(request, Boolean(resolved.instanceToken));
+      const origin = request.headers.origin;
+      const trustedEmbedOrigin = TRUSTED_EMBED_ORIGINS.has(origin)
+        || (Boolean(resolved.instanceToken) && origin === "null");
+      if (trustedEmbedOrigin) {
+        response.setHeader("access-control-allow-origin", origin);
+        response.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
+        response.setHeader(
+          "access-control-allow-headers",
+          request.headers["access-control-request-headers"] ?? "content-type",
+        );
+        response.setHeader("access-control-expose-headers", "x-codex-taskboard-proof");
+        response.setHeader("access-control-allow-private-network", "true");
+        response.setHeader("vary", "origin");
+        if (request.method === "OPTIONS") {
+          response.writeHead(204);
+          response.end();
+          return;
+        }
+      }
+      if (resolved.instanceToken && origin === "app://-") {
+        const challenge = request.headers["x-codex-taskboard-challenge"];
+        if (typeof challenge !== "string" || !/^[a-f0-9]{32,128}$/i.test(challenge)) {
+          throw new ApiError(401, "INVALID_INSTANCE_CHALLENGE", "Launcher challenge is required");
+        }
+        response.setHeader(
+          "x-codex-taskboard-proof",
+          createHmac("sha256", resolved.instanceSecret).update(challenge).digest("hex"),
+        );
+      }
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
@@ -1576,7 +1704,33 @@ export function createTaskboardServer(options = {}) {
 
       if (pathname === "/health") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if (resolved.instanceToken) {
+          const challenge = request.headers["x-codex-taskboard-challenge"];
+          if (typeof challenge !== "string" || !/^[a-f0-9]{32,128}$/i.test(challenge)) {
+            throw new ApiError(401, "INVALID_INSTANCE_CHALLENGE", "Launcher challenge is required");
+          }
+          return sendJson(response, 200, {
+            status: "ok",
+            product: "codex-taskboard",
+            version: resolved.version,
+            proof: createHmac("sha256", resolved.instanceSecret)
+              .update(challenge)
+              .digest("hex"),
+          });
+        }
         return sendJson(response, 200, { status: "ok" });
+      }
+
+      if (pathname === "/api/client-storage") {
+        if (request.method === "GET") {
+          await clientStorageWrite;
+          return sendJson(response, 200, { entries: await readClientStorage() });
+        }
+        if (request.method === "PATCH") {
+          await updateClientStorage(await readJson(request));
+          return sendEmpty(response, 204);
+        }
+        return methodNotAllowed(response, ["GET", "PATCH"]);
       }
 
       if (pathname === "/api/local/codex-thread-progress") {
@@ -1851,7 +2005,11 @@ export function createTaskboardServer(options = {}) {
         return sendJson(
           response,
           200,
-          await discoverWorkflowCapabilities(resolved, workspacePath ?? PROJECT_ROOT),
+          await discoverWorkflowCapabilities(
+            resolved,
+            workspacePath ?? PROJECT_ROOT,
+            codexProcessEnvironment,
+          ),
         );
       }
 
@@ -1888,6 +2046,48 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 201, { project });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const projectRoute = pathname.match(/^\/api\/projects\/([^/]+)$/);
+      if (projectRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method === "DELETE") {
+          database.deleteProject(projectId);
+          return sendEmpty(response, 204);
+        }
+        return methodNotAllowed(response, ["DELETE"]);
+      }
+
+      const projectLabelsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/labels$/);
+      if (projectLabelsRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project label routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectLabelsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method !== "POST" && request.method !== "DELETE") {
+          return methodNotAllowed(response, ["POST", "DELETE"]);
+        }
+        const label = parseProjectLabel(await readJson(request));
+        const project = request.method === "POST"
+          ? database.addProjectLabel(projectId, label)
+          : database.deleteProjectLabel(projectId, label);
+        events.emit("project.labels.updated", { project });
+        return sendJson(response, 200, { project });
       }
 
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);
@@ -1965,7 +2165,11 @@ export function createTaskboardServer(options = {}) {
           resolved.codexStatePath,
           resolved.codexProcessesPath,
         );
-        return sendJson(response, 200, await scanDevelopmentContexts(workspacePath));
+        return sendJson(
+          response,
+          200,
+          await scanDevelopmentContexts(workspacePath, codexProcessEnvironment),
+        );
       }
 
       if (pathname === "/api/tasks") {
@@ -2029,6 +2233,7 @@ export function createTaskboardServer(options = {}) {
             relationType,
             relatedTaskId,
             threadId,
+            actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
@@ -2041,11 +2246,32 @@ export function createTaskboardServer(options = {}) {
             relationType,
             relatedTaskId,
             threadId,
+            actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
         return methodNotAllowed(response, ["POST", "DELETE"]);
+      }
+
+      const taskActivitiesRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/activities$/);
+      if (taskActivitiesRoute) {
+        let taskId;
+        try {
+          taskId = decodeURIComponent(taskActivitiesRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if (taskId.length === 0 || taskId.length > 128) {
+          throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Activity routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { activities: database.listTaskActivities(taskId) });
+        }
+        return methodNotAllowed(response, ["GET"]);
       }
 
       const taskCommentsRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/);
@@ -2194,7 +2420,7 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "POST"]);
       }
 
-      const attachmentContentRoute = pathname.match(/^\/api\/attachments\/([^/]+)\/content$/);
+      const attachmentContentRoute = pathname.match(/^\/api\/attachments\/([^/]+)\/(content|download)$/);
       if (attachmentContentRoute) {
         let id;
         try {
@@ -2217,7 +2443,8 @@ export function createTaskboardServer(options = {}) {
         const encodedFilename = encodeURIComponent(attachment.filename).replace(/['()*]/g, (character) => (
           `%${character.charCodeAt(0).toString(16).toUpperCase()}`
         ));
-        const canOpenInline = INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+        const canOpenInline = attachmentContentRoute[2] === "content"
+          && INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
         response.writeHead(200, {
           "cache-control": "private, no-store",
           "content-disposition": `${canOpenInline ? "inline" : "attachment"}; filename*=UTF-8''${encodedFilename}`,
@@ -2278,33 +2505,54 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "PATCH") {
+          const actor = actorFromRequest(request);
           const { version, changes, threadId, assigneeTarget } = parseTaskPatch(await readJson(request));
           if (assigneeTarget !== undefined) {
-            changes.assignee = resolveAssignee(assigneeTarget, actorFromRequest(request));
+            changes.assignee = resolveAssignee(assigneeTarget, actor);
           }
-          const task = database.updateTask(id, version, changes, threadId);
+          const task = database.updateTask(id, version, changes, threadId, actor);
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }
+        if (!action && request.method === "DELETE") {
+          const { version } = parseArchive(await readJson(request));
+          const deleted = database.deleteArchivedTask(id, version);
+          for (const attachmentId of deleted.attachmentIds) {
+            try {
+              await unlink(path.join(resolved.attachmentsDirectory, attachmentId));
+            } catch (error) {
+              if (error.code !== "ENOENT") throw error;
+            }
+          }
+          events.emit("task.deleted", { task: deleted.task });
+          return sendEmpty(response, 204);
+        }
         if (action === "move" && request.method === "POST") {
           const move = parseMove(await readJson(request));
-          const task = database.moveTask(id, move.version, move.status, move.sortOrder, move.threadId);
+          const task = database.moveTask(
+            id,
+            move.version,
+            move.status,
+            move.sortOrder,
+            move.threadId,
+            actorFromRequest(request),
+          );
           events.emit("task.moved", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "archive" && request.method === "POST") {
           const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.archiveTask(id, version, threadId);
+          const task = database.archiveTask(id, version, threadId, actorFromRequest(request));
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "restore" && request.method === "POST") {
           const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.restoreTask(id, version, threadId);
+          const task = database.restoreTask(id, version, threadId, actorFromRequest(request));
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }
-        return methodNotAllowed(response, action ? ["POST"] : ["GET", "PATCH"]);
+        return methodNotAllowed(response, action ? ["POST"] : ["GET", "PATCH", "DELETE"]);
       }
 
       if (pathname.startsWith("/api/")) {
@@ -2340,9 +2588,12 @@ export function createTaskboardServer(options = {}) {
     aiChat,
     server,
     options: resolved,
-    async listen({ host = "127.0.0.1", port = resolvePort() } = {}) {
+    async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
       if (host !== "127.0.0.1" && host !== "0.0.0.0") {
         throw new Error("Taskboard server must bind to 127.0.0.1 or 0.0.0.0");
+      }
+      if (fd !== null && (!Number.isInteger(fd) || fd < 3 || fd > 255)) {
+        throw new Error("Taskboard server listen fd must be an inherited file descriptor");
       }
       await new Promise((resolve, reject) => {
         const onError = (error) => {
@@ -2355,7 +2606,8 @@ export function createTaskboardServer(options = {}) {
         };
         server.once("error", onError);
         server.once("listening", onListening);
-        server.listen(port, host);
+        if (fd === null) server.listen(port, host);
+        else server.listen({ fd });
       });
       listening = true;
       return server.address();

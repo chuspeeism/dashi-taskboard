@@ -15,6 +15,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
+import { DEFAULT_LABEL_NAMES } from "../shared/domain.mjs";
+
 const SCHEMA_VERSION = 1;
 const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
 const TABLE_ORDER = [
@@ -79,6 +81,23 @@ function sanitizeWorkflowRow(row) {
     ...row,
     workspace: JSON.stringify(sanitizeWorkflowValue(workspace)),
   };
+}
+
+function projectRowsWithLabels(tables) {
+  const labelsByProject = new Map(tables.projects.map((project) => [
+    project.id,
+    project.labels == null ? [...DEFAULT_LABEL_NAMES] : JSON.parse(project.labels),
+  ]));
+  for (const task of tables.tasks) {
+    const labels = labelsByProject.get(task.project_id);
+    for (const label of JSON.parse(task.labels)) {
+      if (!labels.includes(label)) labels.push(label);
+    }
+  }
+  return tables.projects.map((project) => ({
+    ...project,
+    labels: JSON.stringify(labelsByProject.get(project.id)),
+  }));
 }
 
 function buildProjectCounts(tables) {
@@ -324,7 +343,7 @@ export async function createCloudMigrationBundle({
   attachmentsDirectory,
 }) {
   const tables = await readSnapshot(databasePath);
-  tables.projects = tables.projects.map((project) => ({
+  tables.projects = projectRowsWithLabels(tables).map((project) => ({
     ...project,
     workspace_path: null,
   }));
@@ -346,7 +365,9 @@ export async function createCloudMigrationBundle({
 }
 
 const CLOUD_COLUMNS = {
-  projects: ["id", "name", "workspace_path", "next_task_number", "created_at", "updated_at"],
+  projects: [
+    "id", "name", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
+  ],
   tasks: [
     "id", "identifier", "project_id", "title", "description", "status", "priority", "labels",
     "sort_order", "thread_id", "creator_type", "creator_id", "creator_name",
@@ -377,13 +398,15 @@ function cloudTaskRow(task) {
   };
 }
 
-function cloudRows(table, rows) {
-  return table === "tasks" ? rows.map(cloudTaskRow) : rows;
+function cloudRows(table, tables) {
+  if (table === "projects") return projectRowsWithLabels(tables);
+  return table === "tasks" ? tables.tasks.map(cloudTaskRow) : tables[table];
 }
 
 function insertTableSql(table) {
   const columns = CLOUD_COLUMNS[table];
-  return `INSERT INTO "${table}" (${columns.map((column) => `"${column}"`).join(", ")})
+  const operation = table === "projects" ? "INSERT OR REPLACE" : "INSERT";
+  return `${operation} INTO "${table}" (${columns.map((column) => `"${column}"`).join(", ")})
        SELECT ${columns.map((column) => `json_extract(value, '$.${column}')`).join(", ")}
        FROM json_each(?)`;
 }
@@ -391,7 +414,7 @@ function insertTableSql(table) {
 export function createCloudD1ImportPlan(tables) {
   return TABLE_ORDER.map((table) => {
     const columns = CLOUD_COLUMNS[table];
-    const values = cloudRows(table, tables[table]).map((row) => (
+    const values = cloudRows(table, tables).map((row) => (
       Object.fromEntries(columns.map((column) => [column, row[column] ?? null]))
     ));
     return { table, sql: insertTableSql(table), json: JSON.stringify(values) };
@@ -517,7 +540,14 @@ export async function importCloudMigrationBundle(bundle, { d1, r2 }) {
   validateBundle(bundle);
 
   const existingCounts = await d1.countByProject();
-  if (Object.keys(existingCounts).length > 0) {
+  const existingProjects = Object.keys(existingCounts);
+  const localCounts = existingCounts.local;
+  const hasOnlyGlobalBaseline = existingProjects.length === 1
+    && existingProjects[0] === "local"
+    && TABLE_ORDER.every((table) => (
+      Number(localCounts?.[table]) === (table === "projects" ? 1 : 0)
+    ));
+  if (existingProjects.length > 0 && !hasOnlyGlobalBaseline) {
     throw new Error("Cloud migration target D1 is not empty");
   }
   for (const attachment of bundle.attachments) {

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Codex Taskboard 启动状态窗口",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

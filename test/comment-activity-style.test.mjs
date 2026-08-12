@@ -14,7 +14,7 @@ test("comment floors use Linear-style cards with the author inside the card", ()
   assert.doesNotMatch(styles, /\.activity-stream::before/);
   assert.match(
     styles,
-    /\.comment-card\s*\{[^}]*border-radius:\s*8px;[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--card-shadow\);/s,
+    /\.comment-card\s*\{[^}]*border-radius:\s*12px;[^}]*background:\s*var\(--surface-muted\);[^}]*box-shadow:\s*none;/s,
   );
   assert.match(styles, /\.comment-header \.comment-avatar\s*\{[^}]*width:\s*20px;[^}]*height:\s*20px;/s);
 });
@@ -29,10 +29,10 @@ test("comment body renders document formatting at Linear typography", () => {
 });
 
 test("comment composer aligns with the full comment floor width", () => {
-  assert.match(styles, /\.comment-composer\s*\{[^}]*margin:\s*18px 8px 0;/s);
+  assert.match(styles, /\.comment-composer\s*\{[^}]*margin:\s*18px 0 0;/s);
   assert.match(
     styles,
-    /\.comment-composer\s*\{[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*var\(--card-shadow\);/s,
+    /\.comment-composer\s*\{[^}]*background:\s*var\(--surface\);[^}]*box-shadow:\s*0 1px 2px rgba\(0, 0, 0, 0\.035\);/s,
   );
   assert.match(styles, /\.composer-footer\s*\{[^}]*border-top:\s*var\(--border-hairline\) solid var\(--border\);/s);
 });

@@ -3,13 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import "./DashboardView.css";
 import dueDoneIcon from "../assets/figma-taskboard/dashboard-due-done.svg";
 import dueEditIcon from "../assets/figma-taskboard/dashboard-due-edit.svg";
-import priorityHighIcon from "../assets/figma-taskboard/dashboard-priority-high.svg";
-import priorityLowIcon from "../assets/figma-taskboard/dashboard-priority-low.svg";
-import priorityMediumIcon from "../assets/figma-taskboard/dashboard-priority-medium.svg";
-import priorityNoneIcon from "../assets/figma-taskboard/dashboard-priority-none.svg";
-import priorityUrgentIcon from "../assets/figma-taskboard/dashboard-priority-urgent.svg";
 import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
 import { getProjectSummary } from "../api";
+import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
 import type {
   TaskCardPresentation,
@@ -17,6 +13,7 @@ import type {
 } from "../taskConversations";
 import type { ActorIdentity, ProjectSummary, Task } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
+import { LinearPriorityIcon } from "./LinearIcon";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 
 interface DashboardViewProps {
@@ -31,17 +28,7 @@ interface DashboardViewProps {
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
-const PRIORITY_DETAILS = [
-  { priority: "urgent", label: "紧急", icon: priorityUrgentIcon },
-  { priority: "high", label: "高", icon: priorityHighIcon },
-  { priority: "medium", label: "中", icon: priorityMediumIcon },
-  { priority: "low", label: "低", icon: priorityLowIcon },
-  { priority: "none", label: "无优先级", icon: priorityNoneIcon },
-] satisfies Array<{
-  priority: Task["priority"];
-  label: string;
-  icon: string;
-}>;
+const PRIORITIES = ["urgent", "high", "medium", "low", "none"] satisfies Task["priority"][];
 
 const LABEL_COLORS = [
   "#5e6ad2",
@@ -74,10 +61,10 @@ interface ProgressForecast {
   conservativeAt: number;
 }
 
-function chartDate(value: number, referenceValue?: number) {
+function chartDate(value: number, locale: string, referenceValue?: number) {
   const includeYear = referenceValue !== undefined
     && new Date(value).getFullYear() !== new Date(referenceValue).getFullYear();
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     year: includeYear ? "numeric" : undefined,
     month: "short",
     day: "numeric",
@@ -170,9 +157,9 @@ function dayValue(value: string) {
   return new Date(`${value}T00:00:00`).getTime();
 }
 
-function shortDate(value: string) {
-  const [, month, day] = value.split("-").map(Number);
-  return `${month}月${day}日`;
+function shortDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" })
+    .format(new Date(`${value}T12:00:00`));
 }
 
 export function DashboardView({
@@ -186,6 +173,7 @@ export function DashboardView({
   onOpenTask,
   onOpenConversation,
 }: DashboardViewProps) {
+  const { language, locale, text } = useTaskboardI18n();
   const [projectSummary, setProjectSummary] = useState<ProjectSummary | null>(null);
   const [summaryLoadFailed, setSummaryLoadFailed] = useState(false);
   const [displayedSummary, setDisplayedSummary] = useState("");
@@ -309,9 +297,10 @@ export function DashboardView({
     .sort((left, right) => right.count - left.count);
   const completedTotal = Math.max(1, completedTasks.length);
 
-  const priorityCounts = PRIORITY_DETAILS.map((detail) => ({
-    ...detail,
-    count: tasks.filter((task) => task.priority === detail.priority).length,
+  const priorityCounts = PRIORITIES.map((priority) => ({
+    priority,
+    label: taskPriorityLabel(language, priority),
+    count: tasks.filter((task) => task.priority === priority).length,
   }));
 
   const labelCountMap = new Map<string, number>();
@@ -321,10 +310,15 @@ export function DashboardView({
     }
   }
   const labelCounts = [...labelCountMap.entries()]
-    .map(([label, count]) => ({ label, count, presentation: labelPresentation(label) }))
+    .map(([label, count]) => ({
+      label,
+      count,
+      sortName: labelPresentation(label).name,
+      presentation: labelPresentation(label, language),
+    }))
     .sort((left, right) => (
       right.count - left.count
-      || left.presentation.name.localeCompare(right.presentation.name)
+      || left.sortName.localeCompare(right.sortName)
     ));
   const totalLabelAssignments = Math.max(
     1,
@@ -338,14 +332,14 @@ export function DashboardView({
           count: labelCounts.slice(11).reduce((total, item) => total + item.count, 0),
           presentation: {
             ...labelPresentation("其他"),
-            name: `其他（${labelCounts.length - 11}个）`,
+            name: text(`其他（${labelCounts.length - 11}个）`, `Other (${labelCounts.length - 11})`),
           },
         },
       ]
     : labelCounts
   ).map((item, index) => ({
     ...item,
-    color: item.label === "__other__" ? "#e2e2e2" : LABEL_COLORS[index % LABEL_COLORS.length],
+    color: item.label === "__other__" ? "var(--dashboard-other-label-color)" : LABEL_COLORS[index % LABEL_COLORS.length],
   }));
   const maximumVisibleLabelCount = Math.max(1, ...visibleLabelCounts.map((item) => item.count));
 
@@ -370,12 +364,18 @@ export function DashboardView({
     })
   ));
   const contributionMaximum = Math.max(1, ...contributionWeeks.flat().map((day) => day.count));
+  const monthFormatter = new Intl.DateTimeFormat(locale, { month: "short" });
+  const contributionDateFormatter = new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
   const monthMarkers = contributionWeeks.flatMap((week, weekIndex) => {
     const firstDay = week.find((day) => day.date.getDate() === 1);
-    return firstDay ? [{ weekIndex, label: `${firstDay.date.getMonth() + 1}月` }] : [];
+    return firstDay ? [{ weekIndex, label: monthFormatter.format(firstDay.date) }] : [];
   });
   if (monthMarkers[0]?.weekIndex !== 0) {
-    monthMarkers.unshift({ weekIndex: 0, label: `${contributionStart.getMonth() + 1}月` });
+    monthMarkers.unshift({ weekIndex: 0, label: monthFormatter.format(contributionStart) });
   }
 
   const attentionItems = activeTasks
@@ -390,23 +390,23 @@ export function DashboardView({
 
   const metrics = [
     {
-      label: "处理中",
+      label: taskStatusLabel(language, "in_progress"),
       value: tasks.filter((task) => task.status === "in_progress").length,
       tone: "progress",
     },
     {
-      label: "等你确认",
+      label: taskStatusLabel(language, "in_review"),
       value: tasks.filter((task) => task.status === "in_review").length,
       tone: "review",
     },
     {
-      label: "遇到阻碍",
+      label: taskStatusLabel(language, "blocked"),
       value: tasks.filter((task) => task.status === "blocked").length,
       tone: "blocked",
     },
-    { label: "已逾期", value: overdueTasks.length, tone: "overdue" },
+    { label: text("已逾期", "Overdue"), value: overdueTasks.length, tone: "overdue" },
     {
-      label: "待立项",
+      label: taskStatusLabel(language, "backlog"),
       value: tasks.filter((task) => task.status === "backlog").length,
       tone: "backlog",
     },
@@ -414,11 +414,22 @@ export function DashboardView({
 
   const summaryBody = projectSummary?.summary
     ?? (summaryLoadFailed || projectSummary?.error
-      ? "Codex 暂时无法生成项目总结。"
-      : "Codex 正在整理当前项目的进展、风险和下一步重点…");
+      ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
+      : text(
+          "Codex 正在整理当前项目的进展、风险和下一步重点…",
+          "Codex is reviewing the project's progress, risks, and next steps…",
+        ));
   const hour = new Date().getHours();
-  const greeting = hour < 12 ? "上午好" : hour < 18 ? "下午好" : "晚上好";
-  const summary = `${greeting}，${currentUser.name}，今天是${today.getMonth() + 1}月${today.getDate()}日，${summaryBody}`;
+  const greeting = hour < 12
+    ? text("上午好", "Good morning")
+    : hour < 18
+      ? text("下午好", "Good afternoon")
+      : text("晚上好", "Good evening");
+  const summaryDate = new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" }).format(today);
+  const summary = text(
+    `${greeting}，${currentUser.name}，今天是${summaryDate}，${summaryBody}`,
+    `${greeting}, ${currentUser.name}. Today is ${summaryDate}. ${summaryBody}`,
+  );
   const summaryReady = projectSummary !== null || summaryLoadFailed;
 
   useEffect(() => {
@@ -469,21 +480,24 @@ export function DashboardView({
       <div className="dashboard-content">
         <div className="dashboard-overview">
           <header className="dashboard-heading">
-            <h1>项目完成度</h1>
+            <h1>{text("项目完成度", "Project completion")}</h1>
             <div className="dashboard-hero-value">
               <strong>{completionRate}%</strong>
-              <span>{completedTasks.length} 个已完成 · {activeTasks.length} 个尚未结束</span>
+              <span>{text(
+                `${completedTasks.length} 个已完成 · ${activeTasks.length} 个尚未结束`,
+                `${completedTasks.length} completed · ${activeTasks.length} remaining`,
+              )}</span>
             </div>
           </header>
 
-          <section className="dashboard-codex-summary" aria-label="Codex 项目总结">
+          <section className="dashboard-codex-summary" aria-label={text("Codex 项目总结", "Codex project summary")}>
             <div className="dashboard-summary-bubble">
               <p
                 className={summaryTyping ? "is-typing" : undefined}
-                aria-label={summaryReady ? summary : "Codex 正在整理项目总结"}
+                aria-label={summaryReady ? summary : text("Codex 正在整理项目总结", "Codex is preparing the project summary")}
               >{displayedSummary}</p>
             </div>
-            <img className="dashboard-codex-mark" src="/codex-agent-logo.png" alt="" aria-hidden="true" />
+            <img className="dashboard-codex-mark" src="codex-agent-logo.png" alt="" aria-hidden="true" />
           </section>
         </div>
 
@@ -506,17 +520,17 @@ export function DashboardView({
         </div>
 
         <div className="dashboard-analysis-heading">
-          <h2>项目分析</h2>
+          <h2>{text("项目分析", "Project analysis")}</h2>
         </div>
 
         <div className="dashboard-grid">
           <section className="dashboard-panel dashboard-primary-panel dashboard-priority-panel">
-            <header><span>优先级</span></header>
+            <header><span>{text("优先级", "Priority")}</span></header>
             <div className="dashboard-priority-list">
               {priorityCounts.map((item) => (
                 <div className={`dashboard-priority-row priority-${item.priority}`} key={item.priority}>
                   <span className="dashboard-priority-name">
-                    <img src={item.icon} alt="" aria-hidden="true" />
+                    <LinearPriorityIcon priority={item.priority} />
                     {item.label}
                   </span>
                   <span className="dashboard-priority-track">
@@ -529,7 +543,7 @@ export function DashboardView({
           </section>
 
           <section className="dashboard-panel dashboard-primary-panel dashboard-attention-panel">
-            <header><span>需要关注（未读、阻塞）</span></header>
+            <header><span>{text("需要关注（未读、阻塞）", "Needs attention (unread, blocked)")}</span></header>
             <div className="dashboard-task-list">
               {attentionItems.length ? attentionItems.map((task) => (
                 <button
@@ -543,13 +557,13 @@ export function DashboardView({
                   <small>ID: {task.identifier}</small>
                 </button>
               )) : (
-                <div className="dashboard-empty">当前没有需要关注的议题</div>
+                <div className="dashboard-empty">{text("当前没有需要关注的议题", "No issues need attention")}</div>
               )}
             </div>
           </section>
 
           <section className="dashboard-panel dashboard-primary-panel dashboard-running-panel">
-            <header><span>运行中对话</span></header>
+            <header><span>{text("运行中对话", "Active conversations")}</span></header>
             <div className="dashboard-task-list">
               {runningTasks.length ? runningTasks.map((task) => (
                 <article
@@ -571,7 +585,7 @@ export function DashboardView({
                   <div className="dashboard-running-footer">
                     <span className="task-processing is-running">
                       <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />
-                      <span className="task-processing-label">正在处理…</span>
+                      <span className="task-processing-label">{text("正在处理…", "Processing…")}</span>
                     </span>
                     <TaskConversationMenu
                       conversations={presentations[task.id].conversations}
@@ -580,13 +594,13 @@ export function DashboardView({
                   </div>
                 </article>
               )) : (
-                <div className="dashboard-empty">当前没有运行中的对话</div>
+                <div className="dashboard-empty">{text("当前没有运行中的对话", "No active conversations")}</div>
               )}
             </div>
           </section>
 
           <section className="dashboard-panel dashboard-secondary-panel dashboard-role-panel">
-            <header><span>角色贡献</span><b>{roleContributions.length}</b></header>
+            <header><span>{text("角色贡献", "Role contributions")}</span><b>{roleContributions.length}</b></header>
             {roleContributions.length ? (
               <div className="dashboard-role-body">
                 <div className="dashboard-role-stack" aria-hidden="true">
@@ -604,7 +618,10 @@ export function DashboardView({
                       <ActorAvatar actor={item.actor} />
                       <span className="dashboard-role-copy">
                         <strong>{item.actor.name}</strong>
-                        <small>{item.count} 个已完成议题</small>
+                        <small>{text(
+                          `${item.count} 个已完成议题`,
+                          `${item.count} completed ${item.count === 1 ? "issue" : "issues"}`,
+                        )}</small>
                       </span>
                       <span className={`dashboard-role-share tone-${index % 5}`}>
                         {Math.round((item.count / completedTotal) * 100)}%
@@ -614,12 +631,12 @@ export function DashboardView({
                 </div>
               </div>
             ) : (
-              <div className="dashboard-empty">当前没有角色数据</div>
+              <div className="dashboard-empty">{text("当前没有角色数据", "No role data")}</div>
             )}
           </section>
 
           <section className="dashboard-panel dashboard-secondary-panel dashboard-contribution-panel">
-            <header><span>贡献图</span></header>
+            <header><span>{text("贡献图", "Contribution chart")}</span></header>
             <div className="dashboard-contribution-body">
               <div className="dashboard-contribution-chart">
                 <div className="dashboard-contribution-months" aria-hidden="true">
@@ -634,11 +651,11 @@ export function DashboardView({
                 </div>
                 <div className="dashboard-contribution-main">
                   <div className="dashboard-contribution-weekdays" aria-hidden="true">
-                    <span style={{ gridRow: 2 }}>一</span>
-                    <span style={{ gridRow: 4 }}>三</span>
-                    <span style={{ gridRow: 6 }}>五</span>
+                    <span style={{ gridRow: 2 }}>{text("一", "M")}</span>
+                    <span style={{ gridRow: 4 }}>{text("三", "W")}</span>
+                    <span style={{ gridRow: 6 }}>{text("五", "F")}</span>
                   </div>
-                  <div className="dashboard-contribution-grid" aria-label="过去一年议题贡献图">
+                  <div className="dashboard-contribution-grid" aria-label={text("过去一年议题贡献图", "Issue contributions over the past year")}>
                     {contributionWeeks.flat().map((day) => {
                       const level = day.count === 0
                         ? 0
@@ -646,26 +663,29 @@ export function DashboardView({
                       return (
                         <span
                           className={`dashboard-contribution-cell level-${level}${day.future ? " is-future" : ""}`}
-                          title={day.future ? undefined : `${day.key} · ${day.count} 个议题更新`}
+                          title={day.future ? undefined : text(
+                            `${contributionDateFormatter.format(day.date)} · ${day.count} 个议题更新`,
+                            `${contributionDateFormatter.format(day.date)} · ${day.count} issue ${day.count === 1 ? "update" : "updates"}`,
+                          )}
                           key={day.key}
                         />
                       );
                     })}
                   </div>
                 </div>
-                <div className="dashboard-contribution-legend" aria-label="贡献强度图例">
-                  <span>少</span>
+                <div className="dashboard-contribution-legend" aria-label={text("贡献强度图例", "Contribution intensity legend")}>
+                  <span>{text("少", "Less")}</span>
                   {[0, 1, 2, 3, 4].map((level) => (
                     <i className={`dashboard-contribution-cell level-${level}`} key={level} />
                   ))}
-                  <span>多</span>
+                  <span>{text("多", "More")}</span>
                 </div>
               </div>
             </div>
           </section>
 
           <section className="dashboard-panel dashboard-tertiary-panel dashboard-upcoming-panel">
-            <header><span>即将到期</span></header>
+            <header><span>{text("即将到期", "Due soon")}</span></header>
             <div className="dashboard-task-list">
               {upcomingTasks.length ? upcomingTasks.map((task) => (
                 <button
@@ -680,16 +700,16 @@ export function DashboardView({
                     aria-hidden="true"
                   />
                   <strong>{task.title}</strong>
-                  <time>ID: {task.identifier} | {shortDate(task.dueDate!)}</time>
+                  <time>ID: {task.identifier} | {shortDate(task.dueDate!, locale)}</time>
                 </button>
               )) : (
-                <div className="dashboard-empty">近期没有到期议题</div>
+                <div className="dashboard-empty">{text("近期没有到期议题", "No issues are due soon")}</div>
               )}
             </div>
           </section>
 
           <section className="dashboard-panel dashboard-tertiary-panel dashboard-label-panel">
-            <header><span>标签分布 {Math.min(12, labelCounts.length)}</span></header>
+            <header><span>{text("标签分布", "Label distribution")} {Math.min(12, labelCounts.length)}</span></header>
             {visibleLabelCounts.length ? (
               <div className="dashboard-label-chart">
                 {visibleLabelCounts.map((item) => (
@@ -707,19 +727,19 @@ export function DashboardView({
                 ))}
               </div>
             ) : (
-              <div className="dashboard-empty">当前没有标签数据</div>
+              <div className="dashboard-empty">{text("当前没有标签数据", "No label data")}</div>
             )}
           </section>
 
           <section className="dashboard-panel dashboard-tertiary-panel dashboard-progress-panel">
           <header className="dashboard-progress-header">
             <div className="dashboard-progress-title">
-              <span>优先级</span>
+              <span>{text("优先级", "Priority")}</span>
             </div>
             <div className="dashboard-progress-legend">
-              <span className="tone-scope"><i />范围 <strong>{progressData.scope}</strong></span>
-              <span className="tone-started"><i />已开始 <strong>{progressData.started}</strong></span>
-              <span className="tone-completed"><i />已完成 <strong>{progressData.completed}</strong></span>
+              <span className="tone-scope"><i />{text("范围", "Scope")} <strong>{progressData.scope}</strong></span>
+              <span className="tone-started"><i />{text("已开始", "Started")} <strong>{progressData.started}</strong></span>
+              <span className="tone-completed"><i />{text("已完成", "Completed")} <strong>{progressData.completed}</strong></span>
             </div>
           </header>
           <div className="dashboard-progress-body">
@@ -727,7 +747,10 @@ export function DashboardView({
               className="dashboard-progress-chart"
               viewBox="0 0 426 272"
               role="img"
-              aria-label={`项目累计进度：范围 ${progressData.scope}，已开始 ${progressData.started}，已完成 ${progressData.completed}`}
+              aria-label={text(
+                `项目累计进度：范围 ${progressData.scope}，已开始 ${progressData.started}，已完成 ${progressData.completed}`,
+                `Cumulative project progress: scope ${progressData.scope}, started ${progressData.started}, completed ${progressData.completed}`,
+              )}
             >
               <defs>
                 <linearGradient id="dashboard-progress-area" x1="0" y1="0" x2="0" y2="1">
@@ -813,11 +836,11 @@ export function DashboardView({
                   >
                     <rect width="162" height="80" rx="9" />
                     <text className="dashboard-progress-tooltip-date" x="12" y="20">
-                      {chartDate(hoveredProgressPoint.timestamp)}
+                      {chartDate(hoveredProgressPoint.timestamp, locale)}
                     </text>
-                    <text x="12" y="40">范围 {hoveredProgressPoint.scope}</text>
-                    <text x="12" y="58">已开始 {Math.max(0, hoveredProgressPoint.started - hoveredProgressPoint.completed)}</text>
-                    <text x="88" y="58">已完成 {hoveredProgressPoint.completed}</text>
+                    <text x="12" y="40">{text("范围", "Scope")} {hoveredProgressPoint.scope}</text>
+                    <text x="12" y="58">{text("已开始", "Started")} {Math.max(0, hoveredProgressPoint.started - hoveredProgressPoint.completed)}</text>
+                    <text x="88" y="58">{text("已完成", "Completed")} {hoveredProgressPoint.completed}</text>
                     <text className="dashboard-progress-tooltip-delta" x="88" y="40">
                       Δ {hoveredProgressPoint.scope - (progressChart.points[Math.max(0, progressHoverIndex! - 1)]?.scope ?? hoveredProgressPoint.scope)}
                     </text>
@@ -837,7 +860,10 @@ export function DashboardView({
                     fill="transparent"
                     role="button"
                     tabIndex={0}
-                    aria-label={`${chartDate(point.timestamp)}：范围 ${point.scope}，已开始 ${Math.max(0, point.started - point.completed)}，已完成 ${point.completed}`}
+                    aria-label={text(
+                      `${chartDate(point.timestamp, locale)}：范围 ${point.scope}，已开始 ${Math.max(0, point.started - point.completed)}，已完成 ${point.completed}`,
+                      `${chartDate(point.timestamp, locale)}: scope ${point.scope}, started ${Math.max(0, point.started - point.completed)}, completed ${point.completed}`,
+                    )}
                     onMouseEnter={() => setProgressHoverIndex(index)}
                     onMouseLeave={() => setProgressHoverIndex(null)}
                     onFocus={() => setProgressHoverIndex(index)}
@@ -852,13 +878,13 @@ export function DashboardView({
               })}
 
               <text className="dashboard-progress-axis-label" x={progressChart.left} y="260">
-                {chartDate(progressChart.points[0].timestamp)}
+                {chartDate(progressChart.points[0].timestamp, locale)}
               </text>
               <text className="dashboard-progress-axis-label is-current" x={progressChart.currentX} y="260" textAnchor="middle">
-                {chartDate(todayValue)}
+                {chartDate(todayValue, locale)}
               </text>
               <text className="dashboard-progress-axis-label" x={progressChart.right} y="260" textAnchor="end">
-                {chartDate(rangeEndValue, todayValue)}
+                {chartDate(rangeEndValue, locale, todayValue)}
               </text>
             </svg>
           </div>

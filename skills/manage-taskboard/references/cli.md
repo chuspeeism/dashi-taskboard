@@ -2,6 +2,17 @@
 
 `taskctl` emits JSON. Add `--json` when making the output contract explicit.
 
+## Terminology: local companion
+
+**Companion** here is a product term for the **device-local loopback HTTP service** that `taskctl` talks to in cloud mode. It applies Basic Authentication, stores device-only project path mappings, and keeps Codex/Git/Skill/MCP capabilities on the machine. It is not a chat persona and not a separate public “companion product API”.
+
+| English | Prefer in Chinese | Do not use |
+| --- | --- | --- |
+| local companion / loopback companion | 本地 companion、本地配套服务、环回代理 | 伴侣、伴侣 API |
+| Taskboard HTTP API (`/api/tasks`, `/api/comments`, `/api/attachments`, …) | Taskboard HTTP API、本地服务 API、附件上传接口 | companion API、伴侣 API |
+
+Env and files that refer to this service: `CODEX_TASKBOARD_COMPANION_URL`, `CODEX_TASKBOARD_URL` (loopback origin), `.data/cloud-companion.json`. Error code `LOCAL_COMPANION_REQUIRED` means a capability needs that **local loopback service**, not a different API surface.
+
 ## Context and projects
 
 ```bash
@@ -15,7 +26,7 @@ Use `--workspace-path` to associate a project with a local repository. `context 
 
 Set `CODEX_TASKBOARD_URL` to override the default local API origin, `http://127.0.0.1:47823`.
 
-For a shared cloud board, keep `taskctl` pointed at the loopback companion and configure the upstream HTTPS origin through it:
+For a shared cloud board, keep `taskctl` pointed at the **loopback companion** (local loopback service; see Terminology above) and configure the upstream HTTPS origin through it:
 
 ```bash
 taskctl cloud login --url HTTPS_ORIGIN --actor-name NAME [--json]
@@ -25,7 +36,7 @@ taskctl project map PROJECT_ID --workspace-path /absolute/local/path [--json]
 taskctl cloud logout [--json]
 ```
 
-`cloud login` reads the shared password from a private `Shared key:` prompt. The actor name is the display attribution sent through Basic Authentication. The companion stores its configuration with mode `0600`; project mappings stay on the current device and can differ between collaborators. In cloud mode, failed upstream writes fail rather than falling back to or double-writing the local SQLite database.
+`cloud login` reads the shared password from a private `Shared key:` prompt. The actor name is the display attribution sent through Basic Authentication. The local companion stores its configuration with mode `0600`; project mappings stay on the current device and can differ between collaborators. In cloud mode, failed upstream writes fail rather than falling back to or double-writing the local SQLite database.
 
 Every issue or comment write must be attributed to a Codex conversation. In Codex, `taskctl` reads the current conversation from `CODEX_THREAD_ID`. Outside Codex, pass `--thread-id ID` explicitly. An explicit option takes precedence over the environment. Read commands do not require a conversation id.
 
@@ -139,15 +150,29 @@ taskctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
 
-## Download inline images
+## Attachments
 
 Issue descriptions and comments may contain inline images at exact positions in their Markdown:
 
 ```markdown
-![alt text](/api/attachments/ATTACHMENT_ID/content)
+![alt text](api/attachments/ATTACHMENT_ID/content)
 ```
 
-Download an inline image to an explicit local path before inspecting it:
+Upload a local file to a task or a comment. Provide exactly one of `--task` or `--comment`:
+
+```bash
+taskctl attachment upload --task TASK_ID --file PATH [--content-type TYPE] [--json]
+taskctl attachment upload --comment COMMENT_ID --file PATH [--content-type TYPE] [--json]
+```
+
+The command sends the file bytes to:
+
+- `POST /api/tasks/:id/attachments`, or
+- `POST /api/comments/:id/attachments`
+
+with the same headers as the web UI (`Content-Type`, `X-Taskboard-Filename`). If `--content-type` is omitted, the CLI guesses from the file extension and falls back to `application/octet-stream`.
+
+Download an attachment to an explicit local path:
 
 ```bash
 taskctl attachment download ATTACHMENT_ID --output PATH [--json]

@@ -227,7 +227,7 @@ test("the app connects the selected realtime transport without reloading the pag
   assert.match(appSource, /getRevisionPollingInterval\(taskboardMetadata\)/);
   assert.match(appSource, /createRevisionPoller\(\{/);
   assert.match(appSource, /controller\.abort\(\);\s*poller\.stop\(\)/);
-  assert.match(appSource, /new EventSource\("\/api\/events"\)/);
+  assert.match(appSource, /new EventSource\(resolveTaskboardUrl\("\/api\/events"\)\)/);
   assert.doesNotMatch(appSource, /location\.reload\(/);
 
   const pollingEffect = appSource.slice(

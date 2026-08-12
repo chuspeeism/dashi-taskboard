@@ -8,7 +8,15 @@ const menuSource = await readFile(
   "utf8",
 );
 const iconSource = await readFile(
-  new URL("../web/src/components/LinearIcon.tsx", import.meta.url),
+  new URL("../web/src/components/TaskboardIcon.tsx", import.meta.url),
+  "utf8",
+);
+const playIcon = await readFile(
+  new URL("../web/src/assets/figma-taskboard/automation-play.svg", import.meta.url),
+  "utf8",
+);
+const pauseIcon = await readFile(
+  new URL("../web/src/assets/figma-taskboard/automation-pause.svg", import.meta.url),
   "utf8",
 );
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
@@ -20,15 +28,15 @@ test("project automation state is device-local and scoped by taskboard project",
   assert.match(appSource, /codexProjectId: string/);
   assert.match(appSource, /type AutomationIntervalMinutes = 5 \| 10 \| 15 \| 30 \| 60/);
   assert.match(appSource, /DEFAULT_AUTOMATION_OPTIONS[\s\S]*?model: "gpt-5\.5"[\s\S]*?reasoningEffort: "high"/);
-  assert.match(appSource, /localStorage\.getItem\(PROJECT_AUTOMATIONS_KEY\)/);
-  assert.match(appSource, /localStorage\.setItem\(PROJECT_AUTOMATIONS_KEY, JSON\.stringify\(next\)\)/);
+  assert.match(appSource, /taskboardStorage\.getItem\(PROJECT_AUTOMATIONS_KEY\)/);
+  assert.match(appSource, /taskboardStorage\.setItem\(PROJECT_AUTOMATIONS_KEY, JSON\.stringify\(next\)\)/);
   assert.match(appSource, /projectAutomations\[selectedProjectId\]/);
 });
 
 test("automation requests use the exact Codex host message contract", () => {
   assert.match(appSource, /type: "taskboard:automation-request"/);
   assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list"/);
-  assert.match(appSource, /taskboardProjectId: selectedProjectId/);
+  assert.match(appSource, /context: AutomationRequestContext[\s\S]*?taskboardProjectId: context\.taskboardProjectId/);
   assert.match(appSource, /codexProjectId/);
   assert.match(appSource, /projectName: selectedProject\.name/);
   assert.match(appSource, /workspacePath/);
@@ -50,11 +58,11 @@ test("project mapping is based on exact ids and workspace paths, never project n
 });
 
 test("the project navigation automation menu owns the icon, fields, and accessible popover", () => {
-  assert.match(menuSource, /status === "ACTIVE" \? "play" : "pause"/);
+  assert.match(menuSource, /status === "ACTIVE" \? "automationPause" : "automationPlay"/);
   assert.doesNotMatch(menuSource, /statusStarted|statusTodo/);
   assert.match(menuSource, /aria-busy=\{pending/);
   assert.match(menuSource, /自动认领/);
-  assert.match(menuSource, /无自动化/);
+  assert.match(menuSource, /aria-label=\{status === "ACTIVE"\s*\? text\("自动认领中", "Auto-claiming"\)\s*: text\("自动化", "Automation"\)\}/);
   assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
   assert.match(menuSource, /自动认领开关/);
   assert.match(menuSource, /5, 10, 15, 30, 60/);
@@ -71,29 +79,23 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.match(appSource, /仅本地任务面板可用/);
 });
 
-test("automation status uses the verified Linear play and pause icon assets", () => {
-  assert.match(
-    iconSource,
-    /play:\s*\{\s*content: <path d="m5\.604 2\.41 7\.23 4\.502a1\.375 1\.375 0 0 1-.02 2\.345L5\.585 13\.6a1\.375 1\.375 0 0 1-2\.083-1\.18V3\.576A1\.375 1\.375 0 0 1 5\.604 2\.41Z" \/>,\s*\}/s,
-  );
-  assert.match(
-    iconSource,
-    /pause:\s*\{\s*content: <path d="M3\.5 3\.5a1 1 0 0 1 1-1H6a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4\.5a1 1 0 0 1-1-1v-9ZM9 3\.5a1 1 0 0 1 1-1h1\.5a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1v-9Z" \/>,\s*\}/s,
-  );
+test("automation status uses the exported Taskboard play and pause icon assets", () => {
+  assert.match(iconSource, /import automationPause from "\.\.\/assets\/figma-taskboard\/automation-pause\.svg"/);
+  assert.match(iconSource, /import automationPlay from "\.\.\/assets\/figma-taskboard\/automation-play\.svg"/);
+  assert.match(iconSource, /const TASKBOARD_ICONS = \{[\s\S]*?automationPause,[\s\S]*?automationPlay,/);
 });
 
-test("automation play and pause retain Linear's 16px filled presentation", () => {
-  const playAndPause = iconSource.slice(
-    iconSource.indexOf("pause:"),
-    iconSource.indexOf("priority:"),
-  );
-  assert.doesNotMatch(playAndPause, /viewBox: "0 0 24 24"|strokeWidth|strokeLinecap|strokeLinejoin/);
+test("automation play and pause retain the exported 16px presentation", () => {
+  assert.match(playIcon, /width="16" height="16" viewBox="0 0 16 16"/);
+  assert.match(pauseIcon, /width="16" height="16" viewBox="0 0 16 16"/);
 });
 
-test("the automation menu reuses the Linear switch and keeps form focus chrome suppressed", () => {
-  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.status === "ACTIVE" \? " is-on" : ""\}`\}/);
+test("the automation menu reuses the board switches and keeps form focus chrome suppressed", () => {
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.enabledByUser \? " is-on" : ""\}`\}/);
   assert.match(menuSource, /role="switch"/);
-  assert.match(menuSource, /aria-checked=\{draft\.status === "ACTIVE"\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.enabledByUser\}/);
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.quotaAware \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.quotaAware\}/);
   assert.doesNotMatch(menuSource, /type="checkbox"/);
   assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
   assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);
@@ -102,14 +104,14 @@ test("the automation menu reuses the Linear switch and keeps form focus chrome s
 test("unavailable automation state has one notice, clears stale errors, and cannot change", () => {
   assert.match(menuSource, /error && error !== unavailableReason/);
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
-  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 4);
+  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 5);
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),
     appSource.indexOf("const saveProjectAutomation"),
   );
   assert.match(
     reconcileSource,
-    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return;/,
+    /if \(!automationRequestContext\) \{\s*setAutomationError\(null\);\s*return;/,
   );
   assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
 });
@@ -120,11 +122,11 @@ test("automation changes submit immediately with model-specific effort normaliza
   assert.match(menuSource, /const submitChange = \(next: AutomationOptions\) => \{[\s\S]*?setDraft\(next\);[\s\S]*?onChange\(next\);[\s\S]*?\}/);
   assert.match(menuSource, /submitChange\(withAutomationModel\(draft, event\.target\.value as AutomationModel\)\)/);
   assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map/);
-  assert.match(menuSource, /<option key=\{effort\} value=\{effort\}>\{EFFORT_LABELS\[effort\]\}<\/option>/);
-  assert.match(menuSource, /low: "轻度"/);
-  assert.match(menuSource, /xhigh: "极高 \(xhigh\)"/);
-  assert.match(menuSource, /max: "最高"/);
-  assert.match(menuSource, /ultra: "极高 \(ultra\)"/);
+  assert.match(menuSource, /<option key=\{effort\} value=\{effort\}>\{text\(\.\.\.EFFORT_LABELS\[effort\]\)\}<\/option>/);
+  assert.match(menuSource, /low: \["轻度", "Low"\]/);
+  assert.match(menuSource, /xhigh: \["极高 \(xhigh\)", "Extra high \(xhigh\)"\]/);
+  assert.match(menuSource, /max: \["最高", "Maximum"\]/);
+  assert.match(menuSource, /ultra: \["极高 \(ultra\)", "Ultra"\]/);
   assert.doesNotMatch(menuSource, />取消</);
   assert.doesNotMatch(menuSource, />保存</);
   assert.doesNotMatch(menuSource, /project-automation-actions/);
@@ -143,11 +145,31 @@ test("pending completion reconciles the optimistic draft to confirmed host state
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {
-  assert.match(appSource, /sendAutomationRequest\("list", options, stored\?\.automationId\)/);
-  assert.match(appSource, /items\.find\(\(item\) => item\.id === stored\?\.automationId\)/);
+  const reconcileSource = appSource.slice(
+    appSource.indexOf("const reconcileProjectAutomation"),
+    appSource.indexOf("const saveProjectAutomation"),
+  );
+  const drainSource = appSource.slice(
+    appSource.indexOf("const drainQueuedAutomationSaves"),
+    appSource.indexOf("const reconcileProjectAutomation"),
+  );
+  assert.match(
+    reconcileSource,
+    /sendAutomationRequest\(\s*"list",\s*options,\s*automationRequestContext,\s*stored\?\.automationId,\s*\)/,
+  );
+  assert.doesNotMatch(reconcileSource, /"apply-policy"/);
+  assert.match(
+    drainSource,
+    /sendAutomationRequest\(\s*"apply-policy",\s*queuedSave\.options,\s*queuedSave\.context,\s*previousRecord\?\.automationId,\s*\)/,
+  );
+  assert.match(appSource, /const policy = isAutomationHostPolicy\(response\.policy\) \? response\.policy : null/);
+  assert.match(appSource, /const item = \(isAutomationHostItem\(response\.item\) \? response\.item : undefined\)\s*\?\? items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
+  assert.match(appSource, /items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
   assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
-  assert.match(appSource, /status: item\.status/);
-  assert.match(appSource, /automationId: undefined/);
-  assert.match(appSource, /options\.status === "PAUSED" && !stored\?\.automationId/);
-  assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
+  assert.match(appSource, /automationId: item\?\.id \?\? policy\.automationId/);
+  assert.match(appSource, /status: item\?\.status \?\? "PAUSED"/);
+  assert.match(appSource, /enabledByUser: policy\.enabledByUser/);
+  assert.match(appSource, /quotaAware: policy\.quotaAware/);
+  assert.match(appSource, /automationId: undefined,[\s\S]*?status: "PAUSED"/);
+  assert.match(drainSource, /writeProjectAutomation\(queuedSave\.projectId, previousRecord\)/);
 });

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTaskboardI18n } from "../i18n";
 import { LinearIcon } from "./LinearIcon";
 import { WORKFLOW_GROUPS, type PaletteItem } from "./workflowCatalog";
+import { workflowText } from "./workflowI18n";
 import { WorkflowMark } from "./WorkflowMark";
 
 interface WorkflowStepPickerProps {
@@ -10,6 +12,7 @@ interface WorkflowStepPickerProps {
 }
 
 export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPickerProps) {
+  const { text } = useTaskboardI18n();
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -31,11 +34,11 @@ export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPic
     if (!normalizedQuery) return items;
 
     return items.filter((item) => (
-      `${item.group} ${item.title} ${item.description} ${item.data.title} ${item.data.description} ${item.data.meta}`
+      `${item.group} ${item.title} ${item.description} ${item.data.title} ${item.data.description} ${item.data.meta} ${workflowText(text, item.group)} ${workflowText(text, item.title)} ${workflowText(text, item.description)} ${workflowText(text, item.data.title)} ${workflowText(text, item.data.description)} ${workflowText(text, item.data.meta)}`
         .toLocaleLowerCase()
         .includes(normalizedQuery)
     ));
-  }, [items, query]);
+  }, [items, query, text]);
 
   const groups = useMemo(() => {
     const availableGroups = new Set(filteredItems.map((item) => item.group));
@@ -52,12 +55,12 @@ export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPic
       <section
         className="workflow-step-picker"
         role="dialog"
-        aria-label="添加流程步骤"
+        aria-label={text("添加流程步骤", "Add workflow step")}
         aria-modal="true"
       >
         <header className="workflow-step-picker-header">
-          <strong>添加流程步骤</strong>
-          <button type="button" aria-label="关闭" onClick={onClose}>
+          <strong>{text("添加流程步骤", "Add workflow step")}</strong>
+          <button type="button" aria-label={text("关闭", "Close")} onClick={onClose}>
             <LinearIcon name="close" />
           </button>
         </header>
@@ -68,8 +71,8 @@ export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPic
             ref={searchRef}
             type="search"
             value={query}
-            placeholder="搜索应用或动作…"
-            aria-label="搜索应用或动作"
+            placeholder={text("搜索应用或动作…", "Search apps or actions…")}
+            aria-label={text("搜索应用或动作", "Search apps or actions")}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
@@ -77,7 +80,7 @@ export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPic
         <div className="workflow-step-picker-groups">
           {groups.map((group) => (
             <section className="workflow-step-picker-group" key={group}>
-              <h3>{group}</h3>
+              <h3>{workflowText(text, group)}</h3>
               <div className="workflow-step-picker-items">
                 {filteredItems.filter((item) => item.group === group).map((item) => (
                   <button
@@ -94,8 +97,8 @@ export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPic
                       />
                     </span>
                     <span className="workflow-step-picker-copy">
-                      <strong>{item.title}</strong>
-                      <span>{item.description}</span>
+                      <strong>{workflowText(text, item.title)}</strong>
+                      <span>{workflowText(text, item.description)}</span>
                     </span>
                     <LinearIcon className="workflow-step-picker-chevron" name="chevronRight" />
                   </button>
@@ -104,7 +107,9 @@ export function WorkflowStepPicker({ items, onSelect, onClose }: WorkflowStepPic
             </section>
           ))}
           {filteredItems.length === 0 && (
-            <p className="workflow-step-picker-empty">没有匹配的应用或动作</p>
+            <p className="workflow-step-picker-empty">
+              {text("没有匹配的应用或动作", "No matching apps or actions")}
+            </p>
           )}
         </div>
       </section>

@@ -3,6 +3,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { ApiError } from "./database.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -252,15 +253,16 @@ export async function discoverAiCatalog({
   workspacePath,
   processEnv,
 }) {
+  const environment = withoutTaskboardLauncherEnvironment(processEnv);
   const [modelResult, skillEntries] = await Promise.all([
     execFileAsync(codexExecutable, ["debug", "models"], {
       cwd: workspacePath,
-      env: processEnv,
+      env: environment,
       encoding: "utf8",
       timeout: CATALOG_TIMEOUT_MS,
       maxBuffer: CATALOG_MAX_BUFFER,
     }),
-    listSkills(codexExecutable, workspacePath, processEnv),
+    listSkills(codexExecutable, workspacePath, environment),
   ]);
   const modelCatalog = JSON.parse(modelResult.stdout);
   return {

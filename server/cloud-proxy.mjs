@@ -46,15 +46,18 @@ function removeGitWorktreePaths(value) {
   }
 }
 
-async function prepareRequest(request) {
+async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
   const url = new URL(request.url);
   let projectWorkspace = null;
   let body = request.body;
   const isJson = request.headers.get("content-type")?.includes("application/json");
   const isProjectCreate = request.method === "POST" && url.pathname === "/api/projects";
+  const taskPatchMatch = request.method === "PATCH"
+    ? url.pathname.match(/^\/api\/tasks\/([^/]+)$/)
+    : null;
   const isTaskMutation = (
     (request.method === "POST" && url.pathname === "/api/tasks")
-    || (request.method === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(url.pathname))
+    || Boolean(taskPatchMatch)
   );
   const isWorkflowMutation = request.method === "PUT"
     && /^\/api\/projects\/[^/]+\/workflow-workspace$/.test(url.pathname);
@@ -68,6 +71,19 @@ async function prepareRequest(request) {
     }
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
       throw new CloudProxyError(400, "INVALID_BODY", "Request body must be a JSON object");
+    }
+    if (
+      taskPatchMatch
+      && typeof payload.projectId === "string"
+      && typeof assertTaskProjectMoveAllowed === "function"
+    ) {
+      let taskId;
+      try {
+        taskId = decodeURIComponent(taskPatchMatch[1]);
+      } catch {
+        throw new CloudProxyError(400, "INVALID_PATH", "Task id contains invalid encoding");
+      }
+      await assertTaskProjectMoveAllowed(taskId, payload.projectId);
     }
     if (isProjectCreate && Object.hasOwn(payload, "workspacePath")) {
       if (typeof payload.workspacePath === "string") {
@@ -185,6 +201,7 @@ export function createCloudProxy({
   getConfig,
   fetch: fetchImplementation = globalThis.fetch,
   resolveDevelopmentContext,
+  assertTaskProjectMoveAllowed,
 }) {
   const readConfig = getConfig ?? (() => configStore.read());
   const setProjectWorkspace = configStore?.setProjectWorkspace?.bind(configStore);
@@ -225,7 +242,9 @@ export function createCloudProxy({
       }
       headers.set("authorization", basicAuthorization(config.actorName, config.sharedKey));
 
-      const prepared = await prepareRequest(request);
+      const prepared = await prepareRequest(request, {
+        assertTaskProjectMoveAllowed,
+      });
       if (prepared.projectWorkspace && !setProjectWorkspace) {
         throw new CloudProxyError(
           500,

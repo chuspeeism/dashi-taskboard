@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.11";
+  const VERSION = "0.6.13";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -17,8 +17,11 @@
   const HIDDEN_ATTRIBUTE = "data-codex-taskboard-native-hidden";
   const HOST_ATTRIBUTE = "data-codex-taskboard-page-host";
   const NATIVE_SELECTED_ATTRIBUTE = "data-codex-taskboard-native-selected";
-  const HOST_BINDING_NAME = "__codexTaskboardHostV1";
-  const HOST_HEARTBEAT_NAME = "__codexTaskboardHostHeartbeatV1";
+  const HOST_REQUEST_MESSAGE = "__codexTaskboardHostRequestV1";
+  const HOST_RESPONSE_MESSAGE = "__codexTaskboardHostResponseV1";
+  const HOST_HEARTBEAT_MESSAGE = "__codexTaskboardHostHeartbeatV1";
+  const HOST_STARTUP_TOKEN_NAME = "__codexTaskboardHostStartupTokenV1";
+  const HOST_CAPABILITY = window.__CODEX_TASKBOARD_HOST_CAPABILITY__;
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
   const HOST_REQUEST_TIMEOUT_MS = 12_000;
@@ -60,13 +63,22 @@
   let noDragRight = null;
   let status = null;
   let frameOrigin = "";
+  let taskboardOrigin = "";
+  let frameTaskboardUrl = "";
+  let frameCapability = "";
+  let frameChallenge = "";
   let frameReady = false;
   let frameReadyWaiters = new Set();
   let hostRequests = new Map();
   let hostRequestSequence = 0;
+  let hostHeartbeatAt = 0;
   let observer = null;
   let reattachTimer = null;
   let hostContextTimer = null;
+  let hostUiLanguage = null;
+  let entryLabel = null;
+  let statusView = "idle";
+  let loadError = null;
   let lastFocusedElement = null;
   let hostContextSnapshot = null;
   let mutedNativeSelections = new Map();
@@ -80,6 +92,32 @@
 
   function normalizedLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function hostLanguage() {
+    return document.documentElement.lang || navigator.language;
+  }
+
+  function resolvedHostLanguage() {
+    const language = hostLanguage().trim().replaceAll("_", "-").toLowerCase();
+    return language === "zh" || language.startsWith("zh-") ? "zh" : "en";
+  }
+
+  function hostText(chinese, english) {
+    return resolvedHostLanguage() === "zh" ? chinese : english;
+  }
+
+  function hostError(chinese, english) {
+    const error = new Error(hostText(chinese, english));
+    error.taskboardText = { chinese, english };
+    return error;
+  }
+
+  function hostErrorText(error) {
+    if (error?.taskboardText) {
+      return hostText(error.taskboardText.chinese, error.taskboardText.english);
+    }
+    return error instanceof Error ? error.message : String(error || "");
   }
 
   function normalizeThreadId(value) {
@@ -264,14 +302,11 @@
     button.removeAttribute("aria-controls");
     button.removeAttribute("aria-describedby");
     button.removeAttribute("data-state");
-    button.setAttribute("aria-label", "打开任务面板");
-    button.setAttribute("title", "任务面板");
     button.setAttribute(OWNED_ATTRIBUTE, "true");
     button.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
-    const label = button.querySelector(".text-fade-truncate")
+    entryLabel = button.querySelector(".text-fade-truncate")
       || Array.from(button.querySelectorAll("span")).find((node) => buttonMatches(node, PLUGIN_LABELS));
-    if (label) label.textContent = "任务面板";
-    else button.textContent = "任务面板";
+    syncEntryText(button);
     replaceEntryIcon(button);
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -279,6 +314,14 @@
       openTaskboard();
     });
     return button;
+  }
+
+  function syncEntryText(button = entry) {
+    if (!button) return;
+    button.setAttribute("aria-label", hostText("打开任务面板", "Open Taskboard"));
+    button.setAttribute("title", hostText("任务面板", "Taskboard"));
+    if (entryLabel) entryLabel.textContent = hostText("任务面板", "Taskboard");
+    else button.textContent = hostText("任务面板", "Taskboard");
   }
 
   function syncEntryState() {
@@ -309,13 +352,10 @@
     const viewport = document.querySelector("[data-app-shell-main-content-layout]");
     if (!viewport) return null;
     const viewportRect = viewport.getBoundingClientRect();
-    const headerBottom = document.querySelector("main > header")?.getBoundingClientRect().bottom
-      ?? viewportRect.top;
     return Array.from(viewport.children).find((candidate) => {
       const rect = candidate.getBoundingClientRect();
       return rect.width >= viewportRect.width * 0.8
-        && rect.height >= viewportRect.height * 0.7
-        && rect.top >= headerBottom - 1;
+        && rect.height >= viewportRect.height * 0.7;
     }) || null;
   }
 
@@ -627,6 +667,7 @@
     const workspacePath = workspaceFromLocation();
     const threadRunning = nativeThreadRunning(threadId);
     const payload = {
+      language: hostLanguage(),
       theme: currentTheme(),
       projects,
       user: readCodexUser() ?? undefined,
@@ -644,16 +685,25 @@
     return payload;
   }
 
-  function postToFrame(message) {
-    if (!frame?.contentWindow || !frameOrigin) return;
-    frame.contentWindow.postMessage(message, frameOrigin);
+  function postToFrame(message, allowUnready = false) {
+    if (!frame?.contentWindow || !frameOrigin || (!allowUnready && !frameReady)) return;
+    frame.contentWindow.postMessage(message, frameOrigin === "null" ? "*" : frameOrigin);
   }
 
   function dispatchHostMessage(message) {
     window.postMessage(message, window.location.origin);
   }
 
+  function postFrameChallenge() {
+    if (!frameChallenge) return;
+    postToFrame({
+      type: "taskboard:frame-challenge",
+      payload: { challenge: frameChallenge },
+    }, true);
+  }
+
   function postHostContext() {
+    syncHostUiLanguage();
     if (!frame) return;
     const liveContext = readHostContext();
     const payload = hostContextSnapshot
@@ -736,7 +786,10 @@
       }
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
-    throw new Error("Codex 对话输入框没有写入任务编号");
+    throw new Error(hostText(
+      "Codex 对话输入框没有写入任务编号",
+      "The issue identifier was not written to the Codex composer",
+    ));
   }
 
   async function createThreadForTask(payload) {
@@ -756,7 +809,10 @@
     try {
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
-        throw new Error("当前 Codex 版本没有提供原生对话导航能力");
+        throw new Error(hostText(
+          "当前 Codex 版本没有提供原生对话导航能力",
+          "This Codex version does not provide native conversation navigation",
+        ));
       }
 
       if (workspacePath) {
@@ -797,7 +853,12 @@
     } catch (error) {
       postToFrame({
         type: "taskboard:thread-create-error",
-        payload: { taskId, error: error instanceof Error ? error.message : "无法创建 Codex 对话" },
+        payload: {
+          taskId,
+          error: error instanceof Error
+            ? error.message
+            : hostText("无法创建 Codex 对话", "Could not create the Codex conversation"),
+        },
       });
     } finally {
       pendingThreadCreation = null;
@@ -825,10 +886,14 @@
   async function handleAutomationRequest(payload) {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
     if (!requestId) return;
-    if (!isLocalTaskboardOrigin(frameOrigin)) {
+    if (!isLocalTaskboardOrigin(taskboardOrigin)) {
       postToFrame({
         type: "taskboard:automation-response",
-        payload: { requestId, ok: false, error: "仅本地任务面板可用" },
+        payload: {
+          requestId,
+          ok: false,
+          error: hostText("仅本地任务面板可用", "Available only in the local Taskboard"),
+        },
       });
       return;
     }
@@ -856,17 +921,46 @@
         payload: {
           requestId,
           ok: false,
-          error: error instanceof Error ? error.message : "Codex 自动任务操作失败",
+          error: error instanceof Error
+            ? error.message
+            : hostText("Codex 自动任务操作失败", "The Codex automation operation failed"),
         },
       });
     }
   }
 
+  function handleExternalOpen(payload) {
+    try {
+      const url = new URL(payload?.url);
+      if (url.protocol !== "https:") return;
+      void requestHost("open-external", { url: url.href }).catch(() => {});
+    } catch (_) {}
+  }
+
+  function challengeFrameDocument(event) {
+    if (!frame || event.currentTarget !== frame) return;
+    frameReady = false;
+    frameChallenge = crypto.randomUUID();
+    if (active) showLoading();
+    postFrameChallenge();
+  }
+
   function onFrameMessage(event) {
     if (!frame || event.source !== frame.contentWindow || event.origin !== frameOrigin) return;
     const message = event.data;
-    if (!message || typeof message !== "object") return;
+    if (
+      !message
+      || typeof message !== "object"
+      || !frameCapability
+      || message.capability !== frameCapability
+    ) return;
+    if (message.type === "taskboard:frame-awaiting-challenge") {
+      postFrameChallenge();
+      return;
+    }
+    if (!frameChallenge || message.challenge !== frameChallenge) return;
     if (message.type === "taskboard:ready") {
+      if (frameReady) return;
       frameReady = true;
       frameReadyWaiters.forEach(({ resolve, timer }) => {
         window.clearTimeout(timer);
@@ -891,6 +985,10 @@
     }
     if (message.type === "taskboard:automation-request") {
       void handleAutomationRequest(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:open-external") {
+      handleExternalOpen(message.payload);
       return;
     }
     if (message.type === "taskboard:create-thread") void createThreadForTask(message.payload);
@@ -930,7 +1028,7 @@
     section.hidden = true;
     section.setAttribute(OWNED_ATTRIBUTE, "true");
     section.setAttribute("role", "region");
-    section.setAttribute("aria-label", "任务面板");
+    section.setAttribute("aria-label", hostText("任务面板", "Taskboard"));
 
     status = document.createElement("div");
     status.id = STATUS_ID;
@@ -962,13 +1060,21 @@
   }
 
   function showLoading() {
+    statusView = "loading";
+    loadError = null;
+    renderLoading();
+  }
+
+  function renderLoading() {
     if (!status) return;
-    status.replaceChildren(document.createTextNode("正在启动任务面板…"));
+    status.replaceChildren(document.createTextNode(hostText("正在启动任务面板…", "Starting Taskboard…")));
     status.hidden = false;
     if (frame) frame.hidden = true;
   }
 
   function showFrame() {
+    statusView = "frame";
+    loadError = null;
     if (status) status.hidden = true;
     if (frame) {
       frame.hidden = false;
@@ -976,19 +1082,36 @@
     }
   }
 
-  function showLoadError(message) {
+  function showLoadError(error) {
+    statusView = "error";
+    loadError = error;
+    renderLoadError();
+  }
+
+  function renderLoadError() {
     if (!status) return;
     const content = document.createElement("div");
     const text = document.createElement("div");
-    text.textContent = message;
+    text.textContent = hostErrorText(loadError);
     const retry = document.createElement("button");
     retry.type = "button";
-    retry.textContent = "重新启动";
+    retry.textContent = hostText("重新启动", "Restart");
     retry.addEventListener("click", openTaskboard, { once: true });
     content.append(text, retry);
     status.replaceChildren(content);
     status.hidden = false;
     if (frame) frame.hidden = true;
+  }
+
+  function syncHostUiLanguage() {
+    const language = resolvedHostLanguage();
+    if (hostUiLanguage === language) return;
+    hostUiLanguage = language;
+    syncEntryText();
+    if (page) page.setAttribute("aria-label", hostText("任务面板", "Taskboard"));
+    if (frame) frame.title = hostText("任务面板", "Taskboard");
+    if (statusView === "loading") renderLoading();
+    else if (statusView === "error") renderLoadError();
   }
 
   function cancelFrameReadyWaiters(error) {
@@ -1007,7 +1130,7 @@
         reject,
         timer: window.setTimeout(() => {
           frameReadyWaiters.delete(waiter);
-          reject(new Error("任务面板页面加载超时"));
+          reject(hostError("任务面板页面加载超时", "Taskboard page load timed out"));
         }, FRAME_READY_TIMEOUT_MS),
       };
       frameReadyWaiters.add(waiter);
@@ -1015,9 +1138,12 @@
   }
 
   function loadTaskboardFrame(cacheBust = false) {
-    cancelFrameReadyWaiters(new Error("任务面板正在重新加载"));
+    cancelFrameReadyWaiters(hostError("任务面板正在重新加载", "Taskboard is reloading"));
     frame?.remove();
     frame = null;
+    frameTaskboardUrl = "";
+    frameCapability = "";
+    frameChallenge = "";
     frameReady = false;
     if (dragRegion) dragRegion.hidden = true;
     if (noDragLeft) noDragLeft.hidden = true;
@@ -1027,36 +1153,42 @@
     if (cacheBust) {
       taskboardUrl.searchParams.set(FRAME_REFRESH_PARAM, Date.now().toString(36));
     }
-    frameOrigin = taskboardUrl.origin;
+    taskboardOrigin = taskboardUrl.origin;
+    frameTaskboardUrl = taskboardUrl.href;
+    frameOrigin = "null";
+    const frameName = `codex-taskboard-${crypto.randomUUID()}`;
+    frameCapability = crypto.randomUUID();
     const nextFrame = document.createElement("iframe");
     nextFrame.id = FRAME_ID;
+    nextFrame.name = frameName;
     nextFrame.hidden = true;
-    nextFrame.src = taskboardUrl.href;
-    nextFrame.title = "任务面板";
+    nextFrame.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-downloads");
+    nextFrame.src = "about:blank";
+    nextFrame.title = hostText("任务面板", "Taskboard");
     nextFrame.referrerPolicy = "no-referrer";
     nextFrame.setAttribute("allow", "clipboard-read; clipboard-write");
-    nextFrame.addEventListener("load", postHostContext);
+    nextFrame.addEventListener("load", challengeFrameDocument);
     frame = nextFrame;
     page.appendChild(nextFrame);
+    return { frameName, frameCapability };
   }
 
   function reloadFrame() {
     if (!frame) return false;
     const generation = ++openGeneration;
     if (active) showLoading();
-    loadTaskboardFrame(true);
-    if (active) {
-      void waitForFrameReady()
-        .then(() => {
+    const frameRequest = loadTaskboardFrame(true);
+    void requestHostLoadFrame(frameRequest)
+      .then(() => waitForFrameReady())
+      .then(() => {
           if (!active || generation !== openGeneration) return;
           showFrame();
           postHostContext();
-        })
-        .catch((error) => {
-          if (!active || generation !== openGeneration) return;
-          showLoadError(error.message);
-        });
-    }
+      })
+      .catch((error) => {
+        if (!active || generation !== openGeneration) return;
+        showLoadError(error);
+      });
     return true;
   }
 
@@ -1072,27 +1204,33 @@
   }
 
   function hasLiveHostBinding() {
-    const heartbeat = Number(window[HOST_HEARTBEAT_NAME]);
-    return typeof window[HOST_BINDING_NAME] === "function"
-      && Number.isFinite(heartbeat)
-      && Date.now() - heartbeat <= HOST_HEARTBEAT_MAX_AGE_MS;
+    return typeof HOST_CAPABILITY === "string"
+      && HOST_CAPABILITY.length > 0
+      && Number.isFinite(hostHeartbeatAt)
+      && Date.now() - hostHeartbeatAt <= HOST_HEARTBEAT_MAX_AGE_MS;
   }
 
   function requestHost(action, payload = {}) {
-    const binding = window[HOST_BINDING_NAME];
     if (!hasLiveHostBinding()) {
-      return Promise.reject(new Error("Taskboard 启动器未运行，无法操作 Codex 对话输入框"));
+      return Promise.reject(hostError(
+        "Taskboard 启动器未运行，无法操作 Codex 对话输入框",
+        "The Taskboard launcher is not running, so the Codex composer is unavailable",
+      ));
     }
 
     const id = `${Date.now().toString(36)}-${(++hostRequestSequence).toString(36)}`;
     return new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         hostRequests.delete(id);
-        reject(new Error("任务面板启动器没有响应"));
+        reject(hostError("任务面板启动器没有响应", "The Taskboard launcher did not respond"));
       }, HOST_REQUEST_TIMEOUT_MS);
       hostRequests.set(id, { resolve, reject, timeout });
       try {
-        binding(JSON.stringify({ ...payload, id, action }));
+        window.postMessage({
+          type: HOST_REQUEST_MESSAGE,
+          capability: HOST_CAPABILITY,
+          payload: { ...payload, id, action },
+        }, window.location.origin);
       } catch (error) {
         window.clearTimeout(timeout);
         hostRequests.delete(id);
@@ -1108,6 +1246,10 @@
     return requestHost("ensure");
   }
 
+  function requestHostLoadFrame({ frameName, frameCapability: capability }) {
+    return requestHost("load-frame", { frameName, frameCapability: capability });
+  }
+
   function requestHostTaskComposerPrefill({ instruction }) {
     return requestHost("prefill-task-composer", {
       instruction,
@@ -1115,9 +1257,9 @@
   }
 
   function frameMatchesTaskboardUrl(taskboardUrl) {
-    if (!frame) return false;
+    if (!frame || !frameTaskboardUrl) return false;
     try {
-      const loadedUrl = new URL(frame.getAttribute("src") || frame.src);
+      const loadedUrl = new URL(frameTaskboardUrl);
       loadedUrl.searchParams.delete(FRAME_REFRESH_PARAM);
       const expectedUrl = new URL(taskboardUrl.href);
       expectedUrl.searchParams.delete(FRAME_REFRESH_PARAM);
@@ -1134,7 +1276,21 @@
     window.clearTimeout(pending.timeout);
     hostRequests.delete(response.id);
     if (response.ok) pending.resolve(response);
-    else pending.reject(new Error(response.error || "任务面板服务启动失败"));
+    else pending.reject(response.error
+      ? new Error(response.error)
+      : hostError("任务面板服务启动失败", "The Taskboard service failed to start"));
+  }
+
+  function onHostBridgeMessage(event) {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const message = event.data;
+    if (!message || typeof message !== "object" || message.capability !== HOST_CAPABILITY) return;
+    if (message.type === HOST_HEARTBEAT_MESSAGE) {
+      hostHeartbeatAt = Number(message.at) || 0;
+      window[HOST_STARTUP_TOKEN_NAME] = message.startupToken ?? null;
+      return;
+    }
+    if (message.type === HOST_RESPONSE_MESSAGE) onHostResponse(message.response);
   }
 
   async function prepareTaskboard(generation) {
@@ -1162,7 +1318,8 @@
       };
       if (!frameReady || result.restarted || !frameMatchesTaskboardUrl(taskboardUrl)) {
         showLoading();
-        loadTaskboardFrame();
+        const frameRequest = loadTaskboardFrame();
+        await requestHostLoadFrame(frameRequest);
         await waitForFrameReady();
       }
       if (!active || generation !== openGeneration) return;
@@ -1172,8 +1329,11 @@
       if (!active || generation !== openGeneration) return;
       const bindingAvailable = hasLiveHostBinding();
       showLoadError(bindingAvailable
-        ? error.message
-        : "任务面板服务未就绪。请保持 Taskboard 启动器运行后重试。");
+        ? error
+        : hostError(
+          "任务面板服务未就绪。请保持 Taskboard 启动器运行后重试。",
+          "The Taskboard service is not ready. Keep the Taskboard launcher running and try again.",
+        ));
     }
   }
 
@@ -1341,22 +1501,24 @@
     hostContextTimer = null;
     observer?.disconnect();
     observer = null;
-    cancelFrameReadyWaiters(new Error("任务面板已关闭"));
+    cancelFrameReadyWaiters(hostError("任务面板已关闭", "Taskboard was closed"));
     hostRequests.forEach(({ reject, timeout }) => {
       window.clearTimeout(timeout);
-      reject(new Error("任务面板已关闭"));
+      reject(hostError("任务面板已关闭", "Taskboard was closed"));
     });
     hostRequests.clear();
     pendingThreadCreation = null;
     document.removeEventListener("DOMContentLoaded", mount);
     document.removeEventListener("click", onDocumentClick, true);
     window.removeEventListener("message", onFrameMessage);
+    window.removeEventListener("message", onHostBridgeMessage);
     window.removeEventListener("popstate", onNativeRouteChange);
     window.removeEventListener("hashchange", onNativeRouteChange);
     window.removeEventListener("resize", scheduleRefresh);
     closeTaskboard(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
     entry = null;
+    entryLabel = null;
     page = null;
     frame = null;
     dragRegion = null;
@@ -1364,6 +1526,8 @@
     noDragRight = null;
     status = null;
     frameOrigin = "";
+    taskboardOrigin = "";
+    frameTaskboardUrl = "";
     if (window[SENTINEL_KEY] === api) delete window[SENTINEL_KEY];
   }
 
@@ -1374,16 +1538,19 @@
   const api = {
     version: VERSION,
     sourceHash: SOURCE_HASH,
+    get ready() {
+      return frameReady;
+    },
     refresh,
     reloadFrame,
     open: openTaskboard,
     close: closeTaskboard,
     destroy,
-    hostResponse: onHostResponse,
   };
   window[SENTINEL_KEY] = api;
 
   window.addEventListener("message", onFrameMessage);
+  window.addEventListener("message", onHostBridgeMessage);
   window.addEventListener("popstate", onNativeRouteChange);
   window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);

@@ -6,15 +6,41 @@ const skillSource = await readFile(
   new URL("../skills/manage-taskboard/SKILL.md", import.meta.url),
   "utf8",
 );
+const cliReference = await readFile(
+  new URL("../skills/manage-taskboard/references/cli.md", import.meta.url),
+  "utf8",
+);
+
+test("the taskboard skill disambiguates companion terminology for agents", () => {
+  assert.match(skillSource, /## Terminology: local companion/i);
+  assert.match(skillSource, /device-local loopback service/i);
+  assert.match(skillSource, /Never translate as \*\*伴侣\*\*/i);
+  assert.match(skillSource, /not “companion API”/i);
+
+  assert.match(cliReference, /## Terminology: local companion/i);
+  assert.match(cliReference, /Do not use/i);
+  assert.match(cliReference, /伴侣 API/i);
+  assert.match(cliReference, /Taskboard HTTP API/i);
+  assert.match(cliReference, /local loopback service/i);
+});
 
 test("the taskboard skill coordinates safe issue execution and review handoff", () => {
-  assert.match(skillSource, /read the latest issue content and all comments/i);
-  assert.match(skillSource, /completed work.*returned|returned.*completed work/i);
-  assert.match(skillSource, /claim.*`todo`.*`in_progress`.*`--if-version`/is);
-  assert.match(skillSource, /version conflict.*skip the issue.*do not implement/is);
+  assert.match(
+    skillSource,
+    /first run `issue get` and `comment list`[\s\S]*Read the description and latest comments before deciding whether to start[\s\S]*If they say to wait, not execute, or not start now, stop and report without changing the status/i,
+  );
+  assert.match(skillSource, /Treat comments as current requirements, including returned work/i);
+  assert.match(
+    skillSource,
+    /If work may start[\s\S]*before reading code, downloading attachments, analyzing the implementation, or doing any other task work[\s\S]*Move a claimable `todo` to `in_progress` with its current `version`; do not continue until the move succeeds/i,
+  );
+  assert.match(
+    skillSource,
+    /If the move conflicts because the `version` is stale[\s\S]*Retry once with the latest `version` only when the issue is still a claimable `todo`, is not bound to another conversation, is not archived, and its description and latest comments are unchanged[\s\S]*If it was claimed, its status or requirements changed, it is archived, the service is unavailable, a permanent API error occurs, or the retry fails, stop and report[\s\S]*Never loop or take over another agent's claim/i,
+  );
 
   assert.match(
     skillSource,
-    /after implementation[^\n]*add a comment[^\n]*key changes[^\n]*verification[^\n]*result[^\n]*risks[^\n]*then move[^\n]*`in_review`/i,
+    /Verify the requested operation path[\s\S]*Add a comment with the changes, verification result, outcome, and remaining risks[\s\S]*Read the issue again, then move it to `in_review` with its current `version`/i,
   );
 });

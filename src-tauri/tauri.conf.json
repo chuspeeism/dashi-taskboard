@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Codex Taskboard",
+  "version": "1.0.1",
+  "identifier": "com.chuspeeism.codex-taskboard",
+  "app": {
+    "windows": []
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Productivity",
+    "shortDescription": "在 Codex 客户端中打开本地任务面板",
+    "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/node"],
+    "resources": {
+      "resources/": ""
+    },
+    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzOTE3QTI2OTdFNUNDOUQKUldTZHpPV1hKbnFSSStlc3dBblBhVzEydlRGR29seE5EeDhyUFR4NUZDT29kSHQ3MTFES2xuK0IK",
+      "endpoints": [
+        "https://github.com/chuspeeism/dashi-taskboard/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

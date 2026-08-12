@@ -3,6 +3,7 @@ import { Gantt, type GanttStatic, type Task as GanttTask } from "dhtmlx-gantt";
 import "dhtmlx-gantt/codebase/dhtmlxgantt.css";
 import type { Task, TaskDraft } from "../types";
 import type { TaskCardPresentation } from "../taskConversations";
+import { useTaskboardI18n } from "../i18n";
 import { LinearIcon } from "./LinearIcon";
 import { taskboardIconSource } from "./TaskboardIcon";
 
@@ -10,7 +11,8 @@ type GanttZoom = "day" | "week" | "month";
 
 interface GanttGroupDefinition {
   id: string;
-  label: string;
+  chineseLabel: string;
+  englishLabel: string;
   statuses: Task["status"][];
   defaultOpen: boolean;
 }
@@ -41,12 +43,12 @@ interface GanttViewProps {
 let pendingDetailViewport: { projectId: string; x: number; y: number } | null = null;
 
 const GANTT_GROUPS: GanttGroupDefinition[] = [
-  { id: "in-progress", label: "处理中", statuses: ["in_progress"], defaultOpen: true },
-  { id: "in-review", label: "等你确认", statuses: ["in_review"], defaultOpen: true },
-  { id: "blocked", label: "遇到阻碍", statuses: ["blocked"], defaultOpen: true },
-  { id: "todo", label: "待处理", statuses: ["backlog", "todo"], defaultOpen: true },
-  { id: "done", label: "已完成", statuses: ["done"], defaultOpen: false },
-  { id: "canceled", label: "已取消", statuses: ["canceled"], defaultOpen: false },
+  { id: "in-progress", chineseLabel: "处理中", englishLabel: "In progress", statuses: ["in_progress"], defaultOpen: true },
+  { id: "in-review", chineseLabel: "等你确认", englishLabel: "In review", statuses: ["in_review"], defaultOpen: true },
+  { id: "blocked", chineseLabel: "遇到阻碍", englishLabel: "Blocked", statuses: ["blocked"], defaultOpen: true },
+  { id: "todo", chineseLabel: "待处理", englishLabel: "To do", statuses: ["backlog", "todo"], defaultOpen: true },
+  { id: "done", chineseLabel: "已完成", englishLabel: "Completed", statuses: ["done"], defaultOpen: false },
+  { id: "canceled", chineseLabel: "已取消", englishLabel: "Canceled", statuses: ["canceled"], defaultOpen: false },
 ];
 
 function localDate(value: string) {
@@ -64,6 +66,14 @@ function dateValue(value: Date) {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function ganttDate(value: Date, locale: string, includeYear = false) {
+  return new Intl.DateTimeFormat(locale, {
+    year: includeYear ? "numeric" : undefined,
+    month: "short",
+    day: "numeric",
+  }).format(value);
 }
 
 function taskProgress(task: Task, presentation: TaskCardPresentation | undefined) {
@@ -96,6 +106,8 @@ function dateCellClass(date: Date) {
 }
 
 export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCompleted, todayRequest, onOpenTask, onUpdate }: GanttViewProps) {
+  const { language, locale, text } = useTaskboardI18n();
+  const i18nRef = useRef({ language, locale, text });
   const containerRef = useRef<HTMLDivElement>(null);
   const ganttRef = useRef<GanttStatic | null>(null);
   const [gridCollapsed, setGridCollapsed] = useState(false);
@@ -110,12 +122,12 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
   tasksRef.current = tasks;
   onOpenTaskRef.current = onOpenTask;
   onUpdateRef.current = onUpdate;
+  i18nRef.current = { language, locale, text };
 
   const visibleTasks = useMemo(
     () => hideCompleted ? tasks.filter((task) => task.status !== "done" && task.status !== "canceled") : tasks,
     [hideCompleted, tasks],
   );
-
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -140,7 +152,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     instance.config.columns = [
       {
         name: "text",
-        label: "议题",
+        label: i18nRef.current.text("议题", "Issue"),
         tree: true,
         width: "*",
         min_width: 190,
@@ -149,7 +161,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           if (task.taskboardGroup) {
             return `<div class="gantt-grid-group"><strong>${escapeHtml(task.taskboardTitle)}</strong><span>${task.taskboardCount}</span></div>`;
           }
-          return `<div class="gantt-grid-issue"><strong>${escapeHtml(task.taskboardTitle)}</strong>${task.taskboardUnread ? '<i class="task-unread-dot" aria-label="有未读更新"></i>' : ""}</div>`;
+          return `<div class="gantt-grid-issue"><strong>${escapeHtml(task.taskboardTitle)}</strong>${task.taskboardUnread ? `<i class="task-unread-dot" aria-label="${escapeHtml(i18nRef.current.text("有未读更新", "Unread updates"))}"></i>` : ""}</div>`;
         },
       },
     ];
@@ -170,10 +182,10 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       if (task.taskboardGroup) return "";
       const displayEnd = addDays(end, -1);
       const dateLabel = start.getFullYear() === displayEnd.getFullYear()
-        ? `${start.getMonth() + 1}月${start.getDate()}日 — ${displayEnd.getMonth() + 1}月${displayEnd.getDate()}日`
-        : `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 — ${displayEnd.getFullYear()}年${displayEnd.getMonth() + 1}月${displayEnd.getDate()}日`;
+        ? `${ganttDate(start, i18nRef.current.locale)} — ${ganttDate(displayEnd, i18nRef.current.locale)}`
+        : `${ganttDate(start, i18nRef.current.locale, true)} — ${ganttDate(displayEnd, i18nRef.current.locale, true)}`;
       const avatar = task.taskboardAssigneeType === "agent"
-        ? `<img src="/codex-agent-logo.png" alt="">`
+        ? `<img src="codex-agent-logo.png" alt="">`
         : task.taskboardAssigneeAvatarUrl
         ? `<img src="${escapeHtml(task.taskboardAssigneeAvatarUrl)}" alt="">`
         : `<span>${escapeHtml(task.taskboardAssigneeInitial)}</span>`;
@@ -188,8 +200,13 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     instance.templates.task_row_class = (_start, _end, item) => rowClass(item);
     instance.templates.scale_cell_class = dateCellClass;
     instance.templates.timeline_cell_class = (_item, date) => dateCellClass(date);
-    const monthFormat = (date: Date) => `${date.getFullYear()}年${date.getMonth() + 1}月`;
-    const dayFormat = (date: Date) => `<span class="gantt-scale-date"><span class="gantt-scale-weekday">${["S", "M", "T", "W", "T", "F", "S"][date.getDay()]}</span><span class="gantt-scale-day">${date.getDate()}</span></span>`;
+    const monthFormat = (date: Date) => new Intl.DateTimeFormat(i18nRef.current.locale, { year: "numeric", month: "long" }).format(date);
+    const dayFormat = (date: Date) => {
+      const weekdayLabels = i18nRef.current.language === "zh"
+        ? ["日", "一", "二", "三", "四", "五", "六"]
+        : ["S", "M", "T", "W", "T", "F", "S"];
+      return `<span class="gantt-scale-date"><span class="gantt-scale-weekday">${weekdayLabels[date.getDay()]}</span><span class="gantt-scale-day">${date.getDate()}</span></span>`;
+    };
     instance.ext.zoom.init({
       levels: [
         {
@@ -215,8 +232,8 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           scale_height: 66,
           min_column_width: 82,
           scales: [
-            { unit: "year", step: 1, format: "%Y年" },
-            { unit: "month", step: 1, format: (date: Date) => `${date.getMonth() + 1}月` },
+            { unit: "year", step: 1, format: (date: Date) => new Intl.DateTimeFormat(i18nRef.current.locale, { year: "numeric" }).format(date) },
+            { unit: "month", step: 1, format: (date: Date) => new Intl.DateTimeFormat(i18nRef.current.locale, { month: "short" }).format(date) },
           ],
         },
       ],
@@ -282,7 +299,18 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       setLinkedHoverTask(taskId);
     };
     const handlePointerLeave = () => setLinkedHoverTask(null);
-    instance.init(container);
+    const originalEvent = instance.event;
+    instance.event = (...args) => {
+      const [target, eventName] = args;
+      const resizeWatcherWindow = container.querySelector<HTMLIFrameElement>("iframe.gantt_container_resize_watcher")?.contentWindow;
+      if (eventName === "resize" && Object.is(target, resizeWatcherWindow)) return;
+      originalEvent(...args);
+    };
+    try {
+      instance.init(container);
+    } finally {
+      instance.event = originalEvent;
+    }
     container.addEventListener("pointermove", handlePointerMove);
     container.addEventListener("pointerleave", handlePointerLeave);
     const markerFrame = requestAnimationFrame(updateOverlays);
@@ -292,8 +320,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       const nextGridWidth = Math.round(Math.max(300, Math.min(460, width * ratio)));
       expandedGridWidthRef.current = nextGridWidth;
       setGridWidth(nextGridWidth);
-      if (gridCollapsedRef.current) return;
-      instance.config.grid_width = nextGridWidth;
+      if (!gridCollapsedRef.current) instance.config.grid_width = nextGridWidth;
       instance.setSizes();
     });
     resizeObserver.observe(container);
@@ -310,26 +337,65 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
   useEffect(() => {
     const instance = ganttRef.current;
     if (!instance) return;
-    const data: TaskboardGanttTask[] = [];
+    const scroll = instance.getScrollState();
+    const showGrid = instance.config.show_grid;
+    const gridWidth = instance.config.grid_width;
+    const issueColumn = instance.config.columns.find((column) => column.name === "text");
+    if (issueColumn) issueColumn.label = i18nRef.current.text("议题", "Issue");
 
     for (const group of GANTT_GROUPS) {
+      const id = `gantt-group-${group.id}`;
+      if (!instance.isTaskExists(id)) continue;
+      const task = instance.getTask(id) as TaskboardGanttTask & { $open?: boolean };
+      const open = task.$open;
+      const label = i18nRef.current.text(group.chineseLabel, group.englishLabel);
+      task.text = label;
+      task.taskboardTitle = label;
+      task.$open = open;
+    }
+
+    instance.config.show_grid = showGrid;
+    instance.config.grid_width = gridWidth;
+    instance.refreshData();
+    instance.render();
+    instance.config.show_grid = showGrid;
+    instance.config.grid_width = gridWidth;
+    instance.scrollTo(scroll.x, scroll.y);
+  }, [language, locale, text]);
+
+  useEffect(() => {
+    const instance = ganttRef.current;
+    if (!instance) return;
+    const data: TaskboardGanttTask[] = [];
+    const groupOpenState = new Map<string, boolean>();
+
+    for (const group of GANTT_GROUPS) {
+      const groupId = `gantt-group-${group.id}`;
+      if (!instance.isTaskExists(groupId)) continue;
+      const existingGroup = instance.getTask(groupId) as TaskboardGanttTask & { $open?: boolean };
+      groupOpenState.set(groupId, Boolean(existingGroup.$open));
+    }
+
+    for (const group of GANTT_GROUPS) {
+      const groupId = `gantt-group-${group.id}`;
+      const groupLabel = i18nRef.current.text(group.chineseLabel, group.englishLabel);
       const groupTasks = visibleTasks
         .filter((task) => group.statuses.includes(task.status))
         .sort((left, right) => Number(Boolean(right.startDate && right.dueDate)) - Number(Boolean(left.startDate && left.dueDate)));
       if (!groupTasks.length) continue;
       const progress = groupTasks.reduce((sum, task) => sum + taskProgress(task, presentations[task.id]), 0) / groupTasks.length;
       data.push({
-        id: `gantt-group-${group.id}`,
-        text: group.label,
+        id: groupId,
+        text: groupLabel,
         type: "project",
-        open: group.defaultOpen,
+        open: groupOpenState.get(groupId) ?? group.defaultOpen,
         readonly: true,
         row_height: 46,
         bar_height: 4,
         unscheduled: true,
         progress,
         taskboardStatus: group.statuses[0],
-        taskboardTitle: group.label,
+        taskboardTitle: groupLabel,
         taskboardUnread: groupTasks.some((task) => presentations[task.id]?.unread),
         taskboardAssigneeType: null,
         taskboardAssigneeName: "",
@@ -344,7 +410,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
         const itemProgress = taskProgress(task, presentations[task.id]);
         data.push({
           id: task.id,
-          parent: `gantt-group-${group.id}`,
+          parent: groupId,
           text: task.title,
           row_height: 58,
           bar_height: 44,
@@ -430,23 +496,32 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       <div className="gantt-canvas-shell">
         <div className="gantt-canvas" ref={containerRef} />
         {todayMarkerLeft !== null && (
-          <div className="gantt-today-marker" style={{ left: todayMarkerLeft }} aria-label="今天">
-            <span>Today</span>
+          <div className="gantt-today-marker" style={{ left: todayMarkerLeft }} aria-label={text("今天", "Today")}>
+            <span>{text("今天", "Today")}</span>
           </div>
         )}
         <button
           type="button"
           className={`gantt-grid-toggle${gridCollapsed ? " is-collapsed" : ""}`}
           style={{ left: gridCollapsed ? 14 : gridWidth }}
-          aria-label={gridCollapsed ? "展开标题区域" : "收起标题区域"}
+          aria-label={gridCollapsed
+            ? text("展开标题区域", "Expand title area")
+            : text("收起标题区域", "Collapse title area")}
           aria-expanded={!gridCollapsed}
-          title={gridCollapsed ? "展开标题区域" : "收起标题区域"}
+          title={gridCollapsed
+            ? text("展开标题区域", "Expand title area")
+            : text("收起标题区域", "Collapse title area")}
           onClick={toggleGrid}
         >
           <LinearIcon name={gridCollapsed ? "chevronRight" : "chevronLeft"} />
         </button>
         {!visibleTasks.length && (
-          <div className="gantt-empty-overlay"><LinearIcon name="calendar" /><span>{hasActiveFilters || hideCompleted ? "当前条件下没有议题" : "创建议题后，可在这里安排时间线"}</span></div>
+          <div className="gantt-empty-overlay">
+            <LinearIcon name="calendar" />
+            <span>{hasActiveFilters || hideCompleted
+              ? text("当前条件下没有议题", "No issues match the current conditions")
+              : text("创建议题后，可在这里安排时间线", "Create an issue to schedule it on the timeline")}</span>
+          </div>
         )}
       </div>
     </div>

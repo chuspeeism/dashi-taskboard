@@ -14,6 +14,8 @@ import {
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { taskboardStorage } from "../storage";
+import { useTaskboardI18n } from "../i18n";
 import {
   createAiChatThread,
   deleteAiChatThread,
@@ -145,10 +147,10 @@ const COMPOSER_HTML_BLOCKS = new Set([
   "SECTION",
 ]);
 const COMPOSER_HTML_IGNORED = new Set(["SCRIPT", "STYLE", "SVG"]);
-const SANDBOX_LABELS: Record<AiChatSandbox, string> = {
-  "read-only": "请求批准",
-  "workspace-write": "替我审批",
-  "danger-full-access": "完全访问权限",
+const SANDBOX_LABELS: Record<AiChatSandbox, readonly [string, string]> = {
+  "read-only": ["请求批准", "Ask for approval"],
+  "workspace-write": ["替我审批", "Approve selected actions"],
+  "danger-full-access": ["完全访问权限", "Full access"],
 };
 
 function clampPanelGeometry(geometry: PanelGeometry): PanelGeometry {
@@ -166,7 +168,7 @@ function clampPanelGeometry(geometry: PanelGeometry): PanelGeometry {
 }
 
 function loadPanelGeometry(): PanelGeometry {
-  const stored = window.localStorage.getItem(PANEL_GEOMETRY_KEY);
+  const stored = taskboardStorage.getItem(PANEL_GEOMETRY_KEY);
   if (!stored) return clampPanelGeometry(PANEL_DEFAULT_GEOMETRY);
   try {
     const geometry = JSON.parse(stored) as PanelGeometry;
@@ -182,10 +184,10 @@ function loadPanelGeometry(): PanelGeometry {
   }
 }
 
-const SANDBOX_DESCRIPTIONS: Record<AiChatSandbox, string> = {
-  "read-only": "编辑外部文件和使用互联网时始终询问",
-  "workspace-write": "仅对检测到的风险操作请求批准",
-  "danger-full-access": "不受限制地访问互联网和您电脑上的任何文件",
+const SANDBOX_DESCRIPTIONS: Record<AiChatSandbox, readonly [string, string]> = {
+  "read-only": ["编辑外部文件和使用互联网时始终询问", "Always ask before editing external files or using the internet"],
+  "workspace-write": ["仅对检测到的风险操作请求批准", "Ask only for operations that are detected as risky"],
+  "danger-full-access": ["不受限制地访问互联网和您电脑上的任何文件", "Access the internet and any file on your computer without restrictions"],
 };
 
 const SANDBOX_ICONS: Record<AiChatSandbox, "hand" | "terminal" | "shieldAlert"> = {
@@ -194,13 +196,13 @@ const SANDBOX_ICONS: Record<AiChatSandbox, "hand" | "terminal" | "shieldAlert"> 
   "danger-full-access": "shieldAlert",
 };
 
-const EFFORT_LABELS: Record<string, string> = {
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "极高",
-  max: "最高",
-  ultra: "极高",
+const EFFORT_LABELS: Record<string, readonly [string, string]> = {
+  low: ["低", "Low"],
+  medium: ["中", "Medium"],
+  high: ["高", "High"],
+  xhigh: ["极高", "Extra high"],
+  max: ["最高", "Maximum"],
+  ultra: ["极高", "Ultra"],
 };
 
 function modelDisplayName(value: string): string {
@@ -560,21 +562,21 @@ function SkillReference({
   );
 }
 
-const ACTIVITY_LABELS: Record<string, string> = {
-  plan: "执行计划",
-  todo: "任务进度",
-  todo_list: "任务进度",
-  command: "运行命令",
-  command_execution: "运行命令",
-  file: "文件修改",
-  file_change: "文件修改",
-  mcp: "调用 MCP",
-  mcp_tool_call: "调用 MCP",
-  skill: "调用 Skill",
-  web: "搜索资料",
-  web_search: "搜索资料",
-  error: "执行失败",
-  "turn.failed": "执行失败",
+const ACTIVITY_LABELS: Record<string, readonly [string, string]> = {
+  plan: ["执行计划", "Plan"],
+  todo: ["任务进度", "Task progress"],
+  todo_list: ["任务进度", "Task progress"],
+  command: ["运行命令", "Run command"],
+  command_execution: ["运行命令", "Run command"],
+  file: ["文件修改", "File changes"],
+  file_change: ["文件修改", "File changes"],
+  mcp: ["调用 MCP", "Use MCP"],
+  mcp_tool_call: ["调用 MCP", "Use MCP"],
+  skill: ["调用 Skill", "Use Skill"],
+  web: ["搜索资料", "Search the web"],
+  web_search: ["搜索资料", "Search the web"],
+  error: ["执行失败", "Failed"],
+  "turn.failed": ["执行失败", "Failed"],
 };
 
 const ACTIVITY_ICONS: Record<string, LinearIconName> = {
@@ -594,8 +596,11 @@ const ACTIVITY_ICONS: Record<string, LinearIconName> = {
   "turn.failed": "alert",
 };
 
-function messageFor(error: unknown): string {
-  return error instanceof Error ? error.message : "AI 对话暂时不可用";
+const AI_CHAT_UNAVAILABLE_ERROR = Symbol("ai-chat-unavailable");
+type AiChatError = string | typeof AI_CHAT_UNAVAILABLE_ERROR;
+
+function messageFor(error: unknown): AiChatError {
+  return error instanceof Error ? error.message : AI_CHAT_UNAVAILABLE_ERROR;
 }
 
 function isAiChatSandbox(value: string): value is AiChatSandbox {
@@ -604,10 +609,10 @@ function isAiChatSandbox(value: string): value is AiChatSandbox {
     || value === "danger-full-access";
 }
 
-function dateLabel(value: string): string {
+function dateLabel(value: string, locale: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -634,18 +639,21 @@ function parsedTodoLines(value: unknown): string[] {
   }
 }
 
-function activityDetail(event: AiChatEvent): ThinkingActivityDetail | null {
+function activityDetail(
+  event: AiChatEvent,
+  text: (chinese: string, english: string) => string,
+): ThinkingActivityDetail | null {
   const files = event.data?.files;
   if (Array.isArray(files)) {
     const visibleFiles = files.filter((value): value is string => typeof value === "string");
     if (visibleFiles.length > 0) {
-      return { kind: "lines", summary: "查看文件", value: visibleFiles };
+      return { kind: "lines", summary: text("查看文件", "View files"), value: visibleFiles };
     }
   }
   if (event.type === "todo" || event.type === "todo_list") {
     const lines = parsedTodoLines(event.data?.detail);
     if (lines.length > 0) {
-      return { kind: "lines", summary: "查看任务", value: lines };
+      return { kind: "lines", summary: text("查看任务", "View tasks"), value: lines };
     }
   }
   for (const key of ["output", "command", "detail", "path"]) {
@@ -653,7 +661,7 @@ function activityDetail(event: AiChatEvent): ThinkingActivityDetail | null {
     if (typeof value === "string" && value.trim()) {
       return {
         kind: "pre",
-        summary: activityDetailSummary(event),
+        summary: activityDetailSummary(event, text),
         value,
       };
     }
@@ -661,13 +669,16 @@ function activityDetail(event: AiChatEvent): ThinkingActivityDetail | null {
   return null;
 }
 
-function activityDetailSummary(event: AiChatEvent): string {
-  if (typeof event.data?.output === "string" && event.data.output.trim()) return "查看输出";
-  if (typeof event.data?.command === "string" && event.data.command.trim()) return "查看命令";
-  if (typeof event.data?.detail === "string" && event.data.detail.trim()) return "查看详情";
-  if (typeof event.data?.path === "string" && event.data.path.trim()) return "查看路径";
-  if (Array.isArray(event.data?.files)) return "查看文件";
-  return "查看详情";
+function activityDetailSummary(
+  event: AiChatEvent,
+  text: (chinese: string, english: string) => string,
+): string {
+  if (typeof event.data?.output === "string" && event.data.output.trim()) return text("查看输出", "View output");
+  if (typeof event.data?.command === "string" && event.data.command.trim()) return text("查看命令", "View command");
+  if (typeof event.data?.detail === "string" && event.data.detail.trim()) return text("查看详情", "View details");
+  if (typeof event.data?.path === "string" && event.data.path.trim()) return text("查看路径", "View path");
+  if (Array.isArray(event.data?.files)) return text("查看文件", "View files");
+  return text("查看详情", "View details");
 }
 
 function MarkdownMessage({
@@ -743,6 +754,7 @@ function ThinkingSteps({
   events: AiChatEvent[];
   active: boolean;
 }) {
+  const { text } = useTaskboardI18n();
   const statuses = events.map(aiChatEventStatus);
   const status = statuses.includes("running")
     ? "running"
@@ -757,8 +769,10 @@ function ThinkingSteps({
   }, [active]);
 
   const statusLabel = status === "running"
-    ? "思考中"
-    : status === "failed" ? "思考中断" : "已思考";
+    ? text("思考中", "Thinking")
+    : status === "failed"
+      ? text("思考中断", "Thinking stopped")
+      : text("已思考", "Thought");
 
   return (
     <section className={`ai-chat-thinking-steps is-${status}`}>
@@ -780,13 +794,20 @@ function ThinkingSteps({
           <div className="ai-chat-thinking-list">
             {events.map((event, index) => {
               const eventStatus = aiChatEventStatus(event);
-              const detail = activityDetail(event);
+              const detail = activityDetail(event, text);
+              const activityLabel = ACTIVITY_LABELS[event.type];
               const content = detail?.kind === "lines"
                 && (event.type === "file" || event.type === "file_change")
-                ? `${detail.value.length} 个文件`
+                ? text(
+                  `${detail.value.length} 个文件`,
+                  `${detail.value.length} ${detail.value.length === 1 ? "file" : "files"}`,
+                )
                 : detail?.kind === "lines"
                   && (event.type === "todo" || event.type === "todo_list")
-                  ? `${detail.value.length} 项任务`
+                  ? text(
+                    `${detail.value.length} 项任务`,
+                    `${detail.value.length} ${detail.value.length === 1 ? "task" : "tasks"}`,
+                  )
                   : event.content.trim();
               return (
                 <div
@@ -808,7 +829,9 @@ function ThinkingSteps({
                     <div className="ai-chat-thinking-step-content">
                       <div className="ai-chat-thinking-step-heading">
                         <span className="ai-chat-thinking-step-label">
-                          {ACTIVITY_LABELS[event.type] ?? "执行活动"}
+                          {activityLabel
+                            ? text(...activityLabel)
+                            : text("执行活动", "Activity")}
                           {eventStatus === "running" && <span aria-hidden="true">…</span>}
                         </span>
                         {content && (
@@ -963,20 +986,21 @@ export function AiChat({
   onThreadsChange,
   openThreadRequest,
 }: AiChatProps) {
+  const { locale, text } = useTaskboardI18n();
   const [panelOpen, setPanelOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menu, setMenu] = useState<MenuName>(null);
   const [threads, setThreads] = useState<AiChatThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    () => window.localStorage.getItem(LAST_THREAD_KEY),
+    () => taskboardStorage.getItem(LAST_THREAD_KEY),
   );
   const [snapshot, setSnapshot] = useState<AiChatThreadSnapshot | null>(null);
   const [draftOrigin, setDraftOrigin] = useState<DraftThreadOrigin | null>(null);
   const [catalog, setCatalog] = useState<AiChatCatalog | null>(null);
   const [catalogLoadedProjectId, setCatalogLoadedProjectId] = useState<string | null>(null);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<AiChatError | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AiChatError | null>(null);
   const [draft, setDraft] = useState("");
   const [requestedComposerText, setRequestedComposerText] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -1020,8 +1044,8 @@ export function AiChat({
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId;
-    if (selectedThreadId) window.localStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
-    else window.localStorage.removeItem(LAST_THREAD_KEY);
+    if (selectedThreadId) taskboardStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
+    else taskboardStorage.removeItem(LAST_THREAD_KEY);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -1040,7 +1064,7 @@ export function AiChat({
         session.captureTarget.releasePointerCapture(session.pointerId);
       }
       if (window.innerWidth > 719) {
-        window.localStorage.setItem(
+        taskboardStorage.setItem(
           PANEL_GEOMETRY_KEY,
           JSON.stringify(session.geometry),
         );
@@ -1384,6 +1408,7 @@ export function AiChat({
   const currentRun = snapshot?.thread.currentRun
     ?? snapshot?.runs.find((run) => run.status === "running")
     ?? null;
+  const visibleError = error ?? catalogError;
   const composerBlocked = Boolean(
     selectedThreadId && deletingThreadId === selectedThreadId,
   );
@@ -1538,7 +1563,10 @@ export function AiChat({
   function beginNewConversation() {
     const input = buildThreadCreateInput(projectId ?? "", issueId);
     if (!input) {
-      setError("请先进入一个已映射的项目，再新建对话");
+      setError(text(
+        "请先进入一个已映射的项目，再新建对话",
+        "Open a mapped project before you start a new chat.",
+      ));
       return;
     }
     if (!draftOrigin) draftReturnThreadIdRef.current = selectedThreadRef.current;
@@ -1560,7 +1588,10 @@ export function AiChat({
     );
     const input = buildThreadCreateInput(origin?.projectId ?? "", origin?.issueId ?? null);
     if (!input) {
-      setError("请先进入一个已映射的项目，再新建对话");
+      setError(text(
+        "请先进入一个已映射的项目，再新建对话",
+        "Open a mapped project before you start a new chat.",
+      ));
       return null;
     }
     const inheritedSettings = {
@@ -1609,7 +1640,10 @@ export function AiChat({
   }
 
   async function deleteThread(thread: AiChatThread) {
-    if (!window.confirm(`删除本地对话“${thread.title}”？`)) return;
+    if (!window.confirm(text(
+      `删除本地对话“${thread.title}”？`,
+      `Delete local chat “${thread.title}”?`,
+    ))) return;
     setDeletingThreadId(thread.id);
     try {
       await deleteAiChatThread(thread.id);
@@ -1909,7 +1943,10 @@ export function AiChat({
           const reader = new FileReader();
           reader.onload = () => {
             if (typeof reader.result !== "string") {
-              reject(new Error(`无法读取附件 ${file.name}`));
+              reject(new Error(text(
+                `无法读取附件 ${file.name}`,
+                `Could not read attachment ${file.name}.`,
+              )));
               return;
             }
             const separator = reader.result.indexOf(",");
@@ -1921,7 +1958,10 @@ export function AiChat({
               ...(file.type.startsWith("image/") ? { previewUrl: reader.result } : {}),
             });
           };
-          reader.onerror = () => reject(new Error(`无法读取附件 ${file.name}`));
+          reader.onerror = () => reject(new Error(text(
+            `无法读取附件 ${file.name}`,
+            `Could not read attachment ${file.name}.`,
+          )));
           reader.readAsDataURL(file);
         })
       )));
@@ -2124,8 +2164,8 @@ export function AiChat({
           ref={panelRef}
           className={`ai-chat-panel${panelResizeEdge ? ` is-resizing-${panelResizeEdge}` : ""}`}
           style={panelGeometry ?? undefined}
-          aria-label="Codex AI 对话"
-          data-screen-label="Codex AI 对话"
+          aria-label={text("Codex AI 对话", "Codex AI chat")}
+          data-screen-label={text("Codex AI 对话", "Codex AI chat")}
         >
           <div
             className="ai-chat-resize-handle is-top"
@@ -2144,22 +2184,27 @@ export function AiChat({
           />
           <header className="ai-chat-panel-header">
             <div className="ai-chat-panel-title">
-              <strong>{snapshot?.thread.title ?? "新对话"}</strong>
-              <span>{snapshot?.thread.origin.projectName ?? "选择对话或从当前项目新建"}</span>
+              <strong>{snapshot?.thread.title ?? text("新对话", "New chat")}</strong>
+              <span>{snapshot?.thread.origin.projectName ?? text(
+                "选择对话或从当前项目新建",
+                "Select a chat or start one in the current project",
+              )}</span>
             </div>
             <button
               type="button"
-              aria-label="对话历史"
+              aria-label={text("对话历史", "Chat history")}
               aria-pressed={historyOpen}
-              title="对话历史"
+              title={text("对话历史", "Chat history")}
               onClick={() => { setHistoryOpen((current) => !current); setMenu(null); }}
             >
               <LinearIcon name="conversation" />
             </button>
             <button
               type="button"
-              aria-label="新建对话"
-              title={projectId ? "新建对话" : "请先进入项目"}
+              aria-label={text("新建对话", "New chat")}
+              title={projectId
+                ? text("新建对话", "New chat")
+                : text("请先进入项目", "Open a project first")}
               disabled={!projectId || loading}
               onClick={beginNewConversation}
             >
@@ -2167,8 +2212,8 @@ export function AiChat({
             </button>
             <button
               type="button"
-              aria-label="关闭 AI 对话"
-              title="关闭"
+              aria-label={text("关闭 AI 对话", "Close AI chat")}
+              title={text("关闭", "Close")}
               onClick={() => {
                 restorePersistedConversationFromDraft();
                 setPanelOpen(false);
@@ -2179,9 +2224,9 @@ export function AiChat({
           </header>
 
           {historyOpen && (
-            <div className="ai-chat-history" aria-label="对话历史">
+            <div className="ai-chat-history" aria-label={text("对话历史", "Chat history")}>
               <div className="ai-chat-history-heading">
-                <strong>对话历史</strong>
+                <strong>{text("对话历史", "Chat history")}</strong>
                 <span>{threads.length}</span>
               </div>
               {threads.length > 0 ? threads.map((thread) => (
@@ -2202,14 +2247,14 @@ export function AiChat({
                     <span className={`ai-chat-thread-status is-${thread.status}`} aria-hidden="true" />
                     <span>
                       <strong>{thread.title}</strong>
-                      <small>{thread.origin.projectName} · {dateLabel(thread.updatedAt)}</small>
+                      <small>{thread.origin.projectName} · {dateLabel(thread.updatedAt, locale)}</small>
                     </span>
                   </button>
                   <button
                     className="ai-chat-history-delete"
                     type="button"
-                    aria-label={`删除对话 ${thread.title}`}
-                    title="删除本地记录"
+                    aria-label={text(`删除对话 ${thread.title}`, `Delete chat ${thread.title}`)}
+                    title={text("删除本地记录", "Delete local record")}
                     disabled={thread.status === "running" || deletingThreadId === thread.id}
                     onClick={() => void deleteThread(thread)}
                   >
@@ -2217,7 +2262,7 @@ export function AiChat({
                   </button>
                 </div>
               )) : (
-                <p>还没有本地对话</p>
+                <p>{text("还没有本地对话", "No local chats yet")}</p>
               )}
             </div>
           )}
@@ -2229,7 +2274,10 @@ export function AiChat({
             aria-live="polite"
           >
             {loading && !snapshot ? (
-              <div className="ai-chat-empty"><span className="ai-chat-spinner" />正在恢复对话…</div>
+              <div className="ai-chat-empty">
+                <span className="ai-chat-spinner" />
+                {text("正在恢复对话…", "Restoring chat…")}
+              </div>
             ) : snapshot ? (
               <>
                 <MessageTimeline
@@ -2240,7 +2288,7 @@ export function AiChat({
                 {snapshot.thread.status === "running" && (
                   <div className="ai-chat-running" role="status">
                     <span className="ai-chat-spinner" />
-                    Codex 正在处理
+                    {text("Codex 正在处理", "Codex is working")}
                   </div>
                 )}
                 {retryableUserEvent && (
@@ -2258,25 +2306,32 @@ export function AiChat({
                     }}
                   >
                     <LinearIcon name="recurrence" />
-                    重试上一条消息
+                    {text("重试上一条消息", "Retry the previous message")}
                   </button>
                 )}
               </>
             ) : (
               <div className="ai-chat-empty">
                 <LinearIcon name="conversation" />
-                <strong>{projectId ? "在当前项目中开始对话" : "打开一个历史对话"}</strong>
+                <strong>{projectId
+                  ? text("在当前项目中开始对话", "Start a chat in the current project")
+                  : text("打开一个历史对话", "Open a chat from history")}</strong>
                 <p>{projectId
-                  ? "Codex 会在新对话创建时记住当前项目。"
-                  : "进入项目后可以新建对话。"}</p>
+                  ? text(
+                    "Codex 会在新对话创建时记住当前项目。",
+                    "Codex will remember the current project when it creates the new chat.",
+                  )
+                  : text("进入项目后可以新建对话。", "Open a project to start a new chat.")}</p>
               </div>
             )}
           </div>
 
-          {(error || catalogError) && (
+          {visibleError && (
             <div className="ai-chat-error" role="alert">
               <LinearIcon name="alert" />
-              <span>{error ?? catalogError}</span>
+              <span>{visibleError === AI_CHAT_UNAVAILABLE_ERROR
+                ? text("AI 对话暂时不可用", "AI chat is temporarily unavailable.")
+                : visibleError}</span>
             </div>
           )}
 
@@ -2289,7 +2344,7 @@ export function AiChat({
           >
             {attachmentDragActive && (
               <div className="ai-chat-attachment-drop-hint" aria-hidden="true">
-                松开添加文件
+                {text("松开添加文件", "Drop files to add them")}
               </div>
             )}
             <div className="ai-chat-input-wrap">
@@ -2310,8 +2365,11 @@ export function AiChat({
                         )}
                       <button
                         type="button"
-                        aria-label={`移除附件 ${attachment.filename}`}
-                        title="移除附件"
+                        aria-label={text(
+                          `移除附件 ${attachment.filename}`,
+                          `Remove attachment ${attachment.filename}`,
+                        )}
+                        title={text("移除附件", "Remove attachment")}
                         onClick={() => {
                           setAttachments((current) => current.filter((item) => item.id !== attachment.id));
                         }}
@@ -2326,9 +2384,9 @@ export function AiChat({
                 ref={editorRef}
                 className="ai-chat-composer-editor"
                 contentEditable={!composerBlocked}
-                data-placeholder="询问 Codex"
+                data-placeholder={text("询问 Codex", "Ask Codex")}
                 role="textbox"
-                aria-label="发送给 Codex 的消息"
+                aria-label={text("发送给 Codex 的消息", "Message to Codex")}
                 aria-multiline="true"
                 suppressContentEditableWarning
                 onBeforeInput={(event) => rememberComposerBeforeInput(event.nativeEvent as InputEvent)}
@@ -2370,7 +2428,10 @@ export function AiChat({
                 return createPortal(
                   <button
                     type="button"
-                    aria-label={`移除 Skill ${skill ? skillDisplayName(skill) : token.id}`}
+                    aria-label={text(
+                      `移除 Skill ${skill ? skillDisplayName(skill) : token.id}`,
+                      `Remove Skill ${skill ? skillDisplayName(skill) : token.id}`,
+                    )}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => removeComposerSkillToken(token.element)}
                   >
@@ -2385,7 +2446,7 @@ export function AiChat({
                   ref={skillMenuRef}
                   className="ai-chat-skill-menu"
                   role="listbox"
-                  aria-label="可用 Skill"
+                  aria-label={text("可用 Skill", "Available Skills")}
                 >
                   {visibleSkills.map((skill, index) => (
                     <button
@@ -2422,8 +2483,8 @@ export function AiChat({
               <button
                 className="ai-chat-attachment-button"
                 type="button"
-                aria-label="添加附件"
-                title="添加附件"
+                aria-label={text("添加附件", "Add attachment")}
+                title={text("添加附件", "Add attachment")}
                 disabled={attachmentBlocked}
                 onClick={() => attachmentInputRef.current?.click()}
               >
@@ -2444,19 +2505,23 @@ export function AiChat({
                   onClick={() => setMenu((current) => current === "sandbox" ? null : "sandbox")}
                 >
                   <LinearIcon name={SANDBOX_ICONS[draftSandbox]} />
-                  {SANDBOX_LABELS[draftSandbox]}
+                  {text(...SANDBOX_LABELS[draftSandbox])}
                   <LinearIcon name="chevronDown" />
                 </button>
                 {menu === "sandbox" && (
-                  <div className="ai-chat-option-menu ai-chat-permission-menu" role="menu" aria-label="执行权限">
+                  <div
+                    className="ai-chat-option-menu ai-chat-permission-menu"
+                    role="menu"
+                    aria-label={text("执行权限", "Execution permissions")}
+                  >
                     <header>
-                      <span>应如何批准 Codex 操作？</span>
+                      <span>{text("应如何批准 Codex 操作？", "How should Codex operations be approved?")}</span>
                       <a
                         href="https://developers.openai.com/codex/security"
                         target="_blank"
                         rel="noreferrer"
                       >
-                        了解更多
+                        {text("了解更多", "Learn more")}
                       </a>
                     </header>
                     {availableSandboxes.map((sandbox) => (
@@ -2470,8 +2535,8 @@ export function AiChat({
                       >
                         <LinearIcon name={SANDBOX_ICONS[sandbox]} />
                         <span>
-                          <strong>{SANDBOX_LABELS[sandbox]}</strong>
-                          <small>{SANDBOX_DESCRIPTIONS[sandbox]}</small>
+                          <strong>{text(...SANDBOX_LABELS[sandbox])}</strong>
+                          <small>{text(...SANDBOX_DESCRIPTIONS[sandbox])}</small>
                         </span>
                         {sandbox === draftSandbox && <LinearIcon name="check" />}
                       </button>
@@ -2499,33 +2564,51 @@ export function AiChat({
                       : "model"
                   ))}
                 >
-                  <span>{modelDisplayName(selectedModel?.displayName ?? (draftModel || "模型"))}</span>
+                  <span>{modelDisplayName(
+                    selectedModel?.displayName ?? (draftModel || text("模型", "Model")),
+                  )}</span>
                   <span className="ai-chat-model-effort">
-                    {EFFORT_LABELS[draftEffort] ?? (draftEffort || "推理")}
+                    {EFFORT_LABELS[draftEffort]
+                      ? text(...EFFORT_LABELS[draftEffort])
+                      : draftEffort || text("推理", "Reasoning")}
                   </span>
                   <LinearIcon name="chevronDown" />
                 </button>
                 {menu === "model" && (
-                  <div className="ai-chat-option-menu ai-chat-config-menu" role="menu" aria-label="模型与推理强度">
+                  <div
+                    className="ai-chat-option-menu ai-chat-config-menu"
+                    role="menu"
+                    aria-label={text("模型与推理强度", "Model and reasoning effort")}
+                  >
                     <button type="button" onClick={() => setMenu("model-list")}>
-                      <span>模型</span>
+                      <span>{text("模型", "Model")}</span>
                       <strong>{modelDisplayName(selectedModel?.displayName ?? draftModel)}</strong>
                       <LinearIcon name="chevronRight" />
                     </button>
                     <button type="button" onClick={() => setMenu("effort-list")}>
-                      <span>推理强度</span>
-                      <strong>{EFFORT_LABELS[draftEffort] ?? draftEffort}</strong>
+                      <span>{text("推理强度", "Reasoning effort")}</span>
+                      <strong>{EFFORT_LABELS[draftEffort]
+                        ? text(...EFFORT_LABELS[draftEffort])
+                        : draftEffort}</strong>
                       <LinearIcon name="chevronRight" />
                     </button>
                   </div>
                 )}
                 {menu === "model-list" && (
-                  <div className="ai-chat-option-menu ai-chat-config-menu ai-chat-config-submenu ai-chat-model-list" role="menu" aria-label="选择模型">
+                  <div
+                    className="ai-chat-option-menu ai-chat-config-menu ai-chat-config-submenu ai-chat-model-list"
+                    role="menu"
+                    aria-label={text("选择模型", "Select model")}
+                  >
                     <header>
-                      <button type="button" aria-label="返回模型与推理强度" onClick={() => setMenu("model")}>
+                      <button
+                        type="button"
+                        aria-label={text("返回模型与推理强度", "Back to model and reasoning effort")}
+                        onClick={() => setMenu("model")}
+                      >
                         <LinearIcon name="chevronLeft" />
                       </button>
-                      <strong>模型</strong>
+                      <strong>{text("模型", "Model")}</strong>
                     </header>
                     {(activeCatalog?.models ?? []).map((model) => (
                       <button
@@ -2544,12 +2627,20 @@ export function AiChat({
                   </div>
                 )}
                 {menu === "effort-list" && selectedModel && (
-                  <div className="ai-chat-option-menu ai-chat-config-menu ai-chat-config-submenu" role="menu" aria-label="选择推理强度">
+                  <div
+                    className="ai-chat-option-menu ai-chat-config-menu ai-chat-config-submenu"
+                    role="menu"
+                    aria-label={text("选择推理强度", "Select reasoning effort")}
+                  >
                     <header>
-                      <button type="button" aria-label="返回模型与推理强度" onClick={() => setMenu("model")}>
+                      <button
+                        type="button"
+                        aria-label={text("返回模型与推理强度", "Back to model and reasoning effort")}
+                        onClick={() => setMenu("model")}
+                      >
                         <LinearIcon name="chevronLeft" />
                       </button>
-                      <strong>推理强度</strong>
+                      <strong>{text("推理强度", "Reasoning effort")}</strong>
                     </header>
                     {selectedModel.supportedReasoningEfforts.map((effort) => (
                       <button
@@ -2559,7 +2650,7 @@ export function AiChat({
                         key={effort}
                         onClick={() => void chooseEffort(effort)}
                       >
-                        <span>{EFFORT_LABELS[effort] ?? effort}</span>
+                        <span>{EFFORT_LABELS[effort] ? text(...EFFORT_LABELS[effort]) : effort}</span>
                         {effort === draftEffort && <LinearIcon name="check" />}
                       </button>
                     ))}
@@ -2571,8 +2662,8 @@ export function AiChat({
                 <button
                   className="ai-chat-send-button is-stop"
                   type="button"
-                  aria-label="停止生成"
-                  title="停止"
+                  aria-label={text("停止生成", "Stop generating")}
+                  title={text("停止", "Stop")}
                   onClick={() => void stopRun(currentRun)}
                 >
                   <span className="ai-chat-stop-mark" aria-hidden="true" />
@@ -2581,8 +2672,8 @@ export function AiChat({
                 <button
                   className="ai-chat-send-button"
                   type="button"
-                  aria-label="发送消息"
-                  title="发送"
+                  aria-label={text("发送消息", "Send message")}
+                  title={text("发送", "Send")}
                   disabled={
                     primaryAction === "disabled"
                     || loading
@@ -2600,10 +2691,15 @@ export function AiChat({
           {dangerConfirmOpen && (
             <div className="ai-chat-confirm-backdrop">
               <div className="ai-chat-confirm" role="alertdialog" aria-modal="true" aria-labelledby="ai-chat-confirm-title">
-                <strong id="ai-chat-confirm-title">允许完全访问？</strong>
-                <p>本次消息允许 Codex 访问工作区之外的文件和命令。确认只对本次发送生效。</p>
+                <strong id="ai-chat-confirm-title">{text("允许完全访问？", "Allow full access?")}</strong>
+                <p>{text(
+                  "本次消息允许 Codex 访问工作区之外的文件和命令。确认只对本次发送生效。",
+                  "This message lets Codex access files and commands outside the workspace. This approval applies only to this message.",
+                )}</p>
                 <div>
-                  <button type="button" onClick={() => setPendingDangerInput(null)}>取消</button>
+                  <button type="button" onClick={() => setPendingDangerInput(null)}>
+                    {text("取消", "Cancel")}
+                  </button>
                   <button
                     className="is-danger"
                     type="button"
@@ -2618,7 +2714,7 @@ export function AiChat({
                       );
                     }}
                   >
-                    允许并发送
+                    {text("允许并发送", "Allow and send")}
                   </button>
                 </div>
               </div>
@@ -2631,9 +2727,9 @@ export function AiChat({
         <button
           type="button"
           className={`ai-chat-launcher is-${launcherState}`}
-          aria-label="打开 AI 对话"
+          aria-label={text("打开 AI 对话", "Open AI chat")}
           aria-expanded="false"
-          title="AI 对话"
+          title={text("AI 对话", "AI chat")}
           onClick={() => setPanelOpen(true)}
         >
           <TaskboardIcon name="aiLauncher" />

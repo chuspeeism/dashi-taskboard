@@ -7,6 +7,7 @@ import {
   buildTaskboardAutomationSpec,
   parseTaskboardAutomationHostRequest,
   reconcileTaskboardAutomation,
+  taskboardAutomationPolicyOperation,
 } from "../shared/taskboard-automation.mjs";
 import {
   AUTOMATION_MODELS,
@@ -24,6 +25,8 @@ const baseRequest = {
   projectName: "PPT Skill",
   workspacePath: "/Users/example/Documents/ppt-skill",
   skillPath: "/Users/example/taskboard/skills/manage-taskboard/SKILL.md",
+  enabledByUser: true,
+  quotaAware: false,
   intervalMinutes: 5,
   model: "gpt-5.5",
   reasoningEffort: "high",
@@ -184,6 +187,25 @@ test("the stable name and generated prompt are project-scoped and encode the cla
   assert.match(prompt, /已绑定.*branch.*worktree/);
 });
 
+test("the generated automation command uses an argv runtime file instead of an env assignment", () => {
+  const previous = process.env.CODEX_TASKBOARD_RUNTIME_FILE;
+  process.env.CODEX_TASKBOARD_RUNTIME_FILE = "/Users/example/Library/Application Support/Codex Taskboard/launcher-runtime.json";
+  try {
+    const prompt = buildTaskboardAutomationPrompt(baseRequest);
+    assert.match(
+      prompt,
+      /'\/Users\/example\/taskboard\/cli\/taskctl\.mjs' --runtime-file '\/Users\/example\/Library\/Application Support\/Codex Taskboard\/launcher-runtime\.json'/,
+    );
+    assert.doesNotMatch(prompt, /CODEX_TASKBOARD_RUNTIME_FILE=/);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CODEX_TASKBOARD_RUNTIME_FILE;
+    } else {
+      process.env.CODEX_TASKBOARD_RUNTIME_FILE = previous;
+    }
+  }
+});
+
 test("the generated cron spec uses the selected whitelisted local Codex options", () => {
   assert.deepEqual(buildTaskboardAutomationSpec(baseRequest), {
     kind: "cron",
@@ -210,10 +232,54 @@ test("the generated cron spec uses the selected whitelisted local Codex options"
   });
 });
 
+test("passive policy checks resume only after quota recovery", () => {
+  const passiveAvailable = {
+    explicit: false,
+    previousQuotaState: "available",
+    quotaState: "available",
+    currentStatus: "PAUSED",
+  };
+  assert.equal(
+    taskboardAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      passiveAvailable,
+    ),
+    "list",
+  );
+  assert.equal(
+    taskboardAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      { ...passiveAvailable, quotaState: "unknown" },
+    ),
+    "list",
+  );
+  assert.equal(
+    taskboardAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      { ...passiveAvailable, previousQuotaState: "blocked" },
+    ),
+    "ensure-active",
+  );
+  assert.equal(
+    taskboardAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      { ...passiveAvailable, explicit: true },
+    ),
+    "ensure-active",
+  );
+  assert.equal(
+    taskboardAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: false },
+      { ...passiveAvailable, currentStatus: "ACTIVE" },
+    ),
+    "ensure-active",
+  );
+});
+
 test("ensure-active updates a matching automation by id with a complete active spec", async () => {
   const existing = {
     id: "automation-1",
-    status: "PAUSED",
+    status: "ACTIVE",
     kind: "cron",
     name: "Taskboard 自动认领 · ppt-skill",
     prompt: "old prompt",

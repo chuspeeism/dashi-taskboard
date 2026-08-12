@@ -13,6 +13,9 @@ import {
   updateAiChatThread,
 } from "../web/src/api.ts";
 
+const taskboardBase = "http://127.0.0.1:43210/instance-token/";
+globalThis.document = { baseURI: taskboardBase };
+
 const thread = {
   id: "thread-1",
   title: "LOCAL-103",
@@ -45,7 +48,9 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
   const calls = [];
   globalThis.fetch = async (path, init = {}) => {
     calls.push({ path, init });
-    if (String(path).startsWith("/api/local/ai/catalog")) {
+    const url = new URL(path);
+    const requestPath = `${url.pathname.replace("/instance-token", "")}${url.search}`;
+    if (requestPath.startsWith("/api/local/ai/catalog")) {
       return json({
         models: [{
           slug: "codex-real",
@@ -59,19 +64,19 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
         sandboxes: ["read-only", "workspace-write", "danger-full-access"],
       });
     }
-    if (path === "/api/local/ai/threads" && !init.method) return json({ threads: [thread] });
-    if (path === "/api/local/ai/threads" && init.method === "POST") return json({ thread });
-    if (path === "/api/local/ai/threads/thread-1" && !init.method) {
+    if (requestPath === "/api/local/ai/threads" && !init.method) return json({ threads: [thread] });
+    if (requestPath === "/api/local/ai/threads" && init.method === "POST") return json({ thread });
+    if (requestPath === "/api/local/ai/threads/thread-1" && !init.method) {
       return json({ thread, events: [], runs: [] });
     }
-    if (path === "/api/local/ai/threads/thread-1" && init.method === "PATCH") return json({ thread });
-    if (path === "/api/local/ai/threads/thread-1" && init.method === "DELETE") {
+    if (requestPath === "/api/local/ai/threads/thread-1" && init.method === "PATCH") return json({ thread });
+    if (requestPath === "/api/local/ai/threads/thread-1" && init.method === "DELETE") {
       return new Response(null, { status: 204 });
     }
-    if (path === "/api/local/ai/threads/thread-1/turns") {
+    if (requestPath === "/api/local/ai/threads/thread-1/turns") {
       return json({ run: { id: "run-1", threadId: "thread-1", status: "running" } }, 202);
     }
-    if (path === "/api/local/ai/runs/run-1/interrupt") {
+    if (requestPath === "/api/local/ai/runs/run-1/interrupt") {
       return json({ run: { id: "run-1", threadId: "thread-1", status: "interrupted" } });
     }
     throw new Error(`Unexpected request ${String(path)}`);
@@ -80,7 +85,10 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
   try {
     const catalog = await getAiChatCatalog("project / one");
     assert.equal(catalog.models[0].slug, "codex-real");
-    assert.equal(calls.at(-1).path, "/api/local/ai/catalog?projectId=project%20%2F%20one");
+    assert.equal(
+      calls.at(-1).path,
+      `${taskboardBase}api/local/ai/catalog?projectId=project%20%2F%20one`,
+    );
 
     assert.equal((await listAiChatThreads())[0].id, "thread-1");
     await createAiChatThread({ projectId: "project / one", issueId: "issue-1" });
@@ -164,7 +172,7 @@ test("thread event subscription listens only for public snapshot hints and close
   try {
     const hints = [];
     const unsubscribe = subscribeAiChatThread("thread / 1", (type) => hints.push(type));
-    assert.equal(openedUrl, "/api/local/ai/threads/thread%20%2F%201/events");
+    assert.equal(openedUrl, `${taskboardBase}api/local/ai/threads/thread%20%2F%201/events`);
     listeners.get("ai.event")();
     listeners.get("ai.run")();
     assert.deepEqual(hints, ["ai.event", "ai.run"]);

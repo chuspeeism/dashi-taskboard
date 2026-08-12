@@ -1,0 +1,62 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  macos-launcher:
+    name: macOS launcher
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - run: npm run app:prepare -- --target universal-apple-darwin
+      - name: Build the unsigned universal app bundle
+        run: >-
+          npm run tauri -- build
+          --target universal-apple-darwin
+          --bundles app
+          --no-sign
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - run: test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+      - name: Verify packaged taskctl and inherited listener
+        run: >-
+          npm run app:verify-packaged-taskctl --
+          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+      - name: Verify secretless App, updater, and DMG preflight
+        run: >-
+          npm run app:preflight --
+          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"

@@ -385,6 +385,19 @@ function expectedProjectCounts() {
   };
 }
 
+function expectedCloudBaselineCounts() {
+  return {
+    local: {
+      projects: 1,
+      tasks: 0,
+      comments: 0,
+      attachments: 0,
+      task_relations: 0,
+      workflow_workspaces: 0,
+    },
+  };
+}
+
 function createD1Adapter(
   bundle,
   {
@@ -754,9 +767,12 @@ test("real D1 batch atomically imports a bundle containing local and maps develo
       ),
       /intentional migration failure/i,
     );
-    assert.equal(
-      (await failingCloud.db.prepare("SELECT COUNT(*) AS count FROM projects").first()).count,
-      0,
+    assert.deepEqual(
+      await createCloudBindingMigrationAdapters({
+        d1: failingCloud.db,
+        r2: failingCloud.attachments,
+      }).d1.countByProject(),
+      expectedCloudBaselineCounts(),
     );
     assert.deepEqual(await failingCloud.listAttachmentKeys(), []);
   } finally {
@@ -840,6 +856,20 @@ test("cloud import refuses non-empty D1 and pre-existing R2 targets", async () =
   );
   assert.equal(nonEmptyD1.calls.length, 0);
   assert.equal(untouchedR2.objects.size, 0);
+
+  const nonEmptyGlobalD1 = createD1Adapter(bundle, {
+    initialCounts: {
+      local: { ...expectedCloudBaselineCounts().local, tasks: 1 },
+    },
+  });
+  await assert.rejects(
+    importCloudMigrationBundle(bundle, {
+      d1: nonEmptyGlobalD1,
+      r2: createR2Adapter(),
+    }),
+    /D1.*not empty|non-empty.*D1/i,
+  );
+  assert.equal(nonEmptyGlobalD1.calls.length, 0);
 
   const occupiedR2 = createR2Adapter();
   const occupiedKey = bundle.attachments[0].objectKey;
@@ -1189,7 +1219,10 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
     configPath: wranglerConfig,
   });
   try {
-    assert.deepEqual(await failureAdapters.d1.countByProject(), {});
+    assert.deepEqual(
+      await failureAdapters.d1.countByProject(),
+      expectedCloudBaselineCounts(),
+    );
     for (const attachment of bundle.attachments) {
       assert.equal(await failureAdapters.r2.head(attachment.id), null);
     }

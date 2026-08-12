@@ -23,6 +23,74 @@ const currentAutomationRequest = {
   reasoningEffort: "ultra",
 };
 
+test("a binding call from the wrong execution context cannot reach native actions", async () => {
+  const calls = [];
+  const result = await handleHostBindingPayload(
+    {
+      payload: JSON.stringify({ id: "host-request-2", action: "ensure" }),
+      executionContextId: 44,
+    },
+    {
+      isAuthorizedContext: (executionContextId) => executionContextId === 12,
+      parseAutomationRequest: () => null,
+      ensure: async () => calls.push("ensure"),
+      runAutomation: async () => calls.push("automation"),
+      prefill: async () => calls.push("prefill"),
+      sendResponse: async () => calls.push("response"),
+    },
+  );
+
+  assert.deepEqual(result, { responded: false, accepted: false });
+  assert.deepEqual(calls, []);
+});
+
+test("frame loading and external links require bounded authenticated values", async () => {
+  const calls = [];
+  const handlers = {
+    parseAutomationRequest: () => null,
+    ensure: async () => assert.fail("ensure must not run"),
+    loadFrame: async (request) => calls.push(["load", request.frameCapability]),
+    openExternal: async (request) => calls.push(["open", request.url]),
+    runAutomation: async () => assert.fail("automation must not run"),
+    prefill: async () => assert.fail("prefill must not run"),
+    sendResponse: async (_executionContextId, response) => calls.push(["response", response.ok]),
+  };
+
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
+      id: "load-request-1",
+      action: "load-frame",
+      frameName: "codex-taskboard-8f99fbb3-12d4-48af-8938-89f993fab008",
+      frameCapability: "30c3d0c4-aa0f-4169-93c0-bb3da20bc654",
+    }),
+    executionContextId: 12,
+  }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
+      id: "external-request-1",
+      action: "open-external",
+      url: "https://example.com/review",
+    }),
+    executionContextId: 12,
+  }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
+      id: "external-request-2",
+      action: "open-external",
+      url: "http://example.com/not-allowed",
+    }),
+    executionContextId: 12,
+  }, handlers);
+
+  assert.deepEqual(calls, [
+    ["load", "30c3d0c4-aa0f-4169-93c0-bb3da20bc654"],
+    ["response", true],
+    ["open", "https://example.com/review"],
+    ["response", true],
+    ["response", false],
+  ]);
+});
+
 test("a stale automation parser receives an immediate host error instead of timing out", async () => {
   const responses = [];
   const staleParser = () => null;

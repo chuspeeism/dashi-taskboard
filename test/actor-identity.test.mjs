@@ -29,7 +29,7 @@ test("issue activity renders distinct avatars, IDs, and styles for users and age
   assert.match(avatarSource, /actor-avatar-\$\{actor\.type\}/);
   assert.match(avatarSource, /actor\.type === "agent"/);
   assert.match(avatarSource, /className="actor-avatar-image actor-avatar-agent-image"/);
-  assert.match(avatarSource, /src="\/codex-agent-logo\.png"/);
+  assert.match(avatarSource, /src="codex-agent-logo\.png"/);
   assert.match(avatarSource, /actor\.avatarUrl/);
   assert.match(detailSource, /currentTask\.creatorType/);
   assert.match(detailSource, /currentTask\.creatorId/);

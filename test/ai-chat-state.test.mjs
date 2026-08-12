@@ -2,20 +2,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  AI_CHAT_SKILL_MARKER,
   aiChatEventStatus,
   buildThreadCreateInput,
   buildTurnInput,
   chatPrimaryAction,
   createAiSnapshotRefreshQueue,
   filterVisibleAiEvents,
-  insertSkillMention,
   isAiChatCapabilityAvailable,
   needsDangerConfirmation,
   normalizeChatSelection,
+  parseAiChatComposerFragment,
   patchAiChatSnapshot,
-  readSkillMention,
   routeChatState,
-  settingsForNewAiThread,
   shouldRefreshAiSnapshot,
 } from "../web/src/aiChatState.ts";
 
@@ -70,17 +69,6 @@ test("route changes update only the next origin and preserve the selected global
   );
 });
 
-test("new-thread settings are reused only when they belong to the current project catalog", () => {
-  const settings = {
-    model: "codex-real-model",
-    reasoningEffort: "high",
-    sandbox: "workspace-write",
-  };
-  assert.deepEqual(settingsForNewAiThread("project-a", "project-a", settings), settings);
-  assert.deepEqual(settingsForNewAiThread("project-b", "project-a", settings), {});
-  assert.deepEqual(settingsForNewAiThread("project-b", null, settings), {});
-});
-
 test("PATCH results can update only the snapshot for the thread that started the request", () => {
   const threadA = {
     id: "thread-a",
@@ -122,27 +110,20 @@ test("model and effort selections are restricted to the real catalog", () => {
   assert.equal(normalizeChatSelection([], "missing-model", "high"), null);
 });
 
-test("@ skill mentions keep a visible label while sending only the selected real id", () => {
-  assert.deepEqual(readSkillMention("请用 @cl", 6), {
-    start: 3,
-    end: 6,
-    query: "cl",
-  });
-  assert.deepEqual(insertSkillMention("请用 @cl 检查", 3, 6, {
-    id: "cloudflare",
-    label: "Cloudflare",
-    scope: "user",
-  }), {
-    value: "请用 @Cloudflare 检查",
-    caret: 14,
-    skillId: "cloudflare",
+test("skill composer fragments keep opaque markers aligned with selected real ids", () => {
+  assert.deepEqual(parseAiChatComposerFragment(JSON.stringify({
+    message: `请用 ${AI_CHAT_SKILL_MARKER} 检查`,
+    skillIds: ["cloudflare"],
+  }), ["cloudflare"]), {
+    message: `请用 ${AI_CHAT_SKILL_MARKER} 检查`,
+    skillIds: ["cloudflare"],
   });
 });
 
 test("turn input cannot contain cwd, hidden context, model overrides or arbitrary args", () => {
-  const input = buildTurnInput("检查 LOCAL-103", ["cloudflare"], false);
+  const input = buildTurnInput(`检查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`, ["cloudflare"], false);
   assert.deepEqual(input, {
-    message: "检查 LOCAL-103",
+    message: `检查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`,
     skillIds: ["cloudflare"],
   });
   assert.equal(JSON.stringify(input).includes("workspacePath"), false);

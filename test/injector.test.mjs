@@ -7,38 +7,49 @@ const runtimeSource = await readFile(
   new URL("../scripts/codex-injector-runtime.mjs", import.meta.url),
   "utf8",
 );
+const supervisorSource = await readFile(
+  new URL("../scripts/taskboard-supervisor.mjs", import.meta.url),
+  "utf8",
+);
 const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 
-test("the resident injector supervises the fixed local Taskboard service", () => {
-  assert.match(source, /function createTaskboardSupervisor/);
-  assert.match(source, /await isReachable\(taskboardHealthUrl\)/);
-  assert.match(source, /ensureInFlight/);
+test("the resident injector authenticates its launcher-managed Taskboard service", () => {
+  assert.match(supervisorSource, /function createTaskboardSupervisor/);
+  assert.match(source, /CODEX_TASKBOARD_INSTANCE_TOKEN/);
+  assert.match(source, /createHmac\("sha256"/);
+  assert.match(source, /x-codex-taskboard-challenge/);
+  assert.match(source, /proof/);
+  assert.match(source, /taskboardInstanceSecret/);
+  assert.match(source, /Page\.setDocumentContent/);
+  assert.match(runtimeSource, /request\.action === "load-frame"/);
+  assert.match(supervisorSource, /ensureInFlight/);
+  assert.match(supervisorSource, /await terminateManagedChild\(managedChild\)/);
   assert.match(source, /await supervisor\.ensure\(\)/);
   assert.match(source, /it will be restarted automatically/);
   assert.match(source, /AbortSignal\.timeout\(1_500\)/);
+  assert.match(source, /__CODEX_TASKBOARD_FRAME_CAPABILITY__/);
+  assert.match(runtimeSource, /request\.frameCapability/);
 });
 
-test("the CDP bridge accepts only service ensure and native Skill composer prefill actions", () => {
+test("the CDP bridge accepts service ensure and native instruction composer prefill actions", () => {
   assert.match(source, /const hostBindingName = "__codexTaskboardHostV1"/);
   assert.match(runtimeSource, /request\.action === "ensure"/);
   assert.match(runtimeSource, /request\.action === "prefill-task-composer"/);
+  assert.match(runtimeSource, /request\.action === "open-external"/);
   assert.match(runtimeSource, /request\.instruction\.length <= 1_024/);
-  assert.match(runtimeSource, /request\.skillPath\.length <= 1_024/);
   assert.match(source, /function prefillTaskComposerViaCdp/);
-  assert.match(source, /cdp\.send\("Input\.insertText", \{ text: "\$" \}\)/);
-  assert.match(source, /data-composer-overlay-floating-ui/);
-  assert.match(source, /button\[data-list-navigation-item="true"\]/);
-  assert.match(source, /\[skill-mention-name\]/);
-  assert.match(source, /skill-mention-path/);
   assert.match(source, /cdp\.send\("Input\.insertText", \{ text: instruction \}\)/);
   assert.match(source, /Runtime\.bindingCalled/);
+  assert.match(source, /Page\.createIsolatedWorld/);
+  assert.match(source, /Runtime\.addBinding", \{\s*name: hostBindingName,\s*executionContextId:/);
+  assert.match(source, /params\.executionContextId !== activeContextId/);
   assert.match(runtimeSource, /params\.executionContextId/);
-  assert.match(source, /hostResponse/);
-  assert.match(source, /if \(keepAlive\) await installTaskboardHostBinding/);
-  assert.match(source, /publishHostHeartbeat/);
-  assert.match(source, /__codexTaskboardHostHeartbeatV1/);
+  assert.match(source, /hostResponseMessage/);
+  assert.match(source, /if \(keepAlive\) await hostBridge\.install\(\)/);
+  assert.match(source, /hostBridge\.publishHeartbeat/);
+  assert.match(source, /withoutTaskboardLauncherEnvironment\(process\.env\)/);
 });
 
 test("the CDP bridge exposes only the fixed Taskboard automation operations", () => {
@@ -57,6 +68,18 @@ test("the CDP bridge exposes only the fixed Taskboard automation operations", ()
   assert.match(source, /message\.bodyJsonString/);
   assert.doesNotMatch(source, /automation-delete/);
   assert.doesNotMatch(source, /automations\.toml/);
+});
+
+test("passive automation policy keeps idle pauses and only resumes quota pauses", () => {
+  assert.match(source, /taskboardAutomationPolicyOperation/);
+  assert.match(source, /previousQuotaState: current\.quota\?\.state/);
+  assert.match(source, /enqueueQuotaPolicyMutation\(record, rpc, \{ explicit: true \}\)/);
+  assert.match(
+    source,
+    /!explicit && result\.operation === "list" && result\.item\?\.status === "PAUSED"/,
+  );
+  assert.match(source, /enabledByUser: false/);
+  assert.match(source, /record\.quota \? \{ quota: record\.quota \} : \{\}/);
 });
 
 test("the package injection command remains resident for tab-triggered recovery", () => {
@@ -97,6 +120,7 @@ test("a completed web build refreshes an already-open Codex iframe", () => {
 });
 
 test("the injected iframe follows the configured local service port", () => {
-  assert.match(source, /const taskboardPageUrl = `\$\{taskboardOrigin\}\/\?host=codex`/);
+  assert.match(source, /const taskboardBaseUrl = `\$\{taskboardOrigin\}\/\$\{encodeURIComponent\(taskboardInstanceToken\)\}`/);
+  assert.match(source, /const taskboardPageUrl = `\$\{taskboardBaseUrl\}\/\?host=codex`/);
   assert.match(source, /window\.__CODEX_TASKBOARD_URL__ = \$\{JSON\.stringify\(taskboardPageUrl\)\}/);
 });

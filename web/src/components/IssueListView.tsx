@@ -1,25 +1,20 @@
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useState, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import { assigneeTargetForActor } from "../actors";
+import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
 import type { TaskCardPresentation } from "../taskConversations";
-import { TASK_PRIORITIES, TASK_STATUSES, type ActorIdentity, type Task, type TaskDraft, type TaskPriority, type TaskStatus } from "../types";
+import { TASK_PRIORITIES, TASK_STATUSES, type ActorIdentity, type Task, type TaskDraft, type TaskStatus } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { STATUS_DETAILS, StatusIcon } from "./BoardColumn";
+import { StatusIcon } from "./BoardColumn";
 import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
 import { TaskConversationMenu } from "./TaskConversationMenu";
+import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
-
-const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  none: "无优先级",
-  urgent: "紧急",
-  high: "高",
-  medium: "中",
-  low: "低",
-};
 
 const COLLAPSED_BY_DEFAULT = new Set<TaskStatus>(["backlog", "done", "canceled"]);
 
 interface IssueListViewProps {
+  scrollRef: RefObject<HTMLDivElement | null>;
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
   currentUser: ActorIdentity;
@@ -29,16 +24,17 @@ interface IssueListViewProps {
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
 }
 
-function createdDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
+function createdDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-function calendarDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" })
+function calendarDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
     .format(new Date(`${value}T12:00:00`));
 }
 
 export function IssueListView({
+  scrollRef,
   tasks,
   presentations,
   currentUser,
@@ -47,7 +43,9 @@ export function IssueListView({
   onOpenConversation,
   onUpdate,
 }: IssueListViewProps) {
+  const { language, locale, text } = useTaskboardI18n();
   const [collapsed, setCollapsed] = useState(() => new Set(COLLAPSED_BY_DEFAULT));
+  const [priorityMenuTaskId, setPriorityMenuTaskId] = useState<string | null>(null);
 
   function stopRow(event: MouseEvent | KeyboardEvent) {
     event.stopPropagation();
@@ -63,17 +61,18 @@ export function IssueListView({
   }
 
   return (
-    <div className="issue-list-view">
+    <div className="issue-list-view" ref={scrollRef}>
       <div className="issue-list-groups">
         {TASK_STATUSES.map((status) => {
           const statusTasks = tasks.filter((task) => task.status === status);
           const isCollapsed = collapsed.has(status);
+          const statusLabel = taskStatusLabel(language, status);
           return (
             <section className={`issue-list-group status-${status}`} key={status}>
               <button className="issue-list-group-header" type="button" onClick={() => toggleStatus(status)} aria-expanded={!isCollapsed}>
                 <LinearIcon name={isCollapsed ? "chevronRight" : "chevronDown"} />
                 <span className="issue-list-status-icon"><StatusIcon status={status} /></span>
-                <strong>{STATUS_DETAILS[status].label}</strong>
+                <strong>{statusLabel}</strong>
                 <span>{statusTasks.length}</span>
               </button>
               {!isCollapsed && (
@@ -94,23 +93,29 @@ export function IssueListView({
                         <span className="issue-list-title-cell">
                           <small>{task.identifier}</small>
                           <strong>{task.title}</strong>
-                          {presentations[task.id]?.unread && <span className="task-unread-dot" aria-label="有未读更新" />}
+                          {presentations[task.id]?.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
                         </span>
-                        <span className="issue-list-metadata" aria-label="议题属性">
-                          <label className={`issue-list-priority priority-${task.priority}`} onClick={stopRow}>
-                            <LinearPriorityIcon priority={task.priority} />
-                            <span>{PRIORITY_LABELS[task.priority]}</span>
-                            <select
-                              aria-label={`${task.identifier} 优先级`}
+                        <span className="issue-list-metadata" aria-label={text("议题属性", "Issue properties")}>
+                          <span className="issue-list-priority-control" onClick={stopRow} onKeyDown={stopRow}>
+                            <TaskPropertyPicker
                               value={task.priority}
-                              onChange={(event) => void onUpdate(task, { priority: event.target.value as TaskPriority }).catch(() => {})}
-                            >
-                              {TASK_PRIORITIES.map((value) => <option value={value} key={value}>{PRIORITY_LABELS[value]}</option>)}
-                            </select>
-                          </label>
+                              options={TASK_PRIORITIES.map((priority) => ({
+                                value: priority,
+                                label: taskPriorityLabel(language, priority),
+                                icon: <LinearPriorityIcon priority={priority} />,
+                                className: `priority-${priority}`,
+                              }))}
+                              open={priorityMenuTaskId === task.id}
+                              className="issue-list-property-picker"
+                              triggerClassName={`issue-list-priority priority-${task.priority}`}
+                              ariaLabel={text(`${task.identifier} 优先级`, `${task.identifier} priority`)}
+                              onOpenChange={(open) => setPriorityMenuTaskId(open ? task.id : null)}
+                              onChange={(priority) => void onUpdate(task, { priority }).catch(() => {})}
+                            />
+                          </span>
                           <span className="issue-list-labels">
                             {task.labels.slice(0, 2).map((label) => {
-                              const presentation = labelPresentation(label);
+                              const presentation = labelPresentation(label, language);
                               return (
                                 <i className={presentation.tone ? `tone-${presentation.tone}` : ""} key={label}>
                                   {presentation.tone && <span aria-hidden="true" />}
@@ -123,10 +128,10 @@ export function IssueListView({
                           {task.dueDate && (
                             <label className="issue-list-date" onClick={stopRow}>
                               <TaskboardIcon name="calendar" />
-                              <span>{calendarDate(task.dueDate)}</span>
+                              <span>{calendarDate(task.dueDate, locale)}</span>
                               <input
                                 type="date"
-                                aria-label={`${task.identifier} 截止日期`}
+                                aria-label={text(`${task.identifier} 截止日期`, `${task.identifier} due date`)}
                                 value={task.dueDate}
                                 onChange={(event) => void onUpdate(task, {
                                   dueDate: event.target.value || null,
@@ -142,7 +147,7 @@ export function IssueListView({
                           <label className="issue-list-assignee" title={task.assignee.name} onClick={stopRow}>
                             <ActorAvatar actor={task.assignee} />
                             <select
-                              aria-label={`${task.identifier} 负责人`}
+                              aria-label={text(`${task.identifier} 负责人`, `${task.identifier} assignee`)}
                               value={assigneeTarget}
                               onChange={(event) => void onUpdate(task, { assigneeTarget: event.target.value as "current-user" | "codex-agent" }).catch(() => {})}
                             >
@@ -151,13 +156,23 @@ export function IssueListView({
                             </select>
                           </label>
                         </span>
-                        <time dateTime={task.createdAt} title={`创建于 ${new Date(task.createdAt).toLocaleString("zh-CN")}`}>
-                          {createdDate(task.createdAt)}
+                        <time
+                          dateTime={task.createdAt}
+                          title={text(
+                            `创建于 ${new Date(task.createdAt).toLocaleString(locale)}`,
+                            `Created ${new Date(task.createdAt).toLocaleString(locale)}`,
+                          )}
+                        >
+                          {createdDate(task.createdAt, locale)}
                         </time>
                       </div>
                     );
                   }) : (
-                    <div className="issue-list-empty">{hasActiveFilters ? "当前筛选下没有匹配议题" : `没有${STATUS_DETAILS[status].label}议题`}</div>
+                    <div className="issue-list-empty">
+                      {hasActiveFilters
+                        ? text("当前筛选下没有匹配议题", "No issues match the current filters")
+                        : text(`没有${statusLabel}议题`, `No ${statusLabel.toLowerCase()} issues`)}
+                    </div>
                   )}
                 </div>
               )}

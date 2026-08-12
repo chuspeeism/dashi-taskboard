@@ -1,0 +1,569 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  deployments: write
+
+concurrency:
+  group: release-macos-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-macos:
+    name: Build signed universal macOS app
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release tag and versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          TAG_CREATED: ${{ github.event.created }}
+          TAG_DELETED: ${{ github.event.deleted }}
+          TAG_FORCED: ${{ github.event.forced }}
+        run: |
+          set -euo pipefail
+          if [[ "$TAG_CREATED" != "true" || "$TAG_DELETED" == "true" || "$TAG_FORCED" == "true" ]]; then
+            echo "发布标签必须是首次创建，不能删除或强制更新。" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          TAG_COMMIT="$(git rev-parse "$RELEASE_TAG^{}")"
+          if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "标签提交与当前工作流提交不一致。" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$TAG_COMMIT" origin/main
+
+          REMOTE_TAG_COMMIT="$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "$REMOTE_TAG_COMMIT" ]]; then
+            REMOTE_TAG_COMMIT="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')"
+          fi
+          if [[ "$REMOTE_TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "远程发布标签与当前工作流提交不一致。" >&2
+            exit 1
+          fi
+
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          CARGO_VERSION="$(node -e 'const fs=require("fs"); const source=fs.readFileSync("src-tauri/Cargo.toml","utf8"); console.log(source.match(/^version = "([^"]+)"/m)[1])')"
+          TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [[ "$PACKAGE_VERSION" != "$CARGO_VERSION" || "$PACKAGE_VERSION" != "$TAURI_VERSION" ]]; then
+            echo "package.json、Cargo.toml 和 tauri.conf.json 的版本必须一致。" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]]; then
+            echo "发布标签必须与应用版本一致。" >&2
+            exit 1
+          fi
+
+          RELEASE_CHECK="$RUNNER_TEMP/release-check.json"
+          if ! RELEASE_STATUS="$(curl --silent --show-error \
+            --output "$RELEASE_CHECK" \
+            --write-out '%{http_code}' \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"; then
+            echo "无法确认 Release 是否存在。" >&2
+            exit 1
+          fi
+          case "$RELEASE_STATUS" in
+            404) ;;
+            200)
+              echo "该标签或版本已存在 Release。" >&2
+              exit 1
+              ;;
+            *)
+              echo "查询 Release 失败，HTTP $RELEASE_STATUS。" >&2
+              exit 1
+              ;;
+          esac
+
+          RELEASE_TAGS="$RUNNER_TEMP/release-tags.txt"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' > "$RELEASE_TAGS"
+          PACKAGE_VERSION="$PACKAGE_VERSION" RELEASE_TAGS="$RELEASE_TAGS" node <<'NODE'
+          const fs = require("node:fs");
+          const current = process.env.PACKAGE_VERSION.split(".").map(Number);
+          const compare = (left, right) => {
+            for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+              const difference = (left[index] ?? 0) - (right[index] ?? 0);
+              if (difference !== 0) return difference;
+            }
+            return 0;
+          };
+          for (const tag of fs.readFileSync(process.env.RELEASE_TAGS, "utf8").split(/\r?\n/)) {
+            const match = /^(?:app-)?v(\d+(?:\.\d+)*)$/.exec(tag);
+            if (match && compare(match[1].split(".").map(Number), current) >= 0) {
+              console.error(`已有相同或更高版本的 Release：${tag}`);
+              process.exit(1);
+            }
+          }
+          NODE
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Set up Rust 1.88
+        uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare universal app resources
+        run: npm run app:prepare -- --target universal-apple-darwin
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          umask 077
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/codex-taskboard-signing.keychain-db"
+
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          umask 077
+          APPLE_API_KEY_PATH="$RUNNER_TEMP/app-store-connect.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$APPLE_API_KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$APPLE_API_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Build unsigned universal App and DMG layout
+        run: >-
+          CI=true npm run tauri -- build
+          --target universal-apple-darwin
+          --bundles app,dmg
+          --no-sign
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Sign App with separate Node.js policy
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: node scripts/sign-macos-app.mjs "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+
+      - name: Notarize and staple App
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+          APP_ZIP="$RUNNER_TEMP/Codex.Taskboard.app.zip"
+          /usr/bin/ditto -c -k --keepParent --sequesterRsrc "$APP_PATH" "$APP_ZIP"
+          xcrun notarytool submit "$APP_ZIP" \
+            --key-id "$APPLE_API_KEY" \
+            --key "$APPLE_API_KEY_PATH" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple -v "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          spctl -a -t exec -vv "$APP_PATH"
+
+      - name: Create, sign, notarize, and staple DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP_NAME="Codex Taskboard.app"
+          RAW_DMG_NAME="Codex Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          RELEASE_DMG_NAME="Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          rm -f "$BUNDLE_ROOT/dmg/$RAW_DMG_NAME" "$BUNDLE_ROOT/macos/$RAW_DMG_NAME"
+          (
+            cd "$BUNDLE_ROOT/macos"
+            ../dmg/bundle_dmg.sh \
+              --volname "Codex Taskboard" \
+              --icon "$APP_NAME" 180 170 \
+              --app-drop-link 480 170 \
+              --window-size 660 400 \
+              --hide-extension "$APP_NAME" \
+              --volicon ../dmg/icon.icns \
+              --skip-jenkins \
+              "$RAW_DMG_NAME" "$APP_NAME"
+          )
+          mv "$BUNDLE_ROOT/macos/$RAW_DMG_NAME" "$BUNDLE_ROOT/dmg/$RELEASE_DMG_NAME"
+          DMG_PATH="$BUNDLE_ROOT/dmg/$RELEASE_DMG_NAME"
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG_PATH"
+          xcrun notarytool submit "$DMG_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --key "$APPLE_API_KEY_PATH" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple -v "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          codesign --verify --strict --verbose=2 "$DMG_PATH"
+          spctl -a -t open --context context:primary-signature -vv "$DMG_PATH"
+
+      - name: Create signed updater files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
+          node scripts/create-macos-updater.mjs \
+            "$BUNDLE_ROOT/macos/Codex Taskboard.app" \
+            "$BUNDLE_ROOT/release" \
+            "$RELEASE_TAG"
+
+      - name: Verify signed release artifacts
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP_PATH="$BUNDLE_ROOT/macos/Codex Taskboard.app"
+          DMG_PATH="$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          RELEASE_ROOT="$BUNDLE_ROOT/release"
+          npm run app:verify-release -- "$APP_PATH" "$DMG_PATH" "$RELEASE_ROOT" "$RELEASE_TAG"
+
+      - name: Create trusted release asset manifest
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
+          RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
+          MANIFEST_ROOT="$RUNNER_TEMP/release-manifest"
+          mkdir -p "$RELEASE_ASSETS" "$MANIFEST_ROOT"
+          cp \
+            "$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+          cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" "$RELEASE_ASSETS/"
+          cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$RELEASE_ASSETS/"
+          cp "$BUNDLE_ROOT/release/latest.json" "$RELEASE_ASSETS/"
+          (
+            cd "$RELEASE_ASSETS"
+            shasum -a 256 \
+              "Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+              "latest.json" > "$MANIFEST_ROOT/release-assets.sha256"
+          )
+
+      - name: Preserve trusted release asset manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-release-${{ github.sha }}-sha256
+          path: ${{ runner.temp }}/release-manifest/release-assets.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "Codex Taskboard $RELEASE_TAG" \
+            --generate-notes \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+            "$RELEASE_ASSETS/latest.json"
+
+      - name: Remove temporary signing files
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/codex-taskboard-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          rm -f "$RUNNER_TEMP/app-store-connect.p8"
+
+  promote-release:
+    name: Verify and publish immutable macOS release
+    needs: release-macos
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: macos-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+
+      - name: Validate protected release promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RULESET_TOKEN: ${{ secrets.RELEASE_RULESET_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" || "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]]; then
+            echo "promotion checkout、标签和应用版本不一致。" >&2
+            exit 1
+          fi
+
+          if [[ -z "$RULESET_TOKEN" ]]; then
+            echo "缺少 RELEASE_RULESET_TOKEN，无法确认标签 Ruleset 的绕过者。" >&2
+            exit 1
+          fi
+          if ! RULESET_IDS="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+            --header "$API_VERSION_HEADER" \
+            --paginate \
+            "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
+            --jq '.[].id')"; then
+            echo "无法读取标签 Ruleset。" >&2
+            exit 1
+          fi
+
+          TAG_RULE_PROTECTED=false
+          while IFS= read -r RULESET_ID; do
+            [[ -n "$RULESET_ID" ]] || continue
+            if ! RULESET="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+              --header "$API_VERSION_HEADER" \
+              "repos/$GITHUB_REPOSITORY/rulesets/$RULESET_ID")"; then
+              echo "无法读取标签 Ruleset $RULESET_ID。" >&2
+              exit 1
+            fi
+            if jq -e --arg tag_ref "refs/tags/$RELEASE_TAG" '
+              .target == "tag" and
+              .enforcement == "active" and
+              has("bypass_actors") and
+              ((.bypass_actors | type) == "array") and
+              ((.bypass_actors | length) == 0) and
+              ((.conditions.ref_name.include | type) == "array") and
+              any(
+                .conditions.ref_name.include[]?;
+                . == $tag_ref or
+                (
+                  . == "refs/tags/v*" and
+                  ($tag_ref | test("^refs/tags/v[^/]*$"))
+                )
+              ) and
+              ((.conditions.ref_name.exclude | type) == "array") and
+              ((.conditions.ref_name.exclude | length) == 0) and
+              ((.rules | type) == "array") and
+              any(.rules[]?; .type == "update") and
+              any(.rules[]?; .type == "deletion")
+            ' <<< "$RULESET" >/dev/null; then
+              TAG_RULE_PROTECTED=true
+              break
+            fi
+          done <<< "$RULESET_IDS"
+          if [[ "$TAG_RULE_PROTECTED" != "true" ]]; then
+            echo "发布前必须启用覆盖当前标签的规则：exclude 为空、禁止更新和删除，并且 bypass_actors 字段可见且为空。" >&2
+            exit 1
+          fi
+
+          if ! IMMUTABLE_RELEASES="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+            --header "$API_VERSION_HEADER" \
+            "repos/$GITHUB_REPOSITORY/immutable-releases")"; then
+            echo "仓库必须在 promotion 前启用 immutable releases。" >&2
+            exit 1
+          fi
+          if ! jq -e '.enabled == true' <<< "$IMMUTABLE_RELEASES" >/dev/null; then
+            echo "仓库的 immutable releases 未启用。" >&2
+            exit 1
+          fi
+
+      - name: Restore trusted release asset manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: macos-release-${{ github.sha }}-sha256
+          path: ${{ runner.temp }}/trusted-release-manifest
+
+      - name: Download and verify Draft Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          MANIFEST_PATH="$RUNNER_TEMP/trusted-release-manifest/release-assets.sha256"
+          DRAFT_ASSETS="$RUNNER_TEMP/draft-release-assets"
+          EXPECTED_ASSETS="$RUNNER_TEMP/expected-release-assets.txt"
+          ACTUAL_ASSETS="$RUNNER_TEMP/actual-release-assets.txt"
+
+          RELEASES="$(gh api --header "$API_VERSION_HEADER" \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          DRAFT_RELEASE="$(jq -c \
+            --arg tag "$RELEASE_TAG" \
+            '[.[] | select(.tag_name == $tag and .draft == true)] | if length == 1 then .[0] else empty end' \
+            <<< "$RELEASES")"
+          if [[ -z "$DRAFT_RELEASE" ]]; then
+            echo "找不到唯一的目标 Draft Release。" >&2
+            exit 1
+          fi
+          if ! jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg target "$GITHUB_SHA" \
+            '.tag_name == $tag and .target_commitish == $target and .draft == true' \
+            <<< "$DRAFT_RELEASE" >/dev/null; then
+            echo "promotion 只能处理指向构建提交的 Draft Release。" >&2
+            exit 1
+          fi
+
+          mkdir -p "$DRAFT_ASSETS"
+          while IFS=$'\t' read -r ASSET_ID ASSET_NAME; do
+            gh api \
+              --header "$API_VERSION_HEADER" \
+              --header "Accept: application/octet-stream" \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" \
+              > "$DRAFT_ASSETS/$ASSET_NAME"
+          done < <(jq -r '.assets[] | [.id, .name] | @tsv' <<< "$DRAFT_RELEASE")
+          sed -E 's/^[0-9a-f]{64}  //' "$MANIFEST_PATH" | LC_ALL=C sort > "$EXPECTED_ASSETS"
+          node -e \
+            'const fs=require("node:fs"); for (const name of fs.readdirSync(process.argv[1]).sort()) console.log(name)' \
+            "$DRAFT_ASSETS" > "$ACTUAL_ASSETS"
+          diff -u "$EXPECTED_ASSETS" "$ACTUAL_ASSETS"
+          (
+            cd "$DRAFT_ASSETS"
+            shasum -a 256 --check "$MANIFEST_PATH"
+          )
+
+          UPDATER_ROOT="$RUNNER_TEMP/remote-updater"
+          mkdir -p "$UPDATER_ROOT"
+          tar -xzf \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
+            -C "$UPDATER_ROOT"
+          npm run app:verify-release -- \
+            "$UPDATER_ROOT/Codex Taskboard.app" \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
+            "$DRAFT_ASSETS" \
+            "$RELEASE_TAG"
+
+      - name: Publish verified Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
+          MANIFEST_PATH="$RUNNER_TEMP/trusted-release-manifest/release-assets.sha256"
+          RELEASES="$(gh api --header "$API_VERSION_HEADER" \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          DRAFT_RELEASE="$(jq -c \
+            --arg tag "$RELEASE_TAG" \
+            '[.[] | select(.tag_name == $tag and .draft == true)] | if length == 1 then .[0] else empty end' \
+            <<< "$RELEASES")"
+          if [[ -z "$DRAFT_RELEASE" ]]; then
+            echo "找不到唯一的目标 Draft Release。" >&2
+            exit 1
+          fi
+          EXPECTED_ASSET_COUNT="$(wc -l < "$MANIFEST_PATH" | tr -d ' ')"
+
+          if ! jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg target "$GITHUB_SHA" \
+            --argjson asset_count "$EXPECTED_ASSET_COUNT" \
+            '.tag_name == $tag and
+             .target_commitish == $target and
+             .draft == true and
+             (.assets | length) == $asset_count and
+             all(.assets[]; .state == "uploaded")' \
+            <<< "$DRAFT_RELEASE" >/dev/null; then
+            echo "发布前 Draft Release 或资产集合发生变化。" >&2
+            exit 1
+          fi
+
+          while read -r SHA256 ASSET_NAME; do
+            if ! jq -e \
+              --arg name "$ASSET_NAME" \
+              --arg digest "sha256:$SHA256" \
+              'any(.assets[]; .name == $name and .digest == $digest)' \
+              <<< "$DRAFT_RELEASE" >/dev/null; then
+              echo "发布前资产 $ASSET_NAME 的 SHA-256 与构建 manifest 不一致。" >&2
+              exit 1
+            fi
+          done < "$MANIFEST_PATH"
+
+          REMOTE_TAG_COMMIT="$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "$REMOTE_TAG_COMMIT" ]]; then
+            REMOTE_TAG_COMMIT="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')"
+          fi
+          if [[ "$REMOTE_TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "发布前远程标签与构建提交不一致。" >&2
+            exit 1
+          fi
+
+          RELEASE_ID="$(jq -r '.id' <<< "$DRAFT_RELEASE")"
+          gh api --header "$API_VERSION_HEADER" \
+            --method PATCH \
+            -F draft=false \
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" >/dev/null
+
+      - name: Verify final immutable Release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
+          MANIFEST_PATH="$RUNNER_TEMP/trusted-release-manifest/release-assets.sha256"
+          FINAL_RELEASE="$(gh api --header "$API_VERSION_HEADER" \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          EXPECTED_ASSET_COUNT="$(wc -l < "$MANIFEST_PATH" | tr -d ' ')"
+
+          if ! jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg target "$GITHUB_SHA" \
+            --argjson asset_count "$EXPECTED_ASSET_COUNT" \
+            '.tag_name == $tag and
+             .target_commitish == $target and
+             .draft == false and
+             .immutable == true and
+             (.assets | length) == $asset_count' \
+            <<< "$FINAL_RELEASE" >/dev/null; then
+            echo "最终 Release 未发布、未锁定或资产集合不正确。" >&2
+            exit 1
+          fi
+
+          while read -r SHA256 ASSET_NAME; do
+            if ! jq -e \
+              --arg name "$ASSET_NAME" \
+              --arg digest "sha256:$SHA256" \
+              'any(.assets[]; .name == $name and .digest == $digest)' \
+              <<< "$FINAL_RELEASE" >/dev/null; then
+              echo "最终资产 $ASSET_NAME 的 SHA-256 与构建 manifest 不一致。" >&2
+              exit 1
+            fi
+          done < "$MANIFEST_PATH"

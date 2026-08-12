@@ -37,14 +37,14 @@ test("issue details mirror Linear parent, sub-issue, dependency, and related sec
   assert.match(detailSource, /<IssueParentLink/);
   assert.match(detailSource, /<IssueSubIssues/);
   assert.match(detailSource, /<IssueRelationSidebar/);
-  assert.match(relationsSource, />子议题</);
-  assert.match(relationsSource, /label: "阻塞于"/);
-  assert.match(relationsSource, /label: "阻塞"/);
-  assert.match(relationsSource, /label: "相关议题"/);
-  assert.match(relationsSource, /placeholder="搜索议题…"/);
+  assert.match(relationsSource, /\{text\("子议题", "Sub-issues"\)\}/);
+  assert.match(relationsSource, /chineseLabel: "阻塞于", englishLabel: "Blocked by"/);
+  assert.match(relationsSource, /chineseLabel: "阻塞", englishLabel: "Blocks"/);
+  assert.match(relationsSource, /chineseLabel: "相关议题", englishLabel: "Related issues"/);
+  assert.match(relationsSource, /placeholder=\{text\("搜索议题…", "Search issues…"\)\}/);
   assert.match(relationsSource, /role="combobox"/);
   assert.match(relationsSource, /role="listbox"/);
-  assert.match(relationsSource, /LinearStatusIcon/);
+  assert.match(relationsSource, /<StatusIcon status=\{candidate\.status\} \/>/);
   assert.match(relationsSource, /onOpenTask/);
   assert.match(relationsSource, /onRemoveRelation/);
   assert.match(styles, /\.issue-relation-picker/);
@@ -52,21 +52,18 @@ test("issue details mirror Linear parent, sub-issue, dependency, and related sec
   assert.match(styles, /\.issue-relation-sidebar/);
 });
 
-test("board cards keep relation context compact", () => {
-  assert.match(cardSource, /task\.relations\.parent/);
-  assert.match(cardSource, /task\.relations\.subIssues/);
-  assert.match(cardSource, /task\.relations\.blockedBy/);
-  assert.match(cardSource, /sub-issue-progress/);
-  assert.match(cardSource, /blocked-by-count/);
-  assert.doesNotMatch(cardSource, /task\.relations\.related/);
+test("board cards leave relation context in issue details", () => {
+  assert.doesNotMatch(cardSource, /task\.relations/);
+  assert.doesNotMatch(cardSource, /sub-issue-progress|blocked-by-count/);
 });
 
 test("the taskboard skill tracks substantive requests before implementation", () => {
-  assert.match(skillSource, /Search for an existing issue before creating one/i);
-  assert.match(skillSource, /append/i);
-  assert.match(skillSource, /parent|sub-issue/i);
-  assert.match(skillSource, /blocked|related/i);
-  assert.match(skillSource, /small|tiny|trivial/i);
+  assert.match(skillSource, /new durable requirement[\s\S]*search existing project issues before creating one/i);
+  assert.match(skillSource, /Update a matching issue instead of creating a duplicate/i);
+  assert.match(skillSource, /Do not track trivial requests/i);
+  assert.match(skillSource, /Use parent for contained work/i);
+  assert.match(skillSource, /blocks or blocked_by for dependencies/i);
+  assert.match(skillSource, /related for close association/i);
   assert.match(cliReference, /issue relation add/);
   assert.match(cliReference, /--type parent/);
   assert.match(cliReference, /--type blocks\|blocked_by\|related/);

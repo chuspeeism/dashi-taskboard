@@ -8,7 +8,7 @@ const detailSource = await readFile(new URL("../web/src/components/TaskDetail.ts
 test("issue title and description keep Linear-style inline editing when focused", () => {
   assert.match(
     styles,
-    /\.issue-title-input:focus:not\(:disabled\),\s*\.issue-title-input:focus-visible:not\(:disabled\),\s*\.issue-description-input:focus:not\(:disabled\),\s*\.issue-description-input:focus-visible:not\(:disabled\),\s*\.issue-description-read:focus-visible\s*\{[^}]*border-color:\s*transparent;[^}]*outline:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+    /\.issue-title-input:focus:not\(:disabled\),\s*\.issue-title-input:focus-visible:not\(:disabled\),\s*\.issue-description-input:focus:not\(:disabled\),\s*\.issue-description-input:focus-visible:not\(:disabled\),\s*\.issue-description-composer:focus-within,\s*\.issue-description-read:focus-visible\s*\{[^}]*border-color:\s*transparent;[^}]*outline:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
   );
   assert.match(
     styles,
@@ -18,6 +18,13 @@ test("issue title and description keep Linear-style inline editing when focused"
 });
 
 test("editing and composing comments do not add focus chrome", () => {
-  assert.equal([...detailSource.matchAll(/className="comment-input"/g)].length, 2);
+  assert.match(
+    detailSource,
+    /<InlineMediaComposer[\s\S]*?className="comment-inline-media"[\s\S]*?ariaLabel=\{text\("编辑评论", "Edit comment"\)\}/,
+  );
+  assert.match(
+    detailSource,
+    /<InlineMediaComposer[\s\S]*?className="comment-inline-media"[\s\S]*?ariaLabel=\{text\("留下评论", "Leave a comment"\)\}/,
+  );
   assert.doesNotMatch(styles, /\.comment-composer:focus-within\s*\{/);
 });

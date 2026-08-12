@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
@@ -84,9 +85,40 @@ test("health and the default local project are available", async () => {
   assert.equal(result.response.status, 200);
   assert.equal(result.body.projects.length, 1);
   assert.equal(result.body.projects[0].id, "local");
-  assert.equal(result.body.projects[0].name, "Local");
+  assert.equal(result.body.projects[0].name, "全局");
   assert.equal(result.body.projects[0].workspacePath, null);
   assert.equal(result.body.projects[0].issueCount, 0);
+});
+
+test("launcher mode proves service identity and hides every route behind its instance token", async () => {
+  const instanceToken = "7a6f8d37-78ce-46c9-87a8-08e10db88da2";
+  const instanceSecret = "2e587946-96d6-47b5-930a-1ba70214fa88";
+  const version = "0.2.0";
+  const challenge = "8cbeea6e83e574def3f9d397cabddffc";
+  const baseUrl = await startServer(() => ({ instanceToken, instanceSecret, version }));
+
+  const unauthenticatedHealth = await request(baseUrl, "/health");
+  assert.equal(unauthenticatedHealth.response.status, 401);
+
+  const health = await request(baseUrl, "/health", {
+    headers: { "x-codex-taskboard-challenge": challenge },
+  });
+  assert.equal(health.response.status, 200);
+  assert.equal(health.body.product, "codex-taskboard");
+  assert.equal(health.body.version, version);
+  assert.equal(
+    health.body.proof,
+    createHmac("sha256", instanceSecret).update(challenge).digest("hex"),
+  );
+
+  const publicApi = await request(baseUrl, "/api/projects");
+  assert.equal(publicApi.response.status, 404);
+
+  const launcherApi = await request(baseUrl, `/${instanceToken}/api/projects`, {
+    headers: { origin: "null" },
+  });
+  assert.equal(launcherApi.response.status, 200);
+  assert.equal(launcherApi.response.headers.get("access-control-allow-origin"), "null");
 });
 
 test("workflow workspaces persist centrally with optimistic concurrency", async () => {
@@ -720,7 +752,7 @@ fi
 while IFS= read -r line; do
   case "$line" in
     *'"id":1'*) printf '%s\\n' '{"id":1,"result":{"platformFamily":"unix"}}' ;;
-    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
+    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","description":"User skill","path":"/user/skills/user-skill/SKILL.md","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","description":"Repository skill","path":"/workspace/.agents/skills/repo-skill/SKILL.md","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
   esac
 done
 `);
@@ -735,8 +767,20 @@ done
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body, {
     skills: [
-      { id: "repo-skill", label: "Repository Skill", scope: "repo" },
-      { id: "user-skill", label: "user-skill", scope: "user" },
+      {
+        id: "repo-skill",
+        label: "Repository Skill",
+        description: "Repository skill",
+        path: "/workspace/.agents/skills/repo-skill/SKILL.md",
+        scope: "repo",
+      },
+      {
+        id: "user-skill",
+        label: "user-skill",
+        description: "User skill",
+        path: "/user/skills/user-skill/SKILL.md",
+        scope: "user",
+      },
     ],
     mcpServers: [
       { id: "context7", label: "context7", transport: "streamable_http" },
@@ -1733,6 +1777,86 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
   const deletedContent = await request(baseUrl, `/api/attachments/${attachment.id}/content`);
   assert.equal(deletedContent.response.status, 404);
   assert.equal(deletedContent.body.error.code, "ATTACHMENT_NOT_FOUND");
+});
+
+test("permanent task deletion requires archiving and removes attachment files", async () => {
+  const baseUrl = await startServer();
+  await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "temp-delete-project", name: "Delete project", workspacePath: null },
+  });
+  const created = await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "temp-delete-project", title: "Delete permanently" },
+  });
+  const task = created.body.task;
+  const uploaded = await request(baseUrl, `/api/tasks/${task.id}/attachments`, {
+    method: "POST",
+    headers: {
+      "content-type": "text/plain",
+      "x-taskboard-filename": "evidence.txt",
+    },
+    body: "attachment",
+  });
+  assert.equal(uploaded.response.status, 201);
+  const comment = await request(baseUrl, `/api/tasks/${task.id}/comments`, {
+    method: "POST",
+    body: { body: "Comment with attachment" },
+  });
+  assert.equal(comment.response.status, 201);
+  const commentUpload = await request(
+    baseUrl,
+    `/api/comments/${comment.body.comment.id}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "x-taskboard-filename": "comment-evidence.txt",
+      },
+      body: "comment attachment",
+    },
+  );
+  assert.equal(commentUpload.response.status, 201);
+  const attachmentIds = [uploaded.body.attachment.id, commentUpload.body.attachment.id];
+  const storagePaths = attachmentIds.map((attachmentId) => path.join(
+    runningApps.at(-1).app.options.attachmentsDirectory,
+    attachmentId,
+  ));
+  await Promise.all(storagePaths.map((storagePath) => access(storagePath)));
+
+  const activeDelete = await request(baseUrl, `/api/tasks/${task.id}`, {
+    method: "DELETE",
+    body: { version: task.version },
+  });
+  assert.equal(activeDelete.response.status, 409);
+  assert.equal(activeDelete.body.error.code, "TASK_NOT_ARCHIVED");
+
+  const archived = await request(baseUrl, `/api/tasks/${task.id}/archive`, {
+    method: "POST",
+    body: { version: task.version },
+  });
+  const deleted = await request(baseUrl, `/api/tasks/${task.id}`, {
+    method: "DELETE",
+    body: { version: archived.body.task.version },
+  });
+  assert.equal(deleted.response.status, 204);
+  await Promise.all(storagePaths.map((storagePath) => (
+    assert.rejects(access(storagePath), { code: "ENOENT" })
+  )));
+  assert.equal((await request(baseUrl, `/api/tasks/${task.id}`)).response.status, 404);
+  const database = runningApps.at(-1).app.database.database;
+  assert.equal(database.prepare("SELECT 1 FROM tasks WHERE id = ?").get(task.id), undefined);
+  assert.equal(
+    database.prepare("SELECT 1 FROM comments WHERE id = ?").get(comment.body.comment.id),
+    undefined,
+  );
+  const attachmentExists = database.prepare("SELECT 1 FROM attachments WHERE id = ?");
+  for (const attachmentId of attachmentIds) {
+    assert.equal(attachmentExists.get(attachmentId), undefined);
+  }
+  assert.equal((await request(baseUrl, "/api/projects/temp-delete-project", {
+    method: "DELETE",
+  })).response.status, 204);
 });
 
 test("comments support attachments and deleting a comment removes its files", async () => {

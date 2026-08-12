@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -134,14 +134,14 @@ test("loopback AI API freezes server-owned origin and rejects injected execution
 
     const invalidSkill = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
       method: "POST",
-      body: { message: "hello", skillIds: ["invented-skill"] },
+      body: { message: "hello \uFFFC", skillIds: ["invented-skill"] },
     });
     assert.equal(invalidSkill.response.status, 400);
     assert.equal(invalidSkill.body.error.code, "INVALID_SKILL");
 
     const turn = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
       method: "POST",
-      body: { message: "hello", skillIds: ["real-skill"] },
+      body: { message: "hello \uFFFC", skillIds: ["real-skill"] },
     });
     assert.equal(turn.response.status, 202);
     assert.equal(turn.body.run.threadId, threadId);
@@ -154,6 +154,86 @@ test("loopback AI API freezes server-owned origin and rejects injected execution
     }
     assert.equal(snapshot.body.thread.codexThreadId, "session-1");
     assert.equal(snapshot.body.events.some((event) => event.content === "ok"), true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("non-local AI threads reject projects without an available workspace", async () => {
+  const fixture = await createServerFixture();
+  try {
+    const project = await request(fixture.baseUrl, "/api/projects", {
+      method: "POST",
+      body: {
+        id: "missing-workspace",
+        name: "Missing workspace",
+        workspacePath: path.join(fixture.directory, "missing-workspace"),
+      },
+    });
+    assert.equal(project.response.status, 201);
+
+    const created = await request(fixture.baseUrl, "/api/local/ai/threads", {
+      method: "POST",
+      body: { projectId: "missing-workspace" },
+    });
+    assert.equal(created.response.status, 409);
+    assert.equal(created.body.error.code, "PROJECT_WORKSPACE_UNAVAILABLE");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("non-local AI turns reject a workspace that became unavailable", async () => {
+  const fixture = await createServerFixture();
+  try {
+    const workspaceLink = path.join(fixture.directory, "project-workspace");
+    await symlink(path.resolve(import.meta.dirname, ".."), workspaceLink, "dir");
+    const project = await request(fixture.baseUrl, "/api/projects", {
+      method: "POST",
+      body: {
+        id: "disconnected-workspace",
+        name: "Disconnected workspace",
+        workspacePath: workspaceLink,
+      },
+    });
+    assert.equal(project.response.status, 201);
+
+    const created = await request(fixture.baseUrl, "/api/local/ai/threads", {
+      method: "POST",
+      body: { projectId: "disconnected-workspace" },
+    });
+    assert.equal(created.response.status, 201);
+    const threadId = created.body.thread.id;
+    await rm(workspaceLink);
+
+    const turn = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
+      method: "POST",
+      body: { message: "hello" },
+    });
+    assert.equal(turn.response.status, 409);
+    assert.equal(turn.body.error.code, "PROJECT_WORKSPACE_UNAVAILABLE");
+
+    const snapshot = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}`);
+    assert.deepEqual(snapshot.body.runs, []);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("the local AI project falls back to the Taskboard workspace", async () => {
+  const fixture = await createServerFixture();
+  try {
+    await writeFile(
+      path.join(fixture.directory, "codex-state.json"),
+      JSON.stringify({ "local-projects": {} }),
+    );
+
+    const created = await request(fixture.baseUrl, "/api/local/ai/threads", {
+      method: "POST",
+      body: { projectId: "local" },
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.body.thread.origin.workspacePath, path.resolve(import.meta.dirname, ".."));
   } finally {
     await fixture.close();
   }

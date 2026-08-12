@@ -1,6 +1,6 @@
 {
   "name": "codex-taskboard",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,7 +14,13 @@
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
     "codex:refresh": "node scripts/codex-injector.mjs --refresh",
-    "app:codex": "npm run build:web && node scripts/build-codex-launcher-app.mjs",
+    "app:prepare": "npm run build:web && node scripts/prepare-tauri-app.mjs",
+    "app:dev": "npm run app:prepare && tauri dev",
+    "app:build": "npm run app:prepare -- --target universal-apple-darwin && CI=true tauri build --target universal-apple-darwin --bundles app,dmg --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
+    "app:preflight": "node scripts/preflight-macos-app.mjs",
+    "app:verify-packaged-taskctl": "node scripts/verify-packaged-taskctl.mjs",
+    "app:verify-release": "node scripts/verify-macos-release.mjs",
+    "tauri": "tauri",
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch server/index.mjs --dev",
     "dev:web": "vite --config web/vite.config.ts",
@@ -37,18 +43,26 @@
     "@lobehub/icons-static-svg": "^1.94.0",
     "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
+    "mdast-util-definitions": "^6.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "miniflare": "^4.20260722.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.120.0"
+  },
+  "overrides": {
+    "undici": "7.29.0"
   }
 }

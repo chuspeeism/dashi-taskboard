@@ -15,68 +15,82 @@ function statusList(name) {
 }
 
 function cssBlock(selector) {
-  const start = styles.indexOf(`${selector} {`);
-  assert.notEqual(start, -1, `${selector} should exist`);
+  const marker = styles.lastIndexOf(`\n${selector} {`);
+  assert.notEqual(marker, -1, `${selector} should exist`);
+  const start = marker + 1;
   const end = styles.indexOf("\n}", start);
   assert.notEqual(end, -1, `${selector} should have a closing brace`);
   return styles.slice(start, end + 2);
 }
 
-test("the issue workspace projects the seven statuses into fixed main and secondary groups", () => {
-  assert.deepEqual(statusList("MAIN_STATUSES"), ["todo", "in_progress", "in_review"]);
-  assert.deepEqual(statusList("SECONDARY_STATUSES"), ["backlog", "blocked", "done", "canceled"]);
+test("the issue workspace projects the seven statuses into adaptive main and secondary groups", () => {
+  assert.deepEqual(statusList("MAIN_STATUSES"), ["todo", "in_progress", "blocked", "in_review"]);
+  assert.deepEqual(statusList("SECONDARY_STATUSES"), ["backlog", "done", "canceled"]);
   assert.match(statusSource, /satisfies readonly TaskStatus\[\]/);
-  assert.match(appSource, /MAIN_STATUSES\.map\(\(status\) => \([\s\S]*?<BoardColumn/);
-  assert.match(appSource, /MAIN_STATUSES\.map\(\(status\) => \([\s\S]*?className="loading-column"/);
-  assert.match(boardColumnSource, /todo: \{ label: "待处理", tone: "todo" \}/);
+  assert.match(appSource, /const mainStatuses = hasBlockedTasks[\s\S]*?MAIN_STATUSES\.filter\(\(status\) => status !== "blocked"\)/);
+  assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?<BoardColumn/);
+  assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?className="loading-column"/);
+  assert.match(boardColumnSource, /todo: \{ label: "等待认领", tone: "todo" \}/);
   assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
+  assert.match(boardColumnSource, /blocked: \{ label: "遇到阻碍", tone: "blocked" \}/);
   assert.match(boardColumnSource, /in_review: \{ label: "等你确认", tone: "review" \}/);
 });
 
-test("other tasks is a closed-by-default non-modal dock with four counted tabs", () => {
+test("other tasks is a closed-by-default non-modal panel with archived issues", () => {
   assert.match(appSource, /useState\(false\)/);
-  assert.match(appSource, /useState<SecondaryTaskStatus>\("backlog"\)/);
+  assert.match(appSource, /useState<OtherTaskTab>\("backlog"\)/);
+  assert.match(statusSource, /OTHER_TASK_TABS = \[[\s\S]*?\.\.\.SECONDARY_STATUSES,[\s\S]*?"archived"/);
   assert.match(appSource, /className=\{`other-tasks-trigger\$\{otherTasksOpen \? " is-open" : ""\}`\}/);
   assert.match(appSource, /aria-controls="other-tasks-panel"/);
   assert.match(appSource, /aria-expanded=\{otherTasksOpen\}/);
-  assert.match(appSource, /otherTasksOpen && \([\s\S]*?<OtherTasksPanel/);
+  assert.match(appSource, /otherTasksMounted && \([\s\S]*?<OtherTasksPanel/);
+  assert.match(appSource, /open=\{otherTasksVisible\}/);
   assert.match(panelSource, /<aside[\s\S]*?id="other-tasks-panel"/);
-  assert.match(panelSource, /<h2 id="other-tasks-heading">其他任务<\/h2>/);
+  assert.match(panelSource, /aria-hidden=\{!open\}/);
   assert.match(panelSource, /role="tablist"/);
-  assert.match(panelSource, /SECONDARY_STATUSES\.map\(\(status\) =>/);
+  assert.match(panelSource, /OTHER_TASK_TABS\.map\(\(tab\) =>/);
   assert.match(panelSource, /aria-selected=\{selected\}/);
-  assert.match(panelSource, /tasksByStatus\[status\]\.length/);
-  assert.match(panelSource, /aria-label="关闭其他任务"/);
+  assert.match(panelSource, /tab === "archived" \? archivedTasks\.length : tasksByStatus\[tab\]\.length/);
+  assert.match(panelSource, /<ArchivedTaskCard/);
   assert.doesNotMatch(panelSource, /createPortal|role="dialog"|backdrop|overlay/);
-  assert.match(cssBlock(".issue-board-layout"), /display: flex/);
-  assert.match(cssBlock(".other-tasks-panel"), /flex: 0 0 clamp\(280px, 30vw, 360px\)/);
-  assert.doesNotMatch(cssBlock(".other-tasks-panel"), /position:\s*(?:fixed|absolute)/);
+  assert.match(cssBlock(".issue-board-layout"), /display: grid/);
+  assert.match(cssBlock(".issue-board-layout.has-other-tasks"), /minmax\(0, 1fr\)/);
+  assert.match(cssBlock(".other-tasks-panel"), /position: absolute/);
+  assert.match(cssBlock(".other-tasks-panel"), /visibility: hidden/);
+  assert.match(cssBlock(".other-tasks-panel"), /transform: translateX/);
+  assert.match(cssBlock(".other-tasks-panel.is-open"), /visibility: visible/);
+  assert.match(cssBlock(".other-tasks-panel.is-open"), /transform: translateX\(0\)/);
 });
 
 test("search and filters feed the same status buckets used by the board and panel", () => {
-  assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search\) && matchesTaskFilters\(task, filters\)/);
+  assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search, language\) && matchesTaskFilters\(task, filters\)/);
   assert.match(appSource, /TASK_STATUSES\.map\(\(status\) => \[status, filteredTasks\.filter\(\(task\) => task\.status === status\)\]\)/);
   assert.match(appSource, /tasks=\{tasksByStatus\[status\]\}/);
   assert.match(appSource, /tasksByStatus=\{tasksByStatus\}/);
+  assert.match(appSource, /archivedTasks=\{filteredArchivedTasks\}/);
   assert.match(appSource, /hasActiveFilters=\{hasActiveTaskFilters\}/);
-  assert.match(panelSource, /const tasks = tasksByStatus\[activeStatus\]/);
-  assert.match(panelSource, /hasActiveFilters \? "当前筛选下无匹配议题"/);
+  assert.match(panelSource, /const tasks = archived \? archivedTasks : tasksByStatus\[activeTab\]/);
+  assert.match(panelSource, /hasActiveFilters\s*\? text\("当前筛选下无匹配议题", "No issues match the current filters"\)/);
   assert.match(boardColumnSource, /tasks\.length === 0 && <div className="column-empty">\{emptyMessage\}<\/div>/);
 });
 
 test("panel cards reuse TaskCard and the existing ranked board drop path", () => {
   assert.match(panelSource, /<TaskCard/);
-  assert.match(panelSource, /statusIndex=\{TASK_STATUSES\.indexOf\(task\.status\)\}/);
+  assert.match(panelSource, /variant="sidebar"/);
+  assert.match(panelSource, /presentation=\{presentations\[task\.id\]\}/);
   assert.match(panelSource, /onEdit=\{onEdit\}/);
+  assert.match(panelSource, /onUpdate=\{onUpdate\}/);
   assert.match(panelSource, /onContextMenu=\{onContextMenu\}/);
-  assert.match(panelSource, /onMove=\{onMove\}/);
   assert.match(panelSource, /onDragStart=\{onDragStart\}/);
   assert.match(panelSource, /onDragEnd=\{onDragEnd\}/);
-  assert.match(panelSource, /onOpenThread=\{onOpenThread\}/);
+  assert.match(panelSource, /onOpenConversation=\{onOpenConversation\}/);
   assert.equal(appSource.match(/onDragStart=\{startTaskDrag\}/g)?.length, 2);
   assert.equal(appSource.match(/onDragEnd=\{endTaskDrag\}/g)?.length, 2);
   assert.match(boardColumnSource, /findDropBefore\(event\.currentTarget, event\.clientY\)/);
   assert.match(boardColumnSource, /onDrop\(status, taskId, findDropBefore/);
+  assert.match(panelSource, /findDropBefore\(event\.currentTarget, event\.clientY\)/);
+  assert.match(panelSource, /onDrop\(activeTab, taskId, findDropBefore/);
+  assert.match(panelSource, /busy=\{restoringTaskId !== null \|\| deletingTaskId !== null\}/);
   assert.match(appSource, /onDrop=\{finishTaskDrop\}/);
   assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true\)/);
 });
@@ -98,14 +112,15 @@ test("legacy empty-column and manual visibility runtime paths are removed", asyn
   await assert.rejects(access(new URL("../web/src/components/ColumnVisibilityMenu.tsx", import.meta.url)));
 });
 
-test("the three-column desktop grid fills available width and degrades to horizontal scrolling", () => {
+test("the adaptive desktop grid fills available width and degrades to horizontal scrolling", () => {
   assert.match(cssBlock(".board"), /display: grid/);
-  assert.match(cssBlock(".board"), /grid-template-columns: repeat\(3, minmax\(260px, 1fr\)\)/);
+  assert.match(cssBlock(".board"), /grid-template-columns: repeat\(var\(--main-column-count, 3\), minmax\(300px, 1fr\)\)/);
   assert.match(cssBlock(".board"), /width: 100%/);
+  assert.match(cssBlock(".board"), /min-width: var\(--main-board-min-width, 948px\)/);
   assert.match(cssBlock(".board-scroll"), /overflow-x: auto/);
   assert.match(cssBlock(".board-scroll"), /overflow-y: hidden/);
-  assert.match(cssBlock(".board-column"), /overflow-y: auto/);
-  assert.match(cssBlock(".column-header"), /position: sticky/);
-  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?grid-template-columns: repeat\(3, min\(84vw, 300px\)\)/);
-  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.other-tasks-panel \{[\s\S]*?flex-basis: min\(70vw, 280px\)/);
+  assert.match(cssBlock(".column-list"), /overflow-y: auto/);
+  assert.match(styles, /@media \(max-width: 719px\)[\s\S]*?\.board \{[\s\S]*?display: flex[\s\S]*?width: max-content/);
+  assert.match(styles, /@media \(max-width: 719px\)[\s\S]*?\.board-column \{[\s\S]*?flex: 0 0 300px/);
+  assert.match(styles, /@media \(max-width: 719px\)[\s\S]*?\.other-tasks-panel \{[\s\S]*?width: 300px/);
 });

@@ -22,13 +22,18 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
+  createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
+  deleteArchivedTask as deleteArchivedTaskRequest,
+  deleteProjectLabel as deleteProjectLabelRequest,
+  deleteProject as deleteProjectRequest,
   getCodexThreadProgress,
   getHostRuntime,
   getTaskboardRevision,
   getWorkflowWorkspace,
   getTaskboardMetadata,
+  listArchivedTasks,
   listDevelopmentContexts,
   listDeviceWorkspaces,
   listProjects,
@@ -36,16 +41,19 @@ import {
   moveTask as moveTaskRequest,
   publishHostRuntime,
   removeTaskRelation,
+  resolveTaskboardUrl,
   restoreTask as restoreTaskRequest,
+  setApiText,
   setCurrentUserActor,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
 import {
+  actorKey,
   actorForAssigneeTarget,
   assigneeTargetForActor,
 } from "./actors";
-import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
+import { BoardColumn } from "./components/BoardColumn";
 import { AiChat, type AiChatOpenThreadRequest } from "./components/AiChat";
 import { DashboardView } from "./components/DashboardView";
 import { IssueListView } from "./components/IssueListView";
@@ -61,12 +69,23 @@ import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
 import { TaskEditor, type NewTaskEditorDraft } from "./components/TaskEditor";
 import { TaskFilterMenu } from "./components/TaskFilterMenu";
+import { taskboardStorage } from "./storage";
+import {
+  installEmbeddedExternalLinkHandler,
+  postEmbeddedHostMessage,
+  setEmbeddedFrameChallenge,
+} from "./embeddedHost.mjs";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
 import {
+  getTaskboardI18n,
+  resolveTaskboardLanguage,
+  taskStatusLabel,
+  TaskboardLanguageProvider,
+} from "./i18n";
+import {
   MAIN_STATUSES,
-  type SecondaryTaskStatus,
+  type OtherTaskTab,
 } from "./issueBoardStatuses";
-import { DEFAULT_LABELS } from "./labels";
 import {
   normalizeCodexThreadId,
   taskCardPresentation,
@@ -107,7 +126,11 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type DetailSourceScroll =
+  | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
+  | { projectId: string; view: "list"; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
+type ActionError = string | readonly [string, string];
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
 
@@ -137,8 +160,21 @@ interface ProjectChoice {
   persisted: boolean;
 }
 
+interface ProjectContextMenuState {
+  project: ProjectChoice;
+  x: number;
+  y: number;
+}
+
 interface UndoOperation {
+  id: number;
+  message: string;
   undo: () => Promise<void>;
+}
+
+interface UndoNotice {
+  id: number;
+  message: string;
 }
 
 type ProjectAutomationStatus = "ACTIVE" | "PAUSED";
@@ -162,6 +198,25 @@ interface ProjectAutomationRecord {
   intervalMinutes: AutomationIntervalMinutes;
   model: AutomationModel;
   reasoningEffort: AutomationReasoningEffort;
+}
+
+type ProjectAutomationOptions = Pick<
+  ProjectAutomationRecord,
+  "enabledByUser" | "quotaAware" | "intervalMinutes" | "model" | "reasoningEffort"
+>;
+
+interface AutomationRequestContext {
+  taskboardProjectId: string;
+  codexProjectId: string;
+  projectName: string;
+  workspacePath: string;
+  skillPath: string;
+}
+
+interface QueuedProjectAutomationSave {
+  projectId: string;
+  context: AutomationRequestContext;
+  options: ProjectAutomationOptions;
 }
 
 type ProjectAutomations = Record<string, ProjectAutomationRecord>;
@@ -205,10 +260,12 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 };
 
 const GLOBAL_PROJECT_ID = "local";
+const RECENT_PROJECT_IDS_KEY = "taskboard.recentProjectIds.v1";
 const PROJECT_VIEW_KEY_PREFIX = "taskboard.project-view.v1.";
 const DEVICE_WORKSPACE_PATHS_KEY = "taskboard.deviceWorkspacePaths.v1";
 const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
 const ISSUE_READ_KEY_PREFIX = "taskboard.issue-read.v1";
+const FIRST_USE_COMPLETE_KEY = "taskboard.first-use-complete.v1";
 const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
@@ -219,7 +276,7 @@ const DEFAULT_AUTOMATION_OPTIONS = {
 
 function readIssueActivityKeys(storageKey: string): Record<string, string> {
   try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}");
+    const value = JSON.parse(taskboardStorage.getItem(storageKey) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => (
       typeof entry[0] === "string" && typeof entry[1] === "string"
@@ -230,10 +287,21 @@ function readIssueActivityKeys(storageKey: string): Record<string, string> {
 }
 
 function readProjectBoardView(projectId: string): BoardView {
-  const view = window.localStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
+  const view = taskboardStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
   return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
+}
+
+function readRecentProjectIds(): string[] {
+  try {
+    const value = JSON.parse(taskboardStorage.getItem(RECENT_PROJECT_IDS_KEY) ?? "[]");
+    return Array.isArray(value)
+      ? value.filter((projectId): projectId is string => typeof projectId === "string" && projectId.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 const EVENT_NAMES = [
@@ -242,6 +310,7 @@ const EVENT_NAMES = [
   "task.moved",
   "task.archived",
   "task.restored",
+  "task.deleted",
   "task.relation.updated",
   "comment.created",
   "comment.updated",
@@ -249,6 +318,7 @@ const EVENT_NAMES = [
   "attachment.created",
   "attachment.deleted",
   "project.created",
+  "project.labels.updated",
   "workflow.updated",
 ] as const;
 
@@ -259,14 +329,14 @@ function isTheme(value: unknown): value is Theme {
 function getInitialTheme(): Theme {
   const fromQuery = new URLSearchParams(window.location.search).get("theme");
   if (isTheme(fromQuery)) return fromQuery;
-  const stored = window.localStorage.getItem("taskboard.theme");
+  const stored = taskboardStorage.getItem("taskboard.theme");
   if (isTheme(stored)) return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function readDeviceWorkspacePaths(): Record<string, string> {
   try {
-    const value = JSON.parse(window.localStorage.getItem(DEVICE_WORKSPACE_PATHS_KEY) ?? "{}");
+    const value = JSON.parse(taskboardStorage.getItem(DEVICE_WORKSPACE_PATHS_KEY) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => (
       typeof entry[1] === "string" && entry[1].trim().length > 0
@@ -278,7 +348,7 @@ function readDeviceWorkspacePaths(): Record<string, string> {
 
 function readProjectAutomations(): ProjectAutomations {
   try {
-    const value = JSON.parse(window.localStorage.getItem(PROJECT_AUTOMATIONS_KEY) ?? "{}");
+    const value = JSON.parse(taskboardStorage.getItem(PROJECT_AUTOMATIONS_KEY) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     const result: ProjectAutomations = {};
     for (const [projectId, record] of Object.entries(value)) {
@@ -363,12 +433,6 @@ function workspaceName(path?: string): string | null {
   return parts.at(-1) ?? path;
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong while loading your issues.";
-}
-
 function isAutomationHostItem(value: unknown): value is AutomationHostItem {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Partial<AutomationHostItem>;
@@ -438,7 +502,7 @@ function LocalRealtimeSync({
   setAttachmentsRevision,
 }: LocalRealtimeSyncProps) {
   useEffect(() => {
-    const source = new EventSource("/api/events");
+    const source = new EventSource(resolveTaskboardUrl("/api/events"));
     let refreshTimer: number | undefined;
     let refreshProjectsPending = false;
     let refreshTasksPending = false;
@@ -459,16 +523,25 @@ function LocalRealtimeSync({
 
     const handleEvent = (event: Event) => {
       const message = event as MessageEvent<string>;
-      let payload: { projectId?: string; taskId?: string } = {};
+      let payload: { projectId?: string; taskId?: string; project?: Project } = {};
       try {
-        payload = JSON.parse(message.data) as { projectId?: string; taskId?: string };
+        payload = JSON.parse(message.data) as {
+          projectId?: string;
+          taskId?: string;
+          project?: Project;
+        };
       } catch {
         // A malformed event should not interrupt later updates.
       }
+      const eventProjectId = payload.projectId ?? payload.project?.id;
       const affectsSelectedProject = Boolean(selectedProjectId)
-        && (!payload.projectId || payload.projectId === selectedProjectId);
+        && (!eventProjectId || eventProjectId === selectedProjectId);
       if (event.type === "project.created") {
         scheduleRefresh({ projects: true });
+        return;
+      }
+      if (event.type === "project.labels.updated") {
+        scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
         return;
       }
       if (event.type.startsWith("task.")) {
@@ -527,11 +600,17 @@ function LocalRealtimeSync({
 }
 
 export function App() {
-  const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const query = useMemo(() => new URL(document.baseURI).searchParams, []);
   const host = query.get("host");
   const embedded = host === "codex" || host === "workbuddy";
+  const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
+  const language = resolveTaskboardLanguage(
+    hostContext?.language ?? query.get("lang") ?? navigator.language,
+  );
+  const { locale, text } = getTaskboardI18n(language);
+  const [embeddedFrameChallenge, setEmbeddedFrameChallengeState] = useState("");
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
   const [manageTaskboardSkillPath, setManageTaskboardSkillPath] = useState("");
@@ -548,21 +627,25 @@ export function App() {
     } | null>
   >({});
   const [processingNow, setProcessingNow] = useState(() => Date.now());
+  const [recentProjectIds, setRecentProjectIds] = useState(readRecentProjectIds);
+  const initialProjectId = query.get("project") ?? recentProjectIds[0] ?? GLOBAL_PROJECT_ID;
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(
-    () => query.get("project") ?? GLOBAL_PROJECT_ID,
-  );
+  const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const actionErrorText = actionError === null
+    ? null
+    : typeof actionError === "string"
+      ? actionError
+      : text(actionError[0], actionError[1]);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
-  const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(
-    query.get("project") ?? GLOBAL_PROJECT_ID,
-  ));
+  const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
   const [dashboardSummaryAnimatedProjectId, setDashboardSummaryAnimatedProjectId] = useState<string | null>(null);
   const [ganttZoom, setGanttZoom] = useState<GanttZoom>("week");
   const [ganttHideCompleted, setGanttHideCompleted] = useState(false);
@@ -571,7 +654,10 @@ export function App() {
   const [otherTasksOpen, setOtherTasksOpen] = useState(false);
   const [otherTasksMounted, setOtherTasksMounted] = useState(false);
   const [otherTasksVisible, setOtherTasksVisible] = useState(false);
-  const [otherTasksStatus, setOtherTasksStatus] = useState<SecondaryTaskStatus>("backlog");
+  const [otherTasksTab, setOtherTasksTab] = useState<OtherTaskTab>("backlog");
+  const [restoringTaskId, setRestoringTaskId] = useState<string | null>(null);
+  const [pendingArchivedTaskDelete, setPendingArchivedTaskDelete] = useState<Task | null>(null);
+  const [deletingArchivedTaskId, setDeletingArchivedTaskId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [newTaskDraft, setNewTaskDraft] = useState<NewTaskEditorDraft | null>(null);
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
@@ -589,26 +675,57 @@ export function App() {
   const [settlingTaskId, setSettlingTaskId] = useState<string | null>(null);
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [openingThreadTaskId, setOpeningThreadTaskId] = useState<string | null>(null);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(true);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(
+    () => taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
+  );
+  const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
+  const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
   const [automationError, setAutomationError] = useState<string | null>(null);
   const [announcement, setAnnouncementValue] = useState("");
+  const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
   const tasksRequestRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
+  const undoSequenceRef = useRef(0);
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
+  const issueListRef = useRef<HTMLDivElement>(null);
+  const boardColumnScrollRefs = useRef<Partial<Record<TaskStatus, HTMLDivElement | null>>>({});
+  const pendingDetailSourceScrollRef = useRef<DetailSourceScroll | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
+  const textRef = useRef(text);
+  textRef.current = text;
+  setApiText(text);
+  function errorMessage(error: unknown): string {
+    if (error instanceof ApiError) return error.message;
+    if (error instanceof Error) return error.message;
+    return textRef.current(
+      "加载议题时出现问题。",
+      "Something went wrong while loading your issues.",
+    );
+  }
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
-  const automationRequestInFlightRef = useRef(false);
+  const automationRequestInFlightRef = useRef<"list" | "save" | null>(null);
+  const loadedAutomationProjectIdsRef = useRef(new Set<string>());
+  const queuedAutomationSavesRef = useRef(new Map<string, QueuedProjectAutomationSave>());
   const projectAutomationsRef = useRef(projectAutomations);
 
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   const setAnnouncement = useCallback((message: string) => {
+    setUndoNotice(null);
     setAnnouncementValue(message);
   }, []);
 
@@ -626,25 +743,42 @@ export function App() {
       const next = { ...current };
       if (normalizedPath) next[projectId] = normalizedPath;
       else delete next[projectId];
-      window.localStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
+      taskboardStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const rememberProjectOpen = useCallback((projectId: string) => {
+    setRecentProjectIds((current) => {
+      if (current[0] === projectId) return current;
+      const next = [projectId, ...current.filter((candidate) => candidate !== projectId)];
+      taskboardStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
-  const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
+  useLayoutEffect(() => {
+    if (selectedProject) rememberProjectOpen(selectedProject.id);
+  }, [rememberProjectOpen, selectedProject]);
+  const currentUser = hostContext?.user ?? {
+    ...DEFAULT_USER_ACTOR,
+    name: text("本地用户", "Local user"),
+  };
   const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID
     ? undefined
     : deviceWorkspacePaths[selectedProjectId];
   const selectedProjectAutomation = projectAutomations[selectedProjectId];
   const automationProjectContext = useMemo(() => {
     if (!embedded || window.parent === window) {
-      return { unavailableReason: "仅可在 Codex App 中使用" };
+      return { unavailableReason: text("仅可在 Codex App 中使用", "Available only in the Codex app") };
     }
-    if (!isLocalTaskboardOrigin(window.location.origin)) {
-      return { unavailableReason: "仅本地任务面板可用" };
+    if (!isLocalTaskboardOrigin(new URL(document.baseURI).origin)) {
+      return { unavailableReason: text("仅本地任务面板可用", "Available only on the local taskboard") };
     }
-    if (!selectedProject) return { unavailableReason: "请先选择项目" };
+    if (!selectedProject) {
+      return { unavailableReason: text("请先选择项目", "Select a project first") };
+    }
 
     const directCodexProject = hostContext?.projects?.some(
       (project) => project.id === selectedProject.id,
@@ -663,10 +797,16 @@ export function App() {
       )?.id;
 
     if (!workspacePath || !codexProjectId) {
-      return { unavailableReason: "请先在 Codex 中添加并映射该项目目录" };
+      return { unavailableReason: text(
+        "请先在 Codex 中添加并映射该项目目录",
+        "Add and map this project directory in Codex first",
+      ) };
     }
     if (!manageTaskboardSkillPath) {
-      return { unavailableReason: "任务面板还没有读取到 Skill 路径" };
+      return { unavailableReason: text(
+        "任务面板还没有读取到 Skill 路径",
+        "Taskboard has not received the Skill path",
+      ) };
     }
     return { workspacePath, codexProjectId, unavailableReason: null };
   }, [
@@ -675,7 +815,23 @@ export function App() {
     hostContext,
     manageTaskboardSkillPath,
     selectedProject,
+    text,
   ]);
+  const automationRequestContext = useMemo<AutomationRequestContext | null>(() => {
+    if (
+      !selectedProject
+      || !automationProjectContext.codexProjectId
+      || !automationProjectContext.workspacePath
+      || !manageTaskboardSkillPath
+    ) return null;
+    return {
+      taskboardProjectId: selectedProject.id,
+      codexProjectId: automationProjectContext.codexProjectId,
+      projectName: selectedProject.name,
+      workspacePath: automationProjectContext.workspacePath,
+      skillPath: manageTaskboardSkillPath,
+    };
+  }, [automationProjectContext, manageTaskboardSkillPath, selectedProject]);
   const detailTask = detailTaskIdentifier
     ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
@@ -683,13 +839,7 @@ export function App() {
   const contextMenuTask = contextMenu
     ? tasks.find((task) => task.id === contextMenu.taskId) ?? null
     : null;
-  const availableLabels = useMemo(
-    () => [...new Set([
-      ...DEFAULT_LABELS.map((label) => label.name),
-      ...tasks.flatMap((task) => task.labels),
-    ])],
-    [tasks],
-  );
+  const availableLabels = selectedProject?.labels ?? [];
   const projectChoices = useMemo<ProjectChoice[]>(() => {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
     const seen = new Set<string>();
@@ -699,7 +849,9 @@ export function App() {
       seen.add(project.id);
       choices.push({
         id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
+        name: project.id === GLOBAL_PROJECT_ID
+          ? text("全局", "Global")
+          : persistedById.get(project.id)?.name ?? project.name,
         issueCount: persistedById.get(project.id)?.issueCount ?? 0,
         inCodex: true,
         persisted: persistedById.has(project.id),
@@ -709,14 +861,18 @@ export function App() {
       if (seen.has(project.id)) continue;
       choices.push({
         id: project.id,
-        name: project.name,
+        name: project.id === GLOBAL_PROJECT_ID ? text("全局", "Global") : project.name,
         issueCount: project.issueCount,
         inCodex: false,
         persisted: true,
       });
     }
-    return choices;
-  }, [hostContext?.projects, projects]);
+    const recentOrder = new Map(recentProjectIds.map((projectId, index) => [projectId, index]));
+    return choices.sort((left, right) => (
+      (recentOrder.get(left.id) ?? recentProjectIds.length)
+      - (recentOrder.get(right.id) ?? recentProjectIds.length)
+    ));
+  }, [hostContext?.projects, projects, recentProjectIds, text]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const issueReadStorageKey = selectedProjectId
     ? `${ISSUE_READ_KEY_PREFIX}:${taskboardMetadata?.mode ?? "local"}:${selectedProjectId}`
@@ -754,7 +910,7 @@ export function App() {
       if (current[task.id] === task.activityKey) return current;
       const next = { ...current, [task.id]: task.activityKey };
       try {
-        window.localStorage.setItem(issueReadStorageKey, JSON.stringify(next));
+        taskboardStorage.setItem(issueReadStorageKey, JSON.stringify(next));
       } catch {
         // Read state remains valid for this page even when browser persistence is unavailable.
       }
@@ -789,46 +945,38 @@ export function App() {
       if (record) next[projectId] = record;
       else delete next[projectId];
       projectAutomationsRef.current = next;
-      window.localStorage.setItem(PROJECT_AUTOMATIONS_KEY, JSON.stringify(next));
+      taskboardStorage.setItem(PROJECT_AUTOMATIONS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
 
   const sendAutomationRequest = useCallback((
     operation: "ensure-active" | "pause" | "list" | "apply-policy",
-    options: Pick<
-      ProjectAutomationRecord,
-      "enabledByUser" | "quotaAware" | "intervalMinutes" | "model" | "reasoningEffort"
-    >,
+    options: ProjectAutomationOptions,
+    context: AutomationRequestContext,
     automationId?: string,
   ) => {
-    if (
-      !selectedProject
-      || !automationProjectContext.codexProjectId
-      || !automationProjectContext.workspacePath
-    ) {
-      return Promise.reject(new Error(
-        automationProjectContext.unavailableReason ?? "无法读取项目自动化信息",
-      ));
-    }
     const requestId = window.crypto.randomUUID();
     const response = new Promise<AutomationHostResponse>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         pendingAutomationRequestsRef.current.delete(requestId);
-        reject(new Error("Codex 自动化没有响应，请稍后重试"));
+        reject(new Error(textRef.current(
+          "Codex 自动化没有响应，请稍后重试",
+          "Codex automation did not respond. Try again later.",
+        )));
       }, 10_000);
       pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
     });
-    window.parent.postMessage({
+    postEmbeddedHostMessage({
       type: "taskboard:automation-request",
       payload: {
         requestId,
         operation,
-        taskboardProjectId: selectedProjectId,
-        codexProjectId: automationProjectContext.codexProjectId,
-        projectName: selectedProject.name,
-        workspacePath: automationProjectContext.workspacePath,
-        skillPath: manageTaskboardSkillPath,
+        taskboardProjectId: context.taskboardProjectId,
+        codexProjectId: context.codexProjectId,
+        projectName: context.projectName,
+        workspacePath: context.workspacePath,
+        skillPath: context.skillPath,
         ...(automationId ? { automationId } : {}),
         enabledByUser: options.enabledByUser,
         quotaAware: options.quotaAware,
@@ -836,24 +984,66 @@ export function App() {
         model: options.model,
         reasoningEffort: options.reasoningEffort,
       },
-    }, "*");
+    });
     return response;
-  }, [
-    automationProjectContext,
-    manageTaskboardSkillPath,
-    selectedProject,
-    selectedProjectId,
-  ]);
+  }, []);
+
+  const drainQueuedAutomationSaves = useCallback(async (preferredProjectId?: string) => {
+    if (automationRequestInFlightRef.current) return;
+    let nextProjectId = preferredProjectId;
+    while (queuedAutomationSavesRef.current.size > 0) {
+      const queuedSave = (
+        nextProjectId ? queuedAutomationSavesRef.current.get(nextProjectId) : undefined
+      ) ?? queuedAutomationSavesRef.current.values().next().value;
+      nextProjectId = undefined;
+      if (!queuedSave) return;
+      queuedAutomationSavesRef.current.delete(queuedSave.projectId);
+      const previousRecord = projectAutomationsRef.current[queuedSave.projectId];
+      automationRequestInFlightRef.current = "save";
+      setAutomationPending(true);
+      setAutomationError(null);
+      try {
+        const response = await sendAutomationRequest(
+          "apply-policy",
+          queuedSave.options,
+          queuedSave.context,
+          previousRecord?.automationId,
+        );
+        const item = isAutomationHostItem(response.item) ? response.item : undefined;
+        writeProjectAutomation(queuedSave.projectId, {
+          automationId: item?.id,
+          codexProjectId: queuedSave.context.codexProjectId,
+          status: item?.status ?? "PAUSED",
+          enabledByUser: queuedSave.options.enabledByUser,
+          quotaAware: queuedSave.options.quotaAware,
+          ...(response.quota ? { quota: response.quota } : {}),
+          intervalMinutes: queuedSave.options.intervalMinutes,
+          model: queuedSave.options.model,
+          reasoningEffort: queuedSave.options.reasoningEffort,
+        });
+      } catch (error) {
+        writeProjectAutomation(queuedSave.projectId, previousRecord);
+        setAutomationError(error instanceof Error
+          ? error.message
+          : textRef.current("无法更新自动化", "Could not update automation."));
+      } finally {
+        automationRequestInFlightRef.current = null;
+        setAutomationPending(false);
+      }
+    }
+  }, [sendAutomationRequest, writeProjectAutomation]);
 
   const reconcileProjectAutomation = useCallback(async () => {
-    if (automationProjectContext.unavailableReason) {
+    if (!automationRequestContext) {
       setAutomationError(null);
       return;
     }
-    if (!selectedProjectId || !automationProjectContext.codexProjectId || automationRequestInFlightRef.current) return;
-    const stored = projectAutomationsRef.current[selectedProjectId];
-    automationRequestInFlightRef.current = true;
-    setAutomationPending(true);
+    if (automationRequestInFlightRef.current) return;
+    const projectId = automationRequestContext.taskboardProjectId;
+    const stored = projectAutomationsRef.current[projectId];
+    const initialLoad = !loadedAutomationProjectIdsRef.current.has(projectId);
+    automationRequestInFlightRef.current = "list";
+    if (initialLoad) setAutomationPending(true);
     setAutomationError(null);
     try {
       const options = stored ?? {
@@ -861,24 +1051,27 @@ export function App() {
         ...DEFAULT_AUTOMATION_OPTIONS,
       };
       const response = await sendAutomationRequest(
-        stored ? "apply-policy" : "list",
+        "list",
         options,
+        automationRequestContext,
         stored?.automationId,
       );
       const items = Array.isArray(response.items)
         ? response.items.filter(isAutomationHostItem)
         : [];
+      const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
       if (!stored) {
-        const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
         if (!policy) return;
-        const item = items.find((candidate) => candidate.id === policy.automationId)
+        const item = (isAutomationHostItem(response.item) ? response.item : undefined)
+          ?? items.find((candidate) => candidate.id === policy.automationId)
           ?? (items.length === 1 ? items[0] : undefined);
-        writeProjectAutomation(selectedProjectId, {
+        writeProjectAutomation(projectId, {
           automationId: item?.id ?? policy.automationId,
-          codexProjectId: automationProjectContext.codexProjectId,
+          codexProjectId: automationRequestContext.codexProjectId,
           status: item?.status ?? "PAUSED",
           enabledByUser: policy.enabledByUser,
           quotaAware: policy.quotaAware,
+          ...(response.quota ? { quota: response.quota } : {}),
           intervalMinutes: policy.intervalMinutes,
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
@@ -890,10 +1083,12 @@ export function App() {
         ?? (items.length === 1 ? items[0] : undefined);
       if (!item) {
         if (stored) {
-          writeProjectAutomation(selectedProjectId, {
+          writeProjectAutomation(projectId, {
             ...stored,
             automationId: undefined,
             status: "PAUSED",
+            enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
+            quotaAware: policy?.quotaAware ?? stored.quotaAware,
             ...(response.quota ? { quota: response.quota } : {}),
           });
         }
@@ -901,80 +1096,77 @@ export function App() {
       }
       const intervalMinutes = intervalMinutesFromRrule(item.rrule);
       if (!intervalMinutes) return;
-      writeProjectAutomation(selectedProjectId, {
+      writeProjectAutomation(projectId, {
         automationId: item.id,
-        codexProjectId: automationProjectContext.codexProjectId,
+        codexProjectId: automationRequestContext.codexProjectId,
         status: item.status,
-        enabledByUser: stored.enabledByUser,
-        quotaAware: stored.quotaAware,
-        ...(response.quota ? { quota: response.quota } : {}),
+        enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
+        quotaAware: policy?.quotaAware ?? stored.quotaAware,
+        ...(
+          response.quota
+            ? { quota: response.quota }
+            : stored.quota
+              ? { quota: stored.quota }
+              : {}
+        ),
         intervalMinutes,
         model: item.model,
         reasoningEffort: item.reasoningEffort,
       });
     } catch (error) {
-      setAutomationError(error instanceof Error ? error.message : "无法读取自动化状态");
+      setAutomationError(error instanceof Error
+        ? error.message
+        : text("无法读取自动化状态", "Could not read the automation status."));
     } finally {
-      automationRequestInFlightRef.current = false;
-      setAutomationPending(false);
+      loadedAutomationProjectIdsRef.current.add(projectId);
+      automationRequestInFlightRef.current = null;
+      if (initialLoad) setAutomationPending(false);
+      void drainQueuedAutomationSaves(projectId);
     }
   }, [
-    automationProjectContext,
-    selectedProjectId,
+    automationRequestContext,
+    drainQueuedAutomationSaves,
     sendAutomationRequest,
+    text,
     writeProjectAutomation,
   ]);
 
-  const saveProjectAutomation = useCallback(async (options: {
-    enabledByUser: boolean;
-    quotaAware: boolean;
-    intervalMinutes: AutomationIntervalMinutes;
-    model: AutomationModel;
-    reasoningEffort: AutomationReasoningEffort;
-  }) => {
-    const stored = projectAutomations[selectedProjectId];
-    if (
-      !selectedProjectId
-      || automationProjectContext.unavailableReason
-      || !automationProjectContext.codexProjectId
-      || automationRequestInFlightRef.current
-    ) return;
-    const previousRecord = stored;
-    automationRequestInFlightRef.current = true;
-    setAutomationPending(true);
-    setAutomationError(null);
-    try {
-      const response = await sendAutomationRequest("apply-policy", options, stored?.automationId);
-      const item = isAutomationHostItem(response.item) ? response.item : undefined;
-      writeProjectAutomation(selectedProjectId, {
-        automationId: item?.id,
-        codexProjectId: automationProjectContext.codexProjectId,
-        status: item?.status ?? "PAUSED",
-        enabledByUser: options.enabledByUser,
-        quotaAware: options.quotaAware,
-        ...(response.quota ? { quota: response.quota } : {}),
-        intervalMinutes: options.intervalMinutes,
-        model: options.model,
-        reasoningEffort: options.reasoningEffort,
-      });
-    } catch (error) {
-      writeProjectAutomation(selectedProjectId, previousRecord);
-      setAutomationError(error instanceof Error ? error.message : "无法更新自动化");
-    } finally {
-      automationRequestInFlightRef.current = false;
-      setAutomationPending(false);
+  const saveProjectAutomation = useCallback((options: ProjectAutomationOptions) => {
+    if (!automationRequestContext) return;
+    const queuedSave = {
+      projectId: automationRequestContext.taskboardProjectId,
+      context: automationRequestContext,
+      options,
+    };
+    queuedAutomationSavesRef.current.set(queuedSave.projectId, queuedSave);
+    if (!automationRequestInFlightRef.current) {
+      void drainQueuedAutomationSaves(queuedSave.projectId);
     }
   }, [
-    automationProjectContext,
-    projectAutomations,
-    selectedProjectId,
-    sendAutomationRequest,
-    writeProjectAutomation,
+    automationRequestContext,
+    drainQueuedAutomationSaves,
   ]);
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
     if (fullTask) markTaskRead(fullTask);
+    if (boardView === "list" && issueListRef.current) {
+      pendingDetailSourceScrollRef.current = {
+        projectId: selectedProjectId,
+        view: "list",
+        scrollTop: issueListRef.current.scrollTop,
+      };
+    } else if (boardView === "issues" && fullTask) {
+      const scrollContainer = boardColumnScrollRefs.current[fullTask.status];
+      if (scrollContainer) {
+        pendingDetailSourceScrollRef.current = {
+          projectId: selectedProjectId,
+          view: "issues",
+          status: fullTask.status,
+          scrollTop: scrollContainer.scrollTop,
+        };
+      }
+    }
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(task.identifier);
@@ -997,11 +1189,50 @@ export function App() {
     window.history.replaceState(window.history.state, "", url);
   }
 
+  useLayoutEffect(() => {
+    if (detailTaskIdentifier) return;
+    const pendingScroll = pendingDetailSourceScrollRef.current;
+    if (!pendingScroll) return;
+    if (pendingScroll.view !== boardView || pendingScroll.projectId !== selectedProjectId) {
+      pendingDetailSourceScrollRef.current = null;
+      return;
+    }
+    const scrollContainer = pendingScroll.view === "list"
+      ? issueListRef.current
+      : boardColumnScrollRefs.current[pendingScroll.status];
+    pendingDetailSourceScrollRef.current = null;
+    if (!scrollContainer) return;
+    scrollContainer.scrollTop = pendingScroll.scrollTop;
+  }, [boardView, detailTaskIdentifier, selectedProjectId]);
+
   useEffect(() => {
     function syncRouteFromLocation() {
       const url = new URL(window.location.href);
       const routeProjectId = url.searchParams.get("project") ?? GLOBAL_PROJECT_ID;
-      setDetailTaskIdentifier(readIssueIdentifier(url.search));
+      const routeIssueIdentifier = readIssueIdentifier(url.search);
+      if (routeIssueIdentifier && boardView === "list" && issueListRef.current) {
+        pendingDetailSourceScrollRef.current = {
+          projectId: selectedProjectId,
+          view: "list",
+          scrollTop: issueListRef.current.scrollTop,
+        };
+      } else if (routeIssueIdentifier && boardView === "issues") {
+        const routeTask = tasksRef.current.find(
+          (task) => task.identifier === routeIssueIdentifier,
+        );
+        const scrollContainer = routeTask
+          ? boardColumnScrollRefs.current[routeTask.status]
+          : null;
+        if (routeTask && scrollContainer) {
+          pendingDetailSourceScrollRef.current = {
+            projectId: selectedProjectId,
+            view: "issues",
+            status: routeTask.status,
+            scrollTop: scrollContainer.scrollTop,
+          };
+        }
+      }
+      setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
       setBoardView(readProjectBoardView(routeProjectId));
       setSelectedProjectId(routeProjectId);
@@ -1009,13 +1240,13 @@ export function App() {
 
     window.addEventListener("popstate", syncRouteFromLocation);
     return () => window.removeEventListener("popstate", syncRouteFromLocation);
-  }, [selectedProjectId]);
+  }, [boardView, selectedProjectId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.embedded = String(embedded);
     document.documentElement.style.colorScheme = theme;
-    if (!embedded) window.localStorage.setItem("taskboard.theme", theme);
+    if (!embedded) taskboardStorage.setItem("taskboard.theme", theme);
   }, [embedded, theme]);
 
   useEffect(() => {
@@ -1039,6 +1270,12 @@ export function App() {
   }, [tasks]);
 
   useEffect(() => {
+    if (taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null) {
+      taskboardStorage.setItem(FIRST_USE_COMPLETE_KEY, "true");
+    }
+  }, []);
+
+  useEffect(() => {
     if (!projectMenuOpen) return;
     function closeProjectMenu(event: PointerEvent) {
       const target = event.target as HTMLElement;
@@ -1056,16 +1293,49 @@ export function App() {
   }, [projectMenuOpen]);
 
   useEffect(() => {
+    if (!projectContextMenu) return;
+    function closeProjectContextMenu(event: PointerEvent) {
+      const target = event.target as HTMLElement;
+      if (!target.closest("[data-project-context-menu]")) setProjectContextMenu(null);
+    }
+    function closeProjectContextMenuWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setProjectContextMenu(null);
+    }
+    document.addEventListener("pointerdown", closeProjectContextMenu);
+    window.addEventListener("keydown", closeProjectContextMenuWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeProjectContextMenu);
+      window.removeEventListener("keydown", closeProjectContextMenuWithEscape);
+    };
+  }, [projectContextMenu]);
+
+  useEffect(() => {
     setAutomationError(null);
     void reconcileProjectAutomation();
   }, [selectedProjectId, reconcileProjectAutomation]);
 
   useEffect(() => {
     if (!embedded || window.parent === window) return;
+    let acknowledgedFrameChallenge = "";
 
     function receiveHostMessage(event: MessageEvent) {
       if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
       const message = event.data as { type?: string; payload?: unknown; theme?: unknown };
+
+      if (message.type === "taskboard:frame-challenge") {
+        const challenge = typeof message.payload === "object"
+          && message.payload
+          && "challenge" in message.payload
+          && typeof message.payload.challenge === "string"
+          ? message.payload.challenge
+          : "";
+        if (!challenge || challenge === acknowledgedFrameChallenge) return;
+        acknowledgedFrameChallenge = challenge;
+        setEmbeddedFrameChallenge(challenge);
+        setEmbeddedFrameChallengeState(challenge);
+        postEmbeddedHostMessage({ type: "taskboard:ready" });
+        return;
+      }
 
       if (message.type === "taskboard:automation-response" && message.payload) {
         const payload = message.payload as Partial<AutomationHostResponse>;
@@ -1076,7 +1346,9 @@ export function App() {
         pendingAutomationRequestsRef.current.delete(payload.requestId);
         if (payload.ok) pending.resolve(payload as AutomationHostResponse);
         else pending.reject(new Error(
-          typeof payload.error === "string" ? payload.error : "Codex 无法更新自动化",
+          typeof payload.error === "string"
+            ? payload.error
+            : textRef.current("Codex 无法更新自动化", "Codex could not update automation"),
         ));
         return;
       }
@@ -1094,7 +1366,9 @@ export function App() {
       if (message.type === "taskboard:thread-create-error" && message.payload) {
         const payload = message.payload as { taskId?: unknown; error?: unknown };
         setOpeningThreadTaskId(null);
-        setActionError(typeof payload.error === "string" ? payload.error : "无法在 Codex 中创建对话。");
+        setActionError(typeof payload.error === "string"
+          ? payload.error
+          : textRef.current("无法在 Codex 中创建对话。", "Could not create the conversation in Codex."));
         return;
       }
 
@@ -1106,12 +1380,19 @@ export function App() {
       if (host === "codex") void publishHostRuntime(payload);
     }
 
+    const removeExternalLinkHandler = installEmbeddedExternalLinkHandler();
     window.addEventListener("message", receiveHostMessage);
-    window.parent.postMessage({ type: "taskboard:ready" }, "*");
+    postEmbeddedHostMessage({ type: "taskboard:frame-awaiting-challenge" });
     return () => {
       window.removeEventListener("message", receiveHostMessage);
+      setEmbeddedFrameChallenge("");
+      removeExternalLinkHandler();
       for (const pending of pendingAutomationRequestsRef.current.values()) {
         window.clearTimeout(pending.timeoutId);
+        pending.reject(new Error(textRef.current(
+          "Taskboard 消息桥已关闭",
+          "The Taskboard host bridge was closed",
+        )));
       }
       pendingAutomationRequestsRef.current.clear();
     };
@@ -1139,10 +1420,10 @@ export function App() {
     const region = dragRegionRef.current;
     const publish = () => {
       const rect = region.getBoundingClientRect();
-      window.parent.postMessage({
+      postEmbeddedHostMessage({
         type: "taskboard:drag-region",
         payload: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      }, "*");
+      });
     };
     const observer = new ResizeObserver(publish);
     observer.observe(region);
@@ -1151,9 +1432,9 @@ export function App() {
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", publish);
-      window.parent.postMessage({ type: "taskboard:drag-region", payload: null }, "*");
+      postEmbeddedHostMessage({ type: "taskboard:drag-region", payload: null });
     };
-  }, [detailTaskId, embedded, selectedProjectId]);
+  }, [detailTaskId, embedded, embeddedFrameChallenge, selectedProjectId]);
 
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
     setLoadError(null);
@@ -1179,7 +1460,7 @@ export function App() {
         const next = { ...current, ...workspaces };
         delete next[GLOBAL_PROJECT_ID];
         if (JSON.stringify(next) === JSON.stringify(current)) return current;
-        window.localStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
+        taskboardStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
         return next;
       });
       setProjects(nextProjects);
@@ -1218,9 +1499,13 @@ export function App() {
     if (!options.quiet) setTasksLoading(true);
     setLoadError(null);
     try {
-      const nextTasks = await listTasks(projectId, options.signal);
+      const [nextTasks, nextArchivedTasks] = await Promise.all([
+        listTasks(projectId, options.signal),
+        listArchivedTasks(projectId, options.signal),
+      ]);
       if (requestId !== tasksRequestRef.current) return;
       setTasks(sortTasks(nextTasks));
+      setArchivedTasks(sortTasks(nextArchivedTasks));
       setHasLoadedTasks(true);
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === tasksRequestRef.current) {
@@ -1234,6 +1519,7 @@ export function App() {
   useEffect(() => {
     if (!selectedProjectId) {
       setTasks([]);
+      setArchivedTasks([]);
       setHasLoadedTasks(false);
       return;
     }
@@ -1342,9 +1628,11 @@ export function App() {
     refreshWorkflowOptions,
   ]);
 
-  function pushUndo(undo: () => Promise<void>) {
-    const operation = { undo };
+  function pushUndo(message: string, undo: () => Promise<void>) {
+    const operation = { id: ++undoSequenceRef.current, message, undo };
     undoStackRef.current = [...undoStackRef.current.slice(-19), operation];
+    setAnnouncementValue("");
+    setUndoNotice({ id: operation.id, message });
   }
 
   async function performUndo() {
@@ -1353,13 +1641,17 @@ export function App() {
     if (!operation) return;
     undoStackRef.current = undoStackRef.current.slice(0, -1);
     undoInFlightRef.current = true;
+    setUndoNotice(null);
     setProjectMenuOpen(false);
     closeContextMenu();
     setActionError(null);
     try {
       await operation.undo();
     } catch (error) {
-      setActionError(`无法撤回这次操作：${errorMessage(error)}`);
+      setActionError(text(
+        `无法撤回这次操作：${errorMessage(error)}`,
+        `Could not undo this action: ${errorMessage(error)}`,
+      ));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     } finally {
       undoInFlightRef.current = false;
@@ -1426,9 +1718,13 @@ export function App() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
-      (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
+      (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
     );
-  }, [filters, search, tasks]);
+  }, [filters, language, search, tasks]);
+
+  const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
+    (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
+  ), [archivedTasks, filters, language, search]);
 
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
@@ -1520,7 +1816,7 @@ export function App() {
     setGanttViewMenuOpen(false);
     setBoardView(view);
     if (selectedProjectId) {
-      window.localStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
+      taskboardStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
     }
   }
 
@@ -1572,10 +1868,18 @@ export function App() {
       if (creating) setNewTaskDraft(null);
       setEditor(null);
       if (failedAttachments > 0) {
-        setActionError(`${saved.identifier} 已创建，但有 ${failedAttachments} 个附件上传失败，可在详情页重试。`);
+        setActionError(text(
+          `${saved.identifier} 已创建，但有 ${failedAttachments} 个附件上传失败，可在详情页重试。`,
+          `${saved.identifier} was created, but ${failedAttachments} attachments failed to upload. Try again from the details page.`,
+        ));
       }
       if (creating) {
-        pushUndo(async () => {
+        const totalUploaded = uploadedAttachments + inlineImages.length;
+        const message = text(
+          `${saved.identifier} 已创建${totalUploaded > 0 ? `，已上传 ${totalUploaded} 个附件` : ""}。`,
+          `${saved.identifier} was created${totalUploaded > 0 ? ` with ${totalUploaded} attachments uploaded` : ""}.`,
+        );
+        pushUndo(message, async () => {
           const candidate = tasksRef.current.find((task) => task.id === saved.id);
           const current = candidate && candidate.version >= saved.version ? candidate : saved;
           await archiveTaskRequest(current);
@@ -1585,7 +1889,10 @@ export function App() {
         const previous = editor.task;
         const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
         if (!draft.assigneeTarget || previousAssigneeTarget) {
-          pushUndo(() => restoreTaskDetails(previous, saved, previousAssigneeTarget));
+          pushUndo(
+            text(`${saved.identifier} 已更新。`, `${saved.identifier} was updated.`),
+            () => restoreTaskDetails(previous, saved, previousAssigneeTarget),
+          );
         }
       }
     } catch (error) {
@@ -1651,7 +1958,13 @@ export function App() {
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === moved.id ? moved : candidate,
       )));
-      pushUndo(async () => {
+      const message = task.status === status
+        ? text(`${task.identifier} 排序已调整。`, `${task.identifier} was reordered.`)
+        : text(
+          `${task.identifier} 已移至${taskStatusLabel(language, status)}。`,
+          `${task.identifier} was moved to ${taskStatusLabel(language, status)}.`,
+        );
+      pushUndo(message, async () => {
         const candidate = tasksRef.current.find((current) => current.id === moved.id);
         const current = candidate && candidate.version >= moved.version ? candidate : moved;
         const restored = await moveTaskRequest(current, previous.status, previous.sortOrder);
@@ -1662,7 +1975,10 @@ export function App() {
         candidate.id === previous.id ? previous : candidate,
       )));
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "That issue changed elsewhere. The board has been refreshed."
+        ? textRef.current(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     } finally {
@@ -1704,10 +2020,14 @@ export function App() {
     const optimisticAssignee = assigneeTarget
       ? actorForAssigneeTarget(assigneeTarget, currentUser)
       : task.assignee;
+    const optimisticParticipants = assigneeTarget
+      && !task.participants.some((participant) => actorKey(participant) === actorKey(optimisticAssignee))
+      ? [...task.participants, optimisticAssignee]
+      : task.participants;
     setActionError(null);
     setTasks((current) => current.map((candidate) =>
       candidate.id === task.id
-        ? { ...candidate, ...taskChanges, assignee: optimisticAssignee }
+        ? { ...candidate, ...taskChanges, assignee: optimisticAssignee, participants: optimisticParticipants }
         : candidate,
     ));
 
@@ -1718,7 +2038,10 @@ export function App() {
       )));
       const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
       if (!assigneeTarget || previousAssigneeTarget) {
-        pushUndo(() => restoreTaskDetails(previous, updated, previousAssigneeTarget));
+        pushUndo(
+          text(`${task.identifier} 已更新。`, `${task.identifier} was updated.`),
+          () => restoreTaskDetails(previous, updated, previousAssigneeTarget),
+        );
       }
       return updated;
     } catch (error) {
@@ -1726,9 +2049,39 @@ export function App() {
         candidate.id === previous.id ? previous : candidate,
       )));
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+      throw error;
+    }
+  }
+
+  async function persistProjectLabel(label: string) {
+    setActionError(null);
+    try {
+      const project = await createProjectLabelRequest(selectedProjectId, label);
+      setProjects((current) => current.map((candidate) => (
+        candidate.id === project.id ? project : candidate
+      )));
+    } catch (error) {
+      setActionError(errorMessage(error));
+      throw error;
+    }
+  }
+
+  async function removeProjectLabel(label: string) {
+    setActionError(null);
+    try {
+      const project = await deleteProjectLabelRequest(selectedProjectId, label);
+      setProjects((current) => current.map((candidate) => (
+        candidate.id === project.id ? project : candidate
+      )));
+      await refreshTasks(selectedProjectId, { quiet: true });
+    } catch (error) {
+      setActionError(errorMessage(error));
       throw error;
     }
   }
@@ -1753,7 +2106,10 @@ export function App() {
       return result;
     } catch (error) {
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
       throw error;
@@ -1769,7 +2125,10 @@ export function App() {
         developmentContext: null,
       });
       setTasks((current) => sortTasks([...current, duplicated]));
-      pushUndo(async () => {
+      pushUndo(text(
+        `${duplicated.identifier} 副本已创建。`,
+        `${duplicated.identifier} copy was created.`,
+      ), async () => {
         const candidate = tasksRef.current.find((current) => current.id === duplicated.id);
         const current = candidate && candidate.version >= duplicated.version ? candidate : duplicated;
         await archiveTaskRequest(current);
@@ -1785,8 +2144,13 @@ export function App() {
     try {
       const archived = await archiveTaskRequest(task);
       setTasks((current) => current.filter((candidate) => candidate.id !== task.id));
-      pushUndo(async () => {
+      setArchivedTasks((current) => sortTasks([
+        ...current.filter((candidate) => candidate.id !== archived.id),
+        archived,
+      ]));
+      pushUndo(text(`${task.identifier} 已归档。`, `${task.identifier} was archived.`), async () => {
         const restored = await restoreTaskRequest(archived);
+        setArchivedTasks((current) => current.filter((candidate) => candidate.id !== restored.id));
         setTasks((current) => sortTasks([
           ...current.filter((candidate) => candidate.id !== restored.id),
           restored,
@@ -1794,24 +2158,80 @@ export function App() {
       });
     } catch (error) {
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
-        ? "该议题已在其他位置更新，看板已重新同步。"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     }
   }
 
-  async function copyText(text: string, message: string) {
+  async function restoreArchivedTask(task: Task) {
+    setActionError(null);
+    setRestoringTaskId(task.id);
     try {
-      await navigator.clipboard.writeText(text);
+      const restored = await restoreTaskRequest(task);
+      setArchivedTasks((current) => current.filter((candidate) => candidate.id !== restored.id));
+      setTasks((current) => sortTasks([
+        ...current.filter((candidate) => candidate.id !== restored.id),
+        restored,
+      ]));
+      setAnnouncement(text(
+        `${restored.identifier} 已恢复。`,
+        `${restored.identifier} was restored.`,
+      ));
+    } catch (error) {
+      setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
+        : errorMessage(error));
+      if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+    } finally {
+      setRestoringTaskId(null);
+    }
+  }
+
+  async function deletePendingArchivedTask() {
+    if (!pendingArchivedTaskDelete || deletingArchivedTaskId) return;
+    const task = pendingArchivedTaskDelete;
+    setActionError(null);
+    setDeletingArchivedTaskId(task.id);
+    try {
+      await deleteArchivedTaskRequest(task);
+      setArchivedTasks((current) => current.filter((candidate) => candidate.id !== task.id));
+      setPendingArchivedTaskDelete(null);
+      setAnnouncement(text(
+        `${task.identifier} 已永久删除。`,
+        `${task.identifier} was permanently deleted.`,
+      ));
+    } catch (error) {
+      setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
+        ? text(
+          "该议题已在其他位置更新，看板已重新同步。",
+          "This issue changed elsewhere. The board has been synced.",
+        )
+        : errorMessage(error));
+      if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+    } finally {
+      setDeletingArchivedTaskId(null);
+    }
+  }
+
+  async function copyText(content: string, message: string) {
+    try {
+      await navigator.clipboard.writeText(content);
       setAnnouncement(message);
     } catch {
-      setActionError("无法写入剪贴板。");
+      setActionError(text("无法写入剪贴板。", "Could not write to the clipboard."));
     }
   }
 
   function openThread(threadId: string) {
     if (embedded && window.parent !== window) {
-      window.parent.postMessage({ type: "taskboard:open-thread", payload: { threadId } }, "*");
+      postEmbeddedHostMessage({ type: "taskboard:open-thread", payload: { threadId } });
       return;
     }
 
@@ -1831,7 +2251,7 @@ export function App() {
 
   function expandCodexSidebar() {
     if (!embedded || window.parent === window) return;
-    window.parent.postMessage({ type: "taskboard:expand-sidebar" }, "*");
+    postEmbeddedHostMessage({ type: "taskboard:expand-sidebar" });
   }
 
   function openTaskInThread(task: Task) {
@@ -1855,7 +2275,7 @@ export function App() {
     const codexProject = hostContext?.projects?.find((project) => project.id === selectedProject?.id);
     setOpeningThreadTaskId(task.id);
     setActionError(null);
-    window.parent.postMessage({
+    postEmbeddedHostMessage({
       type: "taskboard:create-thread",
       payload: {
         taskId: task.id,
@@ -1868,19 +2288,22 @@ export function App() {
         workspacePath,
         workspaceLabel: worktreePath ? workspaceName(worktreePath) : undefined,
       },
-    }, "*");
+    });
   }
 
   function changeProject(projectId: string) {
     closeContextMenu();
+    setProjectContextMenu(null);
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
     setBoardView(readProjectBoardView(projectId));
+    rememberProjectOpen(projectId);
     setSelectedProjectId(projectId);
     setSearch("");
     setFilters(EMPTY_TASK_FILTERS);
     setActionError(null);
     undoStackRef.current = [];
+    setUndoNotice(null);
     const url = buildIssueUrl(window.location.href, projectId, null);
     window.history.replaceState(null, "", url);
   }
@@ -1915,13 +2338,99 @@ export function App() {
     }
   }
 
-  const headerProjectName = selectedProject?.name ?? "任务面板";
+  function openCreateProjectDialog() {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setProjectName("");
+    setActionError(null);
+    setProjectCreateOpen(true);
+  }
+
+  function closeCreateProjectDialog() {
+    if (openingProjectId) return;
+    setProjectCreateOpen(false);
+    setActionError(null);
+  }
+
+  async function createTemporaryProject() {
+    if (openingProjectId) return;
+    const name = projectName.trim();
+    if (!name) return;
+    const projectId = `temp-${window.crypto.randomUUID()}`;
+    setOpeningProjectId(projectId);
+    setActionError(null);
+    try {
+      const project = await createProjectRequest({
+        id: projectId,
+        name,
+        workspacePath: null,
+      });
+      setProjects((current) => [...current, project]);
+      setProjectCreateOpen(false);
+      changeProject(project.id);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setOpeningProjectId(null);
+    }
+  }
+
+  function requestProjectDelete(project: ProjectChoice) {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setProjectDeleteIssueCount(null);
+    setPendingProjectDelete(project);
+  }
+
+  function closeProjectDeleteDialog() {
+    if (deletingProjectId) return;
+    setPendingProjectDelete(null);
+    setProjectDeleteIssueCount(null);
+  }
+
+  async function deletePendingProject() {
+    if (!pendingProjectDelete || deletingProjectId) return;
+    const project = pendingProjectDelete;
+    setDeletingProjectId(project.id);
+    setActionError(null);
+    try {
+      await deleteProjectRequest(project.id);
+      setProjects((current) => current.filter((candidate) => candidate.id !== project.id));
+      setRecentProjectIds((current) => {
+        const next = current.filter((candidate) => candidate !== project.id);
+        taskboardStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
+        return next;
+      });
+      setPendingProjectDelete(null);
+      setProjectDeleteIssueCount(null);
+      if (selectedProjectId === project.id) changeProject(GLOBAL_PROJECT_ID);
+      setAnnouncement(text(
+        `已删除项目“${project.name}”`,
+        `Deleted project “${project.name}”`,
+      ));
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "PROJECT_NOT_EMPTY") {
+        const details = error.details as { issueCount: number };
+        setProjectDeleteIssueCount(details.issueCount);
+      } else {
+        setPendingProjectDelete(null);
+        setActionError(errorMessage(error));
+      }
+    } finally {
+      setDeletingProjectId(null);
+    }
+  }
+
+  const headerProjectName = selectedProject?.id === GLOBAL_PROJECT_ID
+    ? text("全局", "Global")
+    : selectedProject?.name ?? text("任务面板", "Taskboard");
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
 
   return (
-    <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
+    <TaskboardLanguageProvider language={language}>
+      <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
       {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={selectedProjectId}
@@ -1935,19 +2444,19 @@ export function App() {
         />
       )}
       {!embedded && (
-        <aside className="app-nav" aria-label="Taskboard navigation">
+        <aside className="app-nav" aria-label={text("任务面板导航", "Taskboard navigation")}>
           <div className="brand-row">
             <span className="brand-mark" aria-hidden="true"><LinearIcon name="project" /></span>
-            <span>任务面板</span>
+            <span>{text("任务面板", "Taskboard")}</span>
           </div>
 
-          <nav className="primary-nav" aria-label="Views">
-            <span className="nav-label">工作区</span>
+          <nav className="primary-nav" aria-label={text("视图", "Views")}>
+            <span className="nav-label">{text("工作区", "Workspace")}</span>
             <button className="nav-item active" type="button" aria-current="page">
               <span className="nav-glyph" aria-hidden="true">
                 <LinearIcon name="myIssues" />
               </span>
-              议题
+              {text("议题", "Issues")}
               <span className="nav-count">{tasks.length}</span>
             </button>
           </nav>
@@ -1956,16 +2465,22 @@ export function App() {
           <div className="nav-footer">
             <div className={`connection connection-${connection}`}>
               <span aria-hidden="true" />
-              {connection === "live" ? "实时同步" : "正在重新连接…"}
+              {connection === "live"
+                ? text("实时同步", "Live sync")
+                : text("正在重新连接…", "Reconnecting…")}
             </div>
             <button
               type="button"
               className="theme-toggle"
               onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              aria-label={theme === "dark"
+                ? text("切换到浅色模式", "Switch to light theme")
+                : text("切换到深色模式", "Switch to dark theme")}
             >
               <span aria-hidden="true"><LinearIcon name={theme === "dark" ? "sun" : "moon"} /></span>
-              {theme === "dark" ? "浅色模式" : "深色模式"}
+              {theme === "dark"
+                ? text("浅色模式", "Light mode")
+                : text("深色模式", "Dark mode")}
             </button>
           </div>
         </aside>
@@ -1979,8 +2494,8 @@ export function App() {
                 <button
                   className="detail-back-button"
                   type="button"
-                  aria-label="返回议题看板"
-                  title="返回议题看板 (Esc)"
+                  aria-label={text("返回议题看板", "Back to issue board")}
+                  title={text("返回议题看板 (Esc)", "Back to issue board (Esc)")}
                   onClick={closeTaskDetail}
                 >
                   <LinearIcon name="chevronLeft" />
@@ -1990,8 +2505,8 @@ export function App() {
                 <button
                   className="detail-back-button codex-sidebar-expand-button"
                   type="button"
-                  aria-label="展开 Codex 侧边栏"
-                  title="展开侧边栏"
+                  aria-label={text("展开 Codex 侧边栏", "Expand Codex sidebar")}
+                  title={text("展开侧边栏", "Expand sidebar")}
                   onClick={expandCodexSidebar}
                 >
                   <LinearIcon name="codexSidebarExpand" />
@@ -2001,17 +2516,20 @@ export function App() {
                 <button
                   className="header-project-button"
                   type="button"
-                  aria-label="切换项目"
+                  aria-label={text("切换项目", "Switch project")}
                   aria-haspopup="menu"
                   aria-expanded={projectMenuOpen}
-                  onClick={() => setProjectMenuOpen((current) => !current)}
+                  onClick={() => {
+                    setProjectContextMenu(null);
+                    setProjectMenuOpen((current) => !current);
+                  }}
                 >
                   <span className="project-name">{headerProjectName}</span>
                   <TaskboardIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
                 {projectMenuOpen && (
-                  <div className="header-project-menu" role="menu" aria-label="项目">
-                    <span>切换项目</span>
+                  <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
+                    <span>{text("切换项目", "Switch project")}</span>
                     {projectChoices.map((project) => (
                       <button
                         type="button"
@@ -2019,6 +2537,14 @@ export function App() {
                         aria-checked={project.id === selectedProjectId}
                         disabled={openingProjectId !== null}
                         key={project.id}
+                        onContextMenu={project.id.startsWith("temp-") ? (event) => {
+                          event.preventDefault();
+                          setProjectContextMenu({
+                            project,
+                            x: event.clientX,
+                            y: event.clientY,
+                          });
+                        } : undefined}
                         onClick={() => {
                           if (project.id === selectedProjectId) setProjectMenuOpen(false);
                           else void selectProject(project);
@@ -2029,6 +2555,15 @@ export function App() {
                         {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={openingProjectId !== null}
+                      onClick={openCreateProjectDialog}
+                    >
+                      <TaskboardIcon className="project-avatar" name="create" />
+                      <span>{text("创建项目", "Create project")}</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -2053,8 +2588,8 @@ export function App() {
                 className="icon-button header-create-button"
                 type="button"
                 onClick={() => setEditor({ task: null, status: "todo" })}
-                aria-label="新建议题"
-                title="新建议题 (C)"
+                aria-label={text("新建议题", "Create issue")}
+                title={text("新建议题 (C)", "Create issue (C)")}
               >
                 <TaskboardIcon name="create" />
               </button>
@@ -2063,14 +2598,14 @@ export function App() {
         </header>
 
         {selectedProjectId && !detailTask && <div className="board-toolbar">
-          <div className="view-tabs" aria-label="看板视图">
+          <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
               type="button"
               aria-pressed={boardView === "dashboard"}
               onClick={() => selectBoardView("dashboard")}
             >
-              Dashboard
+              {text("仪表盘", "Dashboard")}
             </button>
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
@@ -2078,7 +2613,7 @@ export function App() {
               aria-pressed={boardView === "issues"}
               onClick={() => selectBoardView("issues")}
             >
-              议题看板
+              {text("议题看板", "Issue board")}
             </button>
             <button
               className={`view-tab${boardView === "list" ? " active" : ""}`}
@@ -2086,7 +2621,7 @@ export function App() {
               aria-pressed={boardView === "list"}
               onClick={() => selectBoardView("list")}
             >
-              列表视图
+              {text("列表视图", "List")}
             </button>
             <button
               className={`view-tab${boardView === "gantt" ? " active" : ""}`}
@@ -2094,7 +2629,7 @@ export function App() {
               aria-pressed={boardView === "gantt"}
               onClick={() => selectBoardView("gantt")}
             >
-              甘特图
+              {text("甘特图", "Gantt")}
             </button>
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
@@ -2103,40 +2638,55 @@ export function App() {
                 aria-pressed={boardView === "workflow"}
                 onClick={() => selectBoardView("workflow")}
               >
-                节点模式
+                {text("节点模式", "Workflow")}
               </button>
             )}
           </div>
           {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
-            <label className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
+            <div className={`search-field${search ? " has-value" : ""}`} title={text("搜索议题 (/)", "Search issues (/)")}>
               <TaskboardIcon className="search-icon" name="search" />
-              <span className="sr-only">搜索议题</span>
               <input
                 id="task-search"
                 type="search"
+                aria-label={text("搜索议题", "Search issues")}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索议题…"
+                placeholder={text("搜索议题…", "Search issues…")}
               />
               {!search && <kbd>/</kbd>}
-            </label>
+              {search && (
+                <button
+                  className="search-clear"
+                  type="button"
+                  aria-label={text("清除搜索", "Clear search")}
+                  onClick={() => {
+                    setSearch("");
+                    document.getElementById("task-search")?.focus();
+                  }}
+                >
+                  <LinearIcon name="close" />
+                </button>
+              )}
+            </div>
             {boardView === "gantt" && (
               <div className="gantt-toolbar-controls">
                 <label className="gantt-hide-completed">
                   <input type="checkbox" checked={ganttHideCompleted} onChange={(event) => setGanttHideCompleted(event.target.checked)} />
                   <i><LinearIcon name="check" /></i>
-                  <span>隐藏已完成</span>
+                  <span>{text("隐藏已完成", "Hide completed")}</span>
                 </label>
-                <button type="button" className="gantt-today-button" onClick={() => setGanttTodayRequest((current) => current + 1)}>今天</button>
+                <button type="button" className="gantt-today-button" onClick={() => setGanttTodayRequest((current) => current + 1)}>{text("今天", "Today")}</button>
                 <div className="gantt-view-menu-wrap">
-                  <button type="button" className="gantt-view-menu-trigger" aria-label="时间轴视图选项" aria-expanded={ganttViewMenuOpen} onClick={() => setGanttViewMenuOpen((current) => !current)}>
+                  <button type="button" className="gantt-view-menu-trigger" aria-label={text("时间轴视图选项", "Timeline view options")} aria-expanded={ganttViewMenuOpen} onClick={() => setGanttViewMenuOpen((current) => !current)}>
                     <LinearIcon name="more" />
                   </button>
                   {ganttViewMenuOpen && (
                     <div className="gantt-view-menu" role="menu">
                       {GANTT_ZOOM_OPTIONS.map((value) => (
                         <button type="button" role="menuitemradio" aria-checked={ganttZoom === value} className={ganttZoom === value ? "active" : ""} onClick={() => { setGanttZoom(value); setGanttViewMenuOpen(false); }} key={value}>
-                          <span>{{ day: "日视图", week: "周视图", month: "月视图" }[value]}</span>
+                          <span>{language === "zh"
+                            ? { day: "日视图", week: "周视图", month: "月视图" }[value]
+                            : { day: "Day", week: "Week", month: "Month" }[value]}</span>
                           {ganttZoom === value && <LinearIcon name="check" />}
                         </button>
                       ))}
@@ -2158,8 +2708,10 @@ export function App() {
                 type="button"
                 aria-controls="other-tasks-panel"
                 aria-expanded={otherTasksOpen}
-                aria-label={otherTasksOpen ? "关闭其他任务" : "打开其他任务"}
-                title="其他任务"
+                aria-label={otherTasksOpen
+                  ? text("关闭其他任务", "Close other issues")
+                  : text("打开其他任务", "Open other issues")}
+                title={text("其他任务", "Other issues")}
                 onClick={() => setOtherTasksOpen((current) => !current)}
               >
                 <TaskboardIcon name="panel" />
@@ -2168,10 +2720,10 @@ export function App() {
           </div>}
         </div>}
 
-        {(loadError || actionError) && (
+        {(loadError || actionErrorText) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>Taskboard needs attention</strong><p>{actionError ?? loadError}</p></div>
+            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionErrorText ?? loadError}</p></div>
             <button
               type="button"
               onClick={() => {
@@ -2180,7 +2732,7 @@ export function App() {
                 else void loadProjectList();
               }}
             >
-              Try again
+              {text("重试", "Try again")}
             </button>
           </div>
         )}
@@ -2196,6 +2748,8 @@ export function App() {
             developmentScanLoading={developmentScanLoading}
             commentsRevision={commentsRevision}
             attachmentsRevision={attachmentsRevision}
+            onCreateLabel={persistProjectLabel}
+            onDeleteLabel={removeProjectLabel}
             onUpdate={(current, changes) => updateTaskProperties(current, changes)}
             onOpenTask={openTaskDetail}
             onAddRelation={(current, type, relatedTaskId) => (
@@ -2225,6 +2779,7 @@ export function App() {
           />
         ) : boardView === "list" ? (
           <IssueListView
+            scrollRef={issueListRef}
             tasks={filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}
@@ -2234,7 +2789,7 @@ export function App() {
             onUpdate={updateTaskProperties}
           />
         ) : boardView === "gantt" ? (
-          <Suspense fallback={<div className="workflow-board-loading">正在打开甘特图…</div>}>
+          <Suspense fallback={<div className="workflow-board-loading">{text("正在打开甘特图…", "Opening Gantt…")}</div>}>
             <GanttView
               tasks={filteredTasks}
               presentations={taskPresentations}
@@ -2247,11 +2802,11 @@ export function App() {
             />
           </Suspense>
         ) : boardView === "workflow" ? (
-          <Suspense fallback={<div className="workflow-board-loading">正在打开节点模式…</div>}>
+          <Suspense fallback={<div className="workflow-board-loading">{text("正在打开节点模式…", "Opening workflow…")}</div>}>
             <WorkflowBoard
               key={selectedProject?.id ?? GLOBAL_PROJECT_ID}
               projectId={selectedProject?.id ?? GLOBAL_PROJECT_ID}
-              projectName={selectedProject?.name ?? "当前项目"}
+              projectName={selectedProject?.name ?? text("当前项目", "Current project")}
               workspacePath={
                 selectedDeviceWorkspacePath
                 ?? developmentScan.workspacePath
@@ -2273,7 +2828,7 @@ export function App() {
             } as CSSProperties}
           >
             {tasksLoading && !hasLoadedTasks ? (
-              <div className="loading-board" aria-label="Loading issues" aria-busy="true">
+              <div className="loading-board" aria-label={text("正在加载议题", "Loading issues")} aria-busy="true">
                 {mainStatuses.map((status) => (
                   <div className="loading-column" key={status}>
                     <span /><div /><div />
@@ -2282,24 +2837,33 @@ export function App() {
               </div>
             ) : (
               <>
-                <div className="board-scroll" aria-label="Issue board">
+                <div className="board-scroll" aria-label={text("议题看板", "Issue board")}>
                   <div className="board">
                     {mainStatuses.map((status) => (
                       <BoardColumn
                         key={status}
+                        scrollRef={(element) => {
+                          boardColumnScrollRefs.current[status] = element;
+                        }}
                         status={status}
                         tasks={tasksByStatus[status]}
                         presentations={taskPresentations}
                         now={processingNow}
-                        emptyMessage={hasActiveTaskFilters ? "当前筛选下无匹配议题" : "暂无议题"}
+                        emptyMessage={hasActiveTaskFilters
+                          ? text("当前筛选下无匹配议题", "No issues match the current filters")
+                          : text("暂无议题", "No issues")}
                         isDropTarget={dropTarget === status}
                         draggedTaskId={draggedTaskId}
                         draggedTaskHeight={draggedTaskHeight}
                         movingTaskId={movingTaskId}
                         settlingTaskId={settlingTaskId}
                         contextMenuTaskId={contextMenu?.taskId ?? null}
+                        availableLabels={availableLabels}
+                        currentUser={currentUser}
+                        onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
                         onEdit={openTaskDetail}
+                        onUpdate={updateTaskProperties}
                         onComplete={(task) => void moveTask(task, "done")}
                         onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
                         onDragStart={startTaskDrag}
@@ -2314,20 +2878,29 @@ export function App() {
                 {otherTasksMounted && (
                   <OtherTasksPanel
                     open={otherTasksVisible}
-                    activeStatus={otherTasksStatus}
+                    activeTab={otherTasksTab}
                     tasksByStatus={tasksByStatus}
+                    archivedTasks={filteredArchivedTasks}
                     presentations={taskPresentations}
                     now={processingNow}
                     hasActiveFilters={hasActiveTaskFilters}
-                    isDropTarget={dropTarget === otherTasksStatus}
+                    isDropTarget={otherTasksTab !== "archived" && dropTarget === otherTasksTab}
                     draggedTaskId={draggedTaskId}
                     draggedTaskHeight={draggedTaskHeight}
                     movingTaskId={movingTaskId}
                     settlingTaskId={settlingTaskId}
                     contextMenuTaskId={contextMenu?.taskId ?? null}
-                    onStatusChange={setOtherTasksStatus}
+                    availableLabels={availableLabels}
+                    currentUser={currentUser}
+                    onCreateLabel={persistProjectLabel}
+                    restoringTaskId={restoringTaskId}
+                    deletingTaskId={deletingArchivedTaskId}
+                    onTabChange={setOtherTasksTab}
                     onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                    onRestore={(task) => void restoreArchivedTask(task)}
+                    onDelete={setPendingArchivedTaskDelete}
                     onEdit={openTaskDetail}
+                    onUpdate={updateTaskProperties}
                     onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
                     onDragStart={startTaskDrag}
                     onDragEnd={endTaskDrag}
@@ -2342,6 +2915,204 @@ export function App() {
         )}
       </main>
 
+      {projectContextMenu && (
+        <div
+          className="task-context-menu project-context-menu"
+          data-project-context-menu
+          role="menu"
+          aria-label={text(
+            `项目“${projectContextMenu.project.name}”`,
+            `Project “${projectContextMenu.project.name}”`,
+          )}
+          style={{ left: projectContextMenu.x, top: projectContextMenu.y }}
+        >
+          <button
+            className="context-menu-item is-danger"
+            type="button"
+            role="menuitem"
+            onClick={() => requestProjectDelete(projectContextMenu.project)}
+          >
+            <span className="context-menu-icon" aria-hidden="true"><LinearIcon name="trash" /></span>
+            <span className="context-menu-label">{text("删除项目", "Delete project")}</span>
+          </button>
+        </div>
+      )}
+
+      {projectCreateOpen && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) closeCreateProjectDialog();
+          }}
+        >
+          <form
+            className="delete-dialog project-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-create-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createTemporaryProject();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeCreateProjectDialog();
+            }}
+          >
+            <h2 id="project-create-title">{text("创建项目", "Create project")}</h2>
+            <label>
+              <span>{text("项目名称", "Project name")}</span>
+              <input
+                autoFocus
+                maxLength={120}
+                required
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+              />
+            </label>
+            {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
+            <div>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={openingProjectId !== null}
+                onClick={closeCreateProjectDialog}
+              >
+                {text("取消", "Cancel")}
+              </button>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={!projectName.trim() || openingProjectId !== null}
+              >
+                {openingProjectId
+                  ? text("创建中…", "Creating…")
+                  : text("创建", "Create")}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {pendingProjectDelete && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) closeProjectDeleteDialog();
+          }}
+        >
+          <div
+            className="delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="project-delete-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeProjectDeleteDialog();
+            }}
+          >
+            {projectDeleteIssueCount === null ? (
+              <>
+                <h2 id="project-delete-title">{text(
+                  `删除项目“${pendingProjectDelete.name}”？`,
+                  `Delete project “${pendingProjectDelete.name}”?`,
+                )}</h2>
+                <p>{text(
+                  "仅空项目可以删除。删除后无法恢复。",
+                  "Only empty projects can be deleted. This cannot be undone.",
+                )}</p>
+                <div>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={deletingProjectId !== null}
+                    onClick={closeProjectDeleteDialog}
+                  >
+                    {text("取消", "Cancel")}
+                  </button>
+                  <button
+                    className="button danger"
+                    type="button"
+                    disabled={deletingProjectId !== null}
+                    onClick={() => void deletePendingProject()}
+                  >
+                    {deletingProjectId
+                      ? text("删除中…", "Deleting…")
+                      : text("删除项目", "Delete project")}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 id="project-delete-title">{text(
+                  `无法删除项目“${pendingProjectDelete.name}”`,
+                  `Cannot delete project “${pendingProjectDelete.name}”`,
+                )}</h2>
+                <p>{text(
+                  `该项目还有 ${projectDeleteIssueCount} 个议题（包含已归档议题）。请先移动或删除这些议题。`,
+                  `This project still has ${projectDeleteIssueCount} issues, including archived issues. Move or delete them first.`,
+                )}</p>
+                <div>
+                  <button className="button primary" type="button" onClick={closeProjectDeleteDialog}>
+                    {text("知道了", "Got it")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pendingArchivedTaskDelete && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget && !deletingArchivedTaskId) {
+              setPendingArchivedTaskDelete(null);
+            }
+          }}
+        >
+          <div
+            className="delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="archived-task-delete-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !deletingArchivedTaskId) {
+                setPendingArchivedTaskDelete(null);
+              }
+            }}
+          >
+            <h2 id="archived-task-delete-title">{text(
+              `永久删除 ${pendingArchivedTaskDelete.identifier}？`,
+              `Permanently delete ${pendingArchivedTaskDelete.identifier}?`,
+            )}</h2>
+            <p>{text(
+              `“${pendingArchivedTaskDelete.title}”及其评论和附件将被永久删除，此操作无法撤销。`,
+              `“${pendingArchivedTaskDelete.title}” and its comments and attachments will be permanently deleted. This cannot be undone.`,
+            )}</p>
+            <div>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={deletingArchivedTaskId !== null}
+                onClick={() => setPendingArchivedTaskDelete(null)}
+              >
+                {text("取消", "Cancel")}
+              </button>
+              <button
+                className="button danger"
+                type="button"
+                disabled={deletingArchivedTaskId !== null}
+                onClick={() => void deletePendingArchivedTask()}
+              >
+                {deletingArchivedTaskId
+                  ? text("删除中…", "Deleting…")
+                  : text("永久删除", "Delete permanently")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editor && (
         <TaskEditor
           key={editor.task?.id ?? `new-${editor.status}`}
@@ -2352,6 +3123,7 @@ export function App() {
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
+          onCreateLabel={persistProjectLabel}
           onCancel={(draft) => {
             if (!editor.task) setNewTaskDraft(draft);
             setEditor(null);
@@ -2392,11 +3164,25 @@ export function App() {
       />
 
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
+      {undoNotice && (
+        <div
+          className="toast undo-toast"
+          role="status"
+          onAnimationEnd={() => setUndoNotice((current) => current?.id === undoNotice.id ? null : current)}
+        >
+          <span aria-hidden="true"><LinearIcon name="check" /></span>
+          <span className="undo-toast-message">{undoNotice.message}</span>
+          <button type="button" onClick={() => void performUndo()}>
+            {text("撤回", "Undo")} <kbd>{undoShortcut}</kbd>
+          </button>
+        </div>
+      )}
       {announcement && (
         <div className="toast" role="status" onAnimationEnd={() => setAnnouncementValue("")}>
           <span aria-hidden="true"><LinearIcon name="check" /></span>{announcement}
         </div>
       )}
-    </div>
+      </div>
+    </TaskboardLanguageProvider>
   );
 }

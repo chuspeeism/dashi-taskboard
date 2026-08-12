@@ -199,6 +199,55 @@ test("cloud proxy replaces client identity with Basic Auth and makes exactly one
   });
 });
 
+test("cloud companion blocks project moves for issue-linked local AI chats", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-chat-move-"));
+  temporaryDirectories.push(directory);
+  let upstreamCalls = 0;
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    cloudConfigStore: memoryConfigStore(),
+    remoteFetch: async () => {
+      upstreamCalls += 1;
+      return jsonResponse({ task: { id: "REMOTE-1", projectId: "target" } });
+    },
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    const thread = app.database.createAiChatThread({
+      id: "cloud-linked-thread",
+      title: "Cloud issue conversation",
+      origin: {
+        projectId: "source",
+        projectName: "Source",
+        workspacePath: "/work/source",
+        issueId: "REMOTE-1",
+        issueIdentifier: "REMOTE-1",
+      },
+      model: "gpt-real",
+      reasoningEffort: "medium",
+      sandbox: "workspace-write",
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/tasks/REMOTE-1`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: 1, projectId: "target" }),
+      },
+    );
+    const payload = await response.json();
+
+    assert.equal(response.status, 409);
+    assert.equal(payload.error.code, "AI_CHAT_PROJECT_MOVE_BLOCKED");
+    assert.equal(upstreamCalls, 0);
+    assert.deepEqual(app.database.getAiChatThread(thread.id).origin, thread.origin);
+  } finally {
+    await app.close();
+  }
+});
+
 test("configured cloud mode fails explicitly and never falls back to the local database", async () => {
   const { createCloudProxy } = await importCloudProxy();
   let upstreamCalls = 0;
@@ -516,6 +565,7 @@ test("configured server proxies business APIs without touching local rows and ad
   try {
     const metadata = await fetch(`${baseUrl}/api/meta`).then((response) => response.json());
     assert.deepEqual(metadata, {
+      capabilities: { localAiChat: true },
       mode: "cloud",
       realtime: { transport: "poll", intervalMs: 2000 },
       localCapabilities: { available: true },
