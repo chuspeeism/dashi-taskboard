@@ -269,8 +269,8 @@ const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
   intervalMinutes: 5,
-  model: "gpt-5.5",
-  reasoningEffort: "high",
+  model: "gpt-5.6-luna",
+  reasoningEffort: "max",
 } as const;
 
 function readIssueActivityKeys(storageKey: string): Record<string, string> {
@@ -352,8 +352,8 @@ function readProjectAutomations(): ProjectAutomations {
     for (const [projectId, record] of Object.entries(value)) {
       if (!record || typeof record !== "object" || Array.isArray(record)) continue;
       const candidate = record as Partial<ProjectAutomationRecord>;
-      const model = candidate.model ?? "gpt-5.5";
-      const reasoningEffort = candidate.reasoningEffort ?? "high";
+      const model = candidate.model ?? "gpt-5.6-luna";
+      const reasoningEffort = candidate.reasoningEffort ?? "max";
       const enabledByUser = candidate.enabledByUser ?? candidate.status === "ACTIVE";
       const quotaAware = candidate.quotaAware ?? false;
       if (
