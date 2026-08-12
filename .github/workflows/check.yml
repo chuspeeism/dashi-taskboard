@@ -60,3 +60,28 @@ jobs:
         run: >-
           npm run app:preflight --
           "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+
+  windows-launcher:
+    name: Windows x64 launcher
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: npm ci
+      - name: Build the unsigned NSIS installer
+        run: npm run app:build:windows
+      - name: Preserve the unsigned NSIS installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-nsis-${{ github.sha }}
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

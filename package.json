@@ -17,6 +17,7 @@
     "app:prepare": "npm run build:web && node scripts/prepare-tauri-app.mjs",
     "app:dev": "npm run app:prepare && tauri dev",
     "app:build": "npm run app:prepare -- --target universal-apple-darwin && CI=true tauri build --target universal-apple-darwin --bundles app,dmg --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
+    "app:build:windows": "npm run app:prepare -- --target x86_64-pc-windows-msvc && tauri build --target x86_64-pc-windows-msvc --bundles nsis --no-sign --ci --config src-tauri/tauri.windows.conf.json",
     "app:preflight": "node scripts/preflight-macos-app.mjs",
     "app:verify-packaged-taskctl": "node scripts/verify-packaged-taskctl.mjs",
     "app:verify-release": "node scripts/verify-macos-release.mjs",

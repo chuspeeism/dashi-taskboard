@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use std::os::{fd::AsRawFd, unix::process::CommandExt};
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::TcpListener,
-    os::{fd::AsRawFd, unix::process::CommandExt},
     path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
     sync::{
@@ -15,10 +16,14 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(target_os = "windows")]
+use std::{os::windows::fs::OpenOptionsExt, process::ChildStdin};
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
-    ActivationPolicy, AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -27,6 +32,7 @@ use uuid::Uuid;
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+#[cfg(target_os = "macos")]
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
 #[derive(Clone, Serialize)]
@@ -60,7 +66,10 @@ struct LauncherState {
     update_in_progress: AtomicBool,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
+    #[cfg(target_os = "macos")]
     taskboard_listener: Mutex<Option<TcpListener>>,
+    #[cfg(target_os = "windows")]
+    child_control: Mutex<Option<ChildStdin>>,
     _instance_lock: File,
     data_directory: PathBuf,
     log_path: PathBuf,
@@ -93,7 +102,10 @@ impl LauncherState {
             update_in_progress: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
+            #[cfg(target_os = "macos")]
             taskboard_listener: Mutex::new(None),
+            #[cfg(target_os = "windows")]
+            child_control: Mutex::new(None),
             _instance_lock: instance_lock,
             pid_record_path: data_directory.join("launcher-child.json"),
             data_directory,
@@ -102,6 +114,7 @@ impl LauncherState {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
     let file = OpenOptions::new()
         .create(true)
@@ -121,6 +134,21 @@ fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
+    match OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(path)
+    {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.raw_os_error() == Some(32) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
@@ -135,17 +163,33 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Erro
     Ok(())
 }
 
-fn taskboard_listener(state: &LauncherState) -> Result<(i32, u16), String> {
+fn ephemeral_taskboard_listener() -> Result<TcpListener, String> {
+    TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), String> {
     let mut listener = state.taskboard_listener.lock().unwrap();
     if listener.is_none() {
-        *listener = Some(TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?);
+        *listener = Some(ephemeral_taskboard_listener()?);
     }
     let listener = listener.as_ref().unwrap();
     let port = listener
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
-    Ok((listener.as_raw_fd(), port))
+    Ok((Some(listener.as_raw_fd()), port))
+}
+
+#[cfg(target_os = "windows")]
+fn taskboard_listener(_state: &LauncherState) -> Result<(Option<i32>, u16), String> {
+    let listener = ephemeral_taskboard_listener()?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    drop(listener);
+    Ok((None, port))
 }
 
 fn update_snapshot(
@@ -196,6 +240,7 @@ fn show_error_dialog(app: &AppHandle, title: &str, message: &str) {
         .blocking_show();
 }
 
+#[cfg(target_os = "macos")]
 fn find_codex_app(home_directory: &Path) -> Option<PathBuf> {
     [
         PathBuf::from("/Applications/ChatGPT.app"),
@@ -207,6 +252,36 @@ fn find_codex_app(home_directory: &Path) -> Option<PathBuf> {
     .find(|candidate| candidate.is_dir())
 }
 
+#[cfg(target_os = "windows")]
+fn find_codex_app(_home_directory: &Path) -> Option<PathBuf> {
+    let output = StdCommand::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-AppxPackage -Name OpenAI.Codex).InstallLocation",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let install_location = String::from_utf8_lossy(&output.stdout);
+    let candidate = PathBuf::from(install_location.trim()).join("app/ChatGPT.exe");
+    candidate.is_file().then_some(candidate)
+}
+
+#[cfg(target_os = "macos")]
+fn missing_codex_app_message() -> String {
+    "未找到官方 ChatGPT.app 或 Codex.app。请先安装到 Applications 文件夹。".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn missing_codex_app_message() -> String {
+    "未找到官方 Codex App。请先从 Microsoft Store 安装。".to_string()
+}
+
+#[cfg(target_os = "macos")]
 fn send_process_group_signal(pid: u32, signal: i32) {
     unsafe {
         if libc::kill(-(pid as i32), signal) != 0 {
@@ -215,10 +290,27 @@ fn send_process_group_signal(pid: u32, signal: i32) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn process_group_is_running(pid: u32) -> bool {
     unsafe { libc::kill(-(pid as i32), 0) == 0 }
 }
 
+#[cfg(target_os = "windows")]
+fn process_group_is_running(pid: u32) -> bool {
+    StdCommand::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!(
+                "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+            ),
+        ])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "macos")]
 fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
     let mut snapshot = state.snapshot.lock().unwrap();
     if !snapshot.open_request_pending {
@@ -234,6 +326,33 @@ fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
+    let mut snapshot = state.snapshot.lock().unwrap();
+    if !snapshot.open_request_pending {
+        return Ok(());
+    }
+    if snapshot.open_signal_pid.is_none() {
+        return Ok(());
+    }
+    let result = state
+        .child_control
+        .lock()
+        .unwrap()
+        .as_mut()
+        .ok_or_else(|| "Launcher control pipe is unavailable".to_string())
+        .and_then(|control| {
+            control
+                .write_all(b"open\n")
+                .and_then(|_| control.flush())
+                .map_err(|error| error.to_string())
+        });
+    if result.is_err() {
+        snapshot.open_signal_pid = None;
+    }
+    result
+}
+
 fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while process_group_is_running(pid) && Instant::now() < deadline {
@@ -242,6 +361,7 @@ fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
     !process_group_is_running(pid)
 }
 
+#[cfg(target_os = "macos")]
 fn terminate_process_group(pid: u32) {
     send_process_group_signal(pid, libc::SIGTERM);
     if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
@@ -250,6 +370,16 @@ fn terminate_process_group(pid: u32) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn terminate_process_group(pid: u32) {
+    if process_group_is_running(pid) {
+        let _ = StdCommand::new("taskkill.exe")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let output = StdCommand::new("/bin/ps")
         .args(["-p", &record.pid.to_string(), "-o", "command="])
@@ -261,6 +391,27 @@ fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let command = command.trim_start();
     command.starts_with(&*record.node_path.to_string_lossy())
         && command.contains(&*record.injector_path.to_string_lossy())
+}
+
+#[cfg(target_os = "windows")]
+fn process_matches_record(record: &LauncherPidRecord) -> bool {
+    let output = StdCommand::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!(
+                "(Get-CimInstance Win32_Process -Filter 'ProcessId = {}').CommandLine",
+                record.pid
+            ),
+        ])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    let command = String::from_utf8_lossy(&output.stdout);
+    command.contains(&*record.node_path.to_string_lossy())
+        && command.contains(r"scripts\codex-injector.mjs")
 }
 
 fn stop_recorded_child(state: &LauncherState) {
@@ -303,8 +454,17 @@ fn clear_pid_record(state: &LauncherState, pid: u32) {
 fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     state.generation.fetch_add(1, Ordering::SeqCst);
     state.intentional_stop.store(true, Ordering::SeqCst);
+    #[cfg(target_os = "windows")]
+    if let Some(mut control) = state.child_control.lock().unwrap().take() {
+        let _ = control.write_all(b"stop\n").and_then(|_| control.flush());
+    }
     if let Some(pid) = state.child.lock().unwrap().take() {
         append_log(state, &format!("Stopping launcher child {pid}"));
+        #[cfg(target_os = "windows")]
+        if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
+            terminate_process_group(pid);
+        }
+        #[cfg(target_os = "macos")]
         terminate_process_group(pid);
         clear_pid_record(state, pid);
     }
@@ -394,9 +554,7 @@ fn start_launcher_locked(
     }
 
     let home_directory = app.path().home_dir().map_err(|error| error.to_string())?;
-    let codex_app = find_codex_app(&home_directory).ok_or_else(|| {
-        "未找到官方 ChatGPT.app 或 Codex.app。请先安装到 Applications 文件夹。".to_string()
-    })?;
+    let codex_app = find_codex_app(&home_directory).ok_or_else(missing_codex_app_message)?;
     let resource_directory = app
         .path()
         .resource_dir()
@@ -407,7 +565,11 @@ fn start_launcher_locked(
         .map_err(|error| error.to_string())?
         .parent()
         .ok_or_else(|| "无法定位 App 可执行文件目录".to_string())?
-        .join("node");
+        .join(if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        });
     stop_recorded_child(state);
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.intentional_stop.store(false, Ordering::SeqCst);
@@ -418,19 +580,38 @@ fn start_launcher_locked(
         snapshot.open_signal_pid = None;
     });
 
+    #[cfg(target_os = "macos")]
     let path_value = format!(
         "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         resource_directory.join("bin").display()
     );
-    let (taskboard_listener_fd, taskboard_port) = taskboard_listener(state)?;
+    #[cfg(target_os = "windows")]
+    let path_value = {
+        let current_path = std::env::var_os("PATH").unwrap_or_default();
+        std::env::join_paths(
+            std::iter::once(resource_directory.join("bin"))
+                .chain(std::env::split_paths(&current_path)),
+        )
+        .map_err(|error| error.to_string())?
+    };
+    let (_taskboard_listener_fd, taskboard_port) = taskboard_listener(state)?;
     let instance_token = Uuid::new_v4().to_string();
     let instance_secret = Uuid::new_v4().to_string();
     let version = state.snapshot.lock().unwrap().version.clone();
     let codex_profile = state.data_directory.join("codex-profile");
+    #[cfg(target_os = "macos")]
     let codex_source_profile = home_directory.join("Library/Application Support/Codex");
+    #[cfg(target_os = "windows")]
+    let codex_source_profile = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "APPDATA is unavailable".to_string())?
+        .join("Codex/web/Codex");
     let mut command = StdCommand::new(&node_path);
+    #[cfg(target_os = "macos")]
+    command.arg(&injector_path);
+    #[cfg(target_os = "windows")]
+    command.arg(r"scripts\codex-injector.mjs");
     command
-        .arg(&injector_path)
         .args(["--launch", "--watch", "--open", "--cdp-pipe"])
         .args(["--startup-token", &instance_token, "--app-path"])
         .arg(&codex_app)
@@ -439,7 +620,6 @@ fn start_launcher_locked(
             "CODEX_TASKBOARD_RUNTIME_FILE",
             state.data_directory.join("launcher-runtime.json"),
         )
-        .env("CODEX_TASKBOARD_LISTEN_FD", TASKBOARD_LISTEN_FD.to_string())
         .env("CODEX_TASKBOARD_HOST", "127.0.0.1")
         .env("CODEX_TASKBOARD_PORT", taskboard_port.to_string())
         .env("CODEX_TASKBOARD_INSTANCE_TOKEN", &instance_token)
@@ -456,10 +636,16 @@ fn start_launcher_locked(
         .env("HOST", "127.0.0.1")
         .env("PATH", path_value)
         .current_dir(&app_root)
-        .process_group(0)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    command.stdin(Stdio::piped());
+    #[cfg(target_os = "macos")]
     unsafe {
+        let taskboard_listener_fd = _taskboard_listener_fd.unwrap();
+        command
+            .env("CODEX_TASKBOARD_LISTEN_FD", TASKBOARD_LISTEN_FD.to_string())
+            .process_group(0);
         command.pre_exec(move || {
             if libc::dup2(taskboard_listener_fd, TASKBOARD_LISTEN_FD) < 0 {
                 return Err(std::io::Error::last_os_error());
@@ -472,14 +658,20 @@ fn start_launcher_locked(
     }
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let pid = child.id();
+    #[cfg(target_os = "windows")]
+    let child_control = child.stdin.take();
     if let Err(error) = write_pid_record(state, pid, node_path, injector_path) {
-        send_process_group_signal(pid, libc::SIGKILL);
+        terminate_process_group(pid);
         let _ = child.wait();
         return Err(error);
     }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     *state.child.lock().unwrap() = Some(pid);
+    #[cfg(target_os = "windows")]
+    {
+        *state.child_control.lock().unwrap() = child_control;
+    }
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.child_pid = Some(pid);
     });
@@ -523,6 +715,10 @@ fn start_launcher_locked(
                 }
             }
         };
+        #[cfg(target_os = "windows")]
+        if recovery_token.is_some() {
+            let _ = event_state.child_control.lock().unwrap().take();
+        }
         let Some(recovery_token) = recovery_token else {
             append_log(
                 &event_state,
@@ -893,6 +1089,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Accessory);
             let home_directory = app.path().home_dir()?;
             let bundled_skill = app
@@ -904,8 +1101,20 @@ fn main() {
                 fs::remove_dir_all(&global_skill)?;
             }
             copy_directory(&bundled_skill, &global_skill)?;
+            #[cfg(target_os = "macos")]
             let data_directory = home_directory.join("Library/Application Support/Codex Taskboard");
+            #[cfg(target_os = "macos")]
             let log_directory = home_directory.join("Library/Logs/Codex Taskboard");
+            #[cfg(target_os = "windows")]
+            let data_directory = std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .ok_or_else(|| std::io::Error::other("APPDATA is unavailable"))?
+                .join("Codex Taskboard");
+            #[cfg(target_os = "windows")]
+            let log_directory = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .ok_or_else(|| std::io::Error::other("LOCALAPPDATA is unavailable"))?
+                .join("Codex Taskboard/Logs");
             fs::create_dir_all(&data_directory)?;
             fs::create_dir_all(&log_directory)?;
             let Some(instance_lock) = acquire_instance_lock(&data_directory.join("launcher.lock"))?
@@ -1150,6 +1359,7 @@ fn main() {
         tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
                 stop_managed_child(app_handle, &state);
+                #[cfg(target_os = "macos")]
                 unsafe {
                     libc::flock(state._instance_lock.as_raw_fd(), libc::LOCK_UN);
                 }

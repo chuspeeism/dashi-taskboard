@@ -20,7 +20,10 @@ function executableOnPath(env) {
   return null;
 }
 
-export function codexExecutableInApp(appPath) {
+export function codexExecutableInApp(appPath, platform = process.platform) {
+  if (platform === "win32") {
+    return path.win32.join(path.win32.dirname(appPath), "resources", "codex.exe");
+  }
   return path.join(appPath, "Contents", "Resources", "codex");
 }
 
@@ -34,7 +37,7 @@ export function resolveCodexExecutable({
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
 
   if (appPath) {
-    const bundled = executableFile(codexExecutableInApp(appPath));
+    const bundled = executableFile(codexExecutableInApp(appPath, platform));
     if (bundled) return bundled;
   }
 
@@ -46,6 +49,7 @@ export function resolveCodexExecutable({
       for (const applicationName of ["ChatGPT.app", "Codex.app"]) {
         const bundled = executableFile(codexExecutableInApp(
           path.join(applicationDirectory, applicationName),
+          platform,
         ));
         if (bundled) return bundled;
       }

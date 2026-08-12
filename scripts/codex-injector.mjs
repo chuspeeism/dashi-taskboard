@@ -3,6 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -286,6 +287,7 @@ async function importCodexBrowserProfile() {
 }
 
 function codexExecutablePath(appPath) {
+  if (process.platform === "win32") return appPath;
   return path.join(
     appPath,
     "Contents",
@@ -744,11 +746,15 @@ async function loadTaskboardFrameViaCdp(cdp, frameName, frameCapability) {
 
 async function openExternalUrl(request) {
   await new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/open", [request.url], {
-      detached: true,
-      env: withoutTaskboardLauncherEnvironment(process.env),
-      stdio: "ignore",
-    });
+    const child = spawn(
+      process.platform === "win32" ? "explorer.exe" : "/usr/bin/open",
+      [request.url],
+      {
+        detached: true,
+        env: withoutTaskboardLauncherEnvironment(process.env),
+        stdio: "ignore",
+      },
+    );
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();
@@ -1576,6 +1582,7 @@ async function main() {
     openRequestGeneration += 1;
     console.log(JSON.stringify({ openTaskboardSignalQueued: true }));
   };
+  let openControl = null;
   const requestTaskboardOpen = async () => {
     const generation = openRequestGeneration;
     if (generation <= openedRequestGeneration) return true;
@@ -1602,10 +1609,6 @@ async function main() {
       return false;
     }
   };
-  if (options.watch) {
-    process.on("SIGUSR2", queueTaskboardOpen);
-    console.log(JSON.stringify({ openTaskboardSignalReady: true }));
-  }
   let stopping = false;
   let wakeStop;
   const stopRequested = new Promise((resolve) => {
@@ -1616,6 +1619,18 @@ async function main() {
     stopping = true;
     wakeStop();
   };
+  if (options.watch) {
+    if (process.platform === "win32") {
+      openControl = createInterface({ input: process.stdin, terminal: false });
+      openControl.on("line", (line) => {
+        if (line.trim() === "open") queueTaskboardOpen();
+        else if (line.trim() === "stop") requestStop();
+      });
+    } else {
+      process.on("SIGUSR2", queueTaskboardOpen);
+    }
+    console.log(JSON.stringify({ openTaskboardSignalReady: true }));
+  }
   const detached = !options.watch;
   const supervisor = createTaskboardSupervisor({
     detached,
@@ -1860,7 +1875,8 @@ async function main() {
     if (options.watch) {
       process.removeListener("SIGINT", requestStop);
       process.removeListener("SIGTERM", requestStop);
-      process.removeListener("SIGUSR2", queueTaskboardOpen);
+      if (process.platform === "win32") openControl?.close();
+      else process.removeListener("SIGUSR2", queueTaskboardOpen);
       await cleanup();
     }
   }
