@@ -1272,46 +1272,52 @@ async function createProject(env, input) {
 }
 
 async function addProjectLabel(env, projectId, label) {
-  const project = await requireProject(env, projectId);
-  const labels = JSON.parse(project.labels);
-  if (!labels.includes(label)) {
-    await env.DB.prepare(`
-      UPDATE projects SET labels = ?, updated_at = ? WHERE id = ?
-    `).bind(JSON.stringify([...labels, label]), now(), projectId).run();
-  }
+  await requireProject(env, projectId);
+  await env.DB.prepare(`
+    UPDATE projects
+    SET labels = json_insert(labels, '$[#]', ?), updated_at = ?
+    WHERE id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(projects.labels) WHERE value = ?
+      )
+  `).bind(label, now(), projectId, label).run();
   return getProject(env, projectId);
 }
 
 async function deleteProjectLabel(env, projectId, label) {
-  const project = await requireProject(env, projectId);
+  await requireProject(env, projectId);
   const timestamp = now();
-  const labels = JSON.parse(project.labels);
-  const statements = [];
-  if (labels.includes(label)) {
-    statements.push(env.DB.prepare(`
-      UPDATE projects SET labels = ?, updated_at = ? WHERE id = ?
-    `).bind(
-      JSON.stringify(labels.filter((current) => current !== label)),
-      timestamp,
-      projectId,
-    ));
-  }
-  statements.push(env.DB.prepare(`
-    UPDATE tasks
-    SET
-      labels = (
-        SELECT COALESCE(json_group_array(value), '[]')
-        FROM json_each(tasks.labels)
-        WHERE value != ?
-      ),
-      version = version + 1,
-      updated_at = ?
-    WHERE project_id = ?
-      AND EXISTS (
-        SELECT 1 FROM json_each(tasks.labels) WHERE value = ?
-      )
-  `).bind(label, timestamp, projectId, label));
-  await env.DB.batch(statements);
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE projects
+      SET
+        labels = (
+          SELECT COALESCE(json_group_array(value), '[]')
+          FROM json_each(projects.labels)
+          WHERE value != ?
+        ),
+        updated_at = ?
+      WHERE id = ?
+        AND EXISTS (
+          SELECT 1 FROM json_each(projects.labels) WHERE value = ?
+        )
+    `).bind(label, timestamp, projectId, label),
+    env.DB.prepare(`
+      UPDATE tasks
+      SET
+        labels = (
+          SELECT COALESCE(json_group_array(value), '[]')
+          FROM json_each(tasks.labels)
+          WHERE value != ?
+        ),
+        version = version + 1,
+        updated_at = ?
+      WHERE project_id = ?
+        AND EXISTS (
+          SELECT 1 FROM json_each(tasks.labels) WHERE value = ?
+        )
+    `).bind(label, timestamp, projectId, label),
+  ]);
   return getProject(env, projectId);
 }
 
@@ -1389,7 +1395,6 @@ async function createTask(env, input, actor) {
   const project = await env.DB.prepare(`
     SELECT
       projects.id,
-      projects.labels,
       (
         SELECT tasks.identifier
         FROM tasks
@@ -1484,13 +1489,27 @@ async function createTask(env, input, actor) {
           FROM tasks
           WHERE id = ?
         ),
-        labels = ?,
+        labels = (
+          SELECT json_group_array(value)
+          FROM (
+            SELECT value
+            FROM (
+              SELECT value, 0 AS source_order, key AS label_order
+              FROM json_each(projects.labels)
+              UNION ALL
+              SELECT value, 1 AS source_order, key AS label_order
+              FROM json_each(?)
+            )
+            GROUP BY value
+            ORDER BY MIN(source_order), MIN(label_order)
+          )
+        ),
         updated_at = ?
       WHERE id = ?
     `).bind(
       suffixStart,
       id,
-      JSON.stringify([...new Set([...JSON.parse(project.labels), ...input.labels])]),
+      JSON.stringify(input.labels),
       timestamp,
       input.projectId,
     ),
@@ -1513,12 +1532,10 @@ async function updateTask(env, id, input, actor) {
     ? await requireProject(env, input.changes.projectId)
     : null;
   const projectChanged = Boolean(targetProject && targetProject.id !== currentTask.projectId);
-  const destinationProject = targetProject ?? await requireProject(env, currentTask.projectId);
-  const destinationProjectLabels = JSON.parse(destinationProject.labels);
+  const destinationProjectId = targetProject?.id ?? currentTask.projectId;
   const taskLabels = Object.hasOwn(input.changes, "labels")
     ? input.changes.labels
     : currentTask.labels;
-  const mergedProjectLabels = [...new Set([...destinationProjectLabels, ...taskLabels])];
   if (projectChanged) {
     const relation = await env.DB.prepare(`
       SELECT 1
@@ -1637,21 +1654,47 @@ async function updateTask(env, id, input, actor) {
       timestamp,
     ));
   }
-  if (mergedProjectLabels.length !== destinationProjectLabels.length) {
+  if (taskLabels.length > 0) {
     statements.push(env.DB.prepare(`
       UPDATE projects
-      SET labels = ?, updated_at = ?
+      SET
+        labels = (
+          SELECT json_group_array(value)
+          FROM (
+            SELECT value
+            FROM (
+              SELECT value, 0 AS source_order, key AS label_order
+              FROM json_each(projects.labels)
+              UNION ALL
+              SELECT value, 1 AS source_order, key AS label_order
+              FROM json_each(?)
+            )
+            GROUP BY value
+            ORDER BY MIN(source_order), MIN(label_order)
+          )
+        ),
+        updated_at = ?
       WHERE id = ?
         AND EXISTS (
           SELECT 1 FROM tasks WHERE id = ? AND version = ? AND updated_at = ?
         )
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(?) AS task_labels
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM json_each(projects.labels) AS project_labels
+            WHERE project_labels.value = task_labels.value
+          )
+        )
     `).bind(
-      JSON.stringify(mergedProjectLabels),
+      JSON.stringify(taskLabels),
       timestamp,
-      destinationProject.id,
+      destinationProjectId,
       current.id,
       input.version + 1,
       timestamp,
+      JSON.stringify(taskLabels),
     ));
   }
   const results = await env.DB.batch(statements);
