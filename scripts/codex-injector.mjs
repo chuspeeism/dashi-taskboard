@@ -294,10 +294,67 @@ function codexExecutablePath(appPath) {
   );
 }
 
-function launchCodex(appPath, port) {
-  return spawn(
-    codexExecutablePath(appPath),
+function managedCodexProcesses(appPath) {
+  const processes = spawnSync("/bin/ps", ["-ww", "-axo", "pid=,command="], {
+    encoding: "utf8",
+    env: withoutTaskboardLauncherEnvironment(process.env),
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (processes.status !== 0) throw new Error("Unable to inspect the launched Codex process");
+
+  const executable = codexExecutablePath(appPath);
+  const profileArgument = `--user-data-dir=${independentCodexProfilePath}`;
+  const matches = [];
+  for (const line of processes.stdout.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (
+      match
+      && match[2].startsWith(`${executable} `)
+      && match[2].includes(` ${profileArgument} `)
+    ) {
+      matches.push({ pid: Number(match[1]), command: match[2] });
+    }
+  }
+  return matches;
+}
+
+function managedCodexProcess(appPath) {
+  const processes = managedCodexProcesses(appPath);
+  if (processes.length > 1) throw new Error("Multiple managed Codex processes are running");
+  return processes[0] ?? null;
+}
+
+function managedCodexUsesPort(record, port) {
+  return record.command.includes(` --remote-debugging-port=${port} `);
+}
+
+function isManagedCodexRunning(record) {
+  const result = spawnSync(
+    "/bin/ps",
+    ["-ww", "-p", String(record.pid), "-o", "command="],
+    {
+      encoding: "utf8",
+      env: withoutTaskboardLauncherEnvironment(process.env),
+    },
+  );
+  return result.status === 0 && result.stdout.trimEnd() === record.command;
+}
+
+async function launchCodexWithLaunchServices(appPath, port) {
+  const existing = managedCodexProcess(appPath);
+  if (existing && managedCodexUsesPort(existing, port)) return existing;
+  if (existing) await stopManagedCodex(existing);
+  if (await isReachable(`http://127.0.0.1:${port}/json/version`)) {
+    throw new Error(`Codex CDP port ${port} is already in use`);
+  }
+
+  const launcher = spawn(
+    "/usr/bin/open",
     [
+      "-n",
+      "-a",
+      appPath,
+      "--args",
       `--user-data-dir=${independentCodexProfilePath}`,
       "--remote-debugging-address=127.0.0.1",
       `--remote-debugging-port=${port}`,
@@ -308,6 +365,51 @@ function launchCodex(appPath, port) {
       stdio: "ignore",
     },
   );
+  await new Promise((resolve, reject) => {
+    launcher.once("error", reject);
+    launcher.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`LaunchServices failed to start Codex (${signal || code})`));
+    });
+  });
+
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const launched = managedCodexProcess(appPath);
+    if (launched && managedCodexUsesPort(launched, port)) return launched;
+    if (launched) throw new Error("LaunchServices started Codex on an unexpected CDP port");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("LaunchServices did not start the managed Codex process");
+}
+
+async function stopManagedCodex(record) {
+  if (!isManagedCodexRunning(record)) return;
+  try {
+    process.kill(record.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code === "ESRCH") return;
+    throw error;
+  }
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (!isManagedCodexRunning(record)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!isManagedCodexRunning(record)) return;
+  try {
+    process.kill(record.pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+  const killDeadline = Date.now() + 1_000;
+  while (Date.now() < killDeadline) {
+    if (!isManagedCodexRunning(record)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (isManagedCodexRunning(record)) {
+    throw new Error("Unable to stop the managed Codex process");
+  }
 }
 
 async function launchCodexWithPipe(appPath) {
@@ -1567,6 +1669,7 @@ async function main() {
   }
 
   let codexProcess = null;
+  let managedCodex = null;
   let cdpRuntime = null;
   const injectedTargets = new Map();
   let openRequestGeneration = options.open ? 1 : 0;
@@ -1630,6 +1733,18 @@ async function main() {
     },
   });
 
+  const startManagedCodex = async () => {
+    if (options.cdpPipe) {
+      const launched = await launchCodexWithPipe(options.appPath);
+      codexProcess = launched.child;
+      cdpRuntime = pipeCdpRuntime(launched.browser);
+      return;
+    }
+    managedCodex = await launchCodexWithLaunchServices(options.appPath, options.port);
+    await waitUntilReachable(cdpVersionUrl, 30_000);
+    cdpRuntime = tcpCdpRuntime(options.port);
+  };
+
   let cleanupPromise = null;
   const cleanup = () => {
     if (cleanupPromise) return cleanupPromise;
@@ -1642,7 +1757,10 @@ async function main() {
       cdpRuntime?.close();
       cdpRuntime = null;
       const launchedCodex = codexProcess;
+      const launchedManagedCodex = managedCodex;
       codexProcess = null;
+      managedCodex = null;
+      if (launchedManagedCodex) await stopManagedCodex(launchedManagedCodex);
       if (
         launchedCodex
         && launchedCodex.exitCode === null
@@ -1686,15 +1804,15 @@ async function main() {
     await publishTaskboardRuntime();
     if (options.launch) await importCodexBrowserProfile();
 
-    if (options.cdpPipe) {
-      const launched = await launchCodexWithPipe(options.appPath);
-      codexProcess = launched.child;
-      cdpRuntime = pipeCdpRuntime(launched.browser);
-    } else if (!cdpReachable) {
-      codexProcess = launchCodex(options.appPath, options.port);
-      await waitUntilReachable(cdpVersionUrl, 30_000);
-      cdpRuntime = tcpCdpRuntime(options.port);
+    if (options.cdpPipe || !cdpReachable) {
+      await startManagedCodex();
     } else {
+      if (options.launch) {
+        managedCodex = managedCodexProcess(options.appPath);
+        if (!managedCodex || !managedCodexUsesPort(managedCodex, options.port)) {
+          throw new Error(`Codex CDP port ${options.port} belongs to another process`);
+        }
+      }
       cdpRuntime = tcpCdpRuntime(options.port);
     }
 
@@ -1731,7 +1849,7 @@ async function main() {
     let idleAfterNormalExit = false;
 
     if (!options.watch) {
-      codexProcess?.unref();
+      if (options.cdpPipe) codexProcess?.unref();
       return;
     }
 
@@ -1758,9 +1876,7 @@ async function main() {
       if (idleAfterNormalExit) {
         if (!hasOpenPending()) continue;
         try {
-          const launched = await launchCodexWithPipe(options.appPath);
-          codexProcess = launched.child;
-          cdpRuntime = pipeCdpRuntime(launched.browser);
+          await startManagedCodex();
           idleAfterNormalExit = false;
         } catch (restartError) {
           console.error(`Waiting to restart Codex: ${restartError.message}`);
@@ -1817,9 +1933,8 @@ async function main() {
           }
           throw error;
         }
-        const launchedCodexExited = codexProcess
-          && (codexProcess.exitCode !== null || codexProcess.signalCode !== null);
-        if (launchedCodexExited) {
+        const managedCodexExited = managedCodex && !isManagedCodexRunning(managedCodex);
+        if (managedCodexExited) {
           injectedTargets.forEach((connection) => {
             unregisterQuotaPolicyCdp(connection);
             connection.close();
@@ -1827,30 +1942,11 @@ async function main() {
           injectedTargets.clear();
           cdpRuntime?.close();
           cdpRuntime = null;
-          const exitCode = codexProcess.exitCode;
-          codexProcess = null;
-          if (exitCode === 0) {
-            idleAfterNormalExit = true;
-            console.error(
-              "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
-            );
-            continue;
-          }
-          console.error("Codex exited unexpectedly; restarting it for the taskboard launcher.");
-          try {
-            if (options.cdpPipe) {
-              const launched = await launchCodexWithPipe(options.appPath);
-              codexProcess = launched.child;
-              cdpRuntime = pipeCdpRuntime(launched.browser);
-            } else {
-              codexProcess = launchCodex(options.appPath, options.port);
-              await waitUntilReachable(cdpVersionUrl, 30_000);
-              cdpRuntime = tcpCdpRuntime(options.port);
-            }
-            if (options.open) openRequestGeneration += 1;
-          } catch (restartError) {
-            console.error(`Waiting to restart Codex: ${restartError.message}`);
-          }
+          managedCodex = null;
+          idleAfterNormalExit = true;
+          console.error(
+            "Waiting for Codex after exit; open Codex Taskboard again to restart it.",
+          );
           continue;
         }
         console.error(`Waiting for Codex renderer: ${error.message}`);
