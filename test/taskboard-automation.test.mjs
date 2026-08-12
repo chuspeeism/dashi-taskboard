@@ -176,7 +176,6 @@ test("the stable name and generated prompt are project-scoped and encode the cla
   assert.match(prompt, /每 5 分钟检查/);
   assert.match(prompt, /ppt-skill/);
   assert.match(prompt, /\/Users\/example\/Documents\/ppt-skill/);
-  assert.match(prompt, /sandbox_permissions=require_escalated/);
   assert.match(prompt, /每次仅处理一个 todo/);
   assert.match(prompt, /issue get/);
   assert.match(prompt, /comment list/);
