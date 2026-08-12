@@ -745,6 +745,42 @@ test("taskctl cloud status, logout, and project map use local companion endpoint
   });
 });
 
+test("taskctl companion-control commands use the tokenized launcher runtime endpoint", async () => {
+  const calls = [];
+  const runtimeFile = "C:\\Users\\admin\\AppData\\Roaming\\Codex Taskboard\\launcher-runtime.json";
+  const instanceToken = "7a6f8d37-78ce-46c9-87a8-08e10db88da2";
+  const overrides = {
+    env: { CODEX_TASKBOARD_RUNTIME_FILE: runtimeFile },
+    readFile: async (filePath) => {
+      assert.equal(filePath, runtimeFile);
+      return JSON.stringify({
+        version: 1,
+        url: `http://127.0.0.1:51987/${instanceToken}`,
+      });
+    },
+    fetch: async (url, init) => {
+      calls.push([url.toString(), init.method]);
+      if (init.method === "GET") {
+        return jsonResponse({ mode: "local", authenticated: false });
+      }
+      return jsonResponse({
+        projectId: "portfolio",
+        workspacePath: "/work/portfolio",
+      });
+    },
+  };
+
+  assert.equal((await runCli(["cloud", "status"], overrides)).exitCode, 0);
+  assert.equal((await runCli(
+    ["project", "map", "portfolio", "--workspace-path", "./portfolio"],
+    { ...overrides, cwd: "/work" },
+  )).exitCode, 0);
+  assert.deepEqual(calls, [
+    [`http://127.0.0.1:51987/${instanceToken}/api/local/cloud-session`, "GET"],
+    [`http://127.0.0.1:51987/${instanceToken}/api/local/project-mappings/portfolio`, "PUT"],
+  ]);
+});
+
 test("taskctl accepts only loopback companion origins and supports the legacy loopback URL", async () => {
   let requestedUrl;
   const legacy = await runCli(["cloud", "status"], {

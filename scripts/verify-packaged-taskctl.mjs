@@ -114,6 +114,16 @@ try {
   const projects = runTaskctl(wrapperPath, temporaryHome, ["project", "list", "--json"]);
   const projectId = projects.projects?.[0]?.id;
   if (!projectId) throw new Error("Packaged taskctl did not list the local project");
+  const cloudStatus = runTaskctl(wrapperPath, temporaryHome, ["cloud", "status", "--json"]);
+  if (cloudStatus.mode !== "local") throw new Error("Packaged cloud status used the wrong endpoint");
+  const mapping = runTaskctl(wrapperPath, temporaryHome, [
+    "project", "map", projectId,
+    "--workspace-path", appRoot,
+    "--json",
+  ]);
+  if (mapping.projectId !== projectId || mapping.workspacePath !== appRoot) {
+    throw new Error("Packaged project map used the wrong endpoint");
+  }
   const created = runTaskctl(wrapperPath, temporaryHome, [
     "issue", "create",
     "--project", projectId,

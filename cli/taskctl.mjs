@@ -202,7 +202,7 @@ async function execute(parsed, overrides) {
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
   const api = createApiClient(overrides, {
     baseUrl: usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
-      ? resolveCompanionUrl(env)
+      ? await resolveCompanionUrl(env, overrides)
       : await resolveTaskboardBaseUrl(env, overrides),
   });
   switch (command) {
@@ -951,10 +951,10 @@ async function resolveTaskboardBaseUrl(env, overrides) {
   return descriptor.url;
 }
 
-function resolveCompanionUrl(env) {
-  const rawUrl = env.CODEX_TASKBOARD_COMPANION_URL
-    ?? env.CODEX_TASKBOARD_URL
-    ?? DEFAULT_API_URL;
+async function resolveCompanionUrl(env, overrides) {
+  const rawUrl = env.CODEX_TASKBOARD_COMPANION_URL !== undefined
+    ? env.CODEX_TASKBOARD_COMPANION_URL
+    : await resolveTaskboardBaseUrl(env, overrides);
   let url;
   try {
     url = new URL(rawUrl);
@@ -964,18 +964,21 @@ function resolveCompanionUrl(env) {
   const isLoopback = url.hostname === "localhost"
     || url.hostname === "127.0.0.1"
     || url.hostname === "[::1]";
+  const instanceToken = url.pathname.replace(/^\//, "").replace(/\/$/, "");
+  const hasValidPathname = url.pathname === "/"
+    || (/^[a-z0-9-]{16,128}$/i.test(instanceToken) && !instanceToken.includes("/"));
   if (
     !isLoopback
     || (url.protocol !== "http:" && url.protocol !== "https:")
     || url.username
     || url.password
-    || (url.pathname !== "/" && url.pathname !== "")
+    || !hasValidPathname
     || url.search
     || url.hash
   ) {
-    throw usageError("Local companion URL must be a loopback HTTP or HTTPS origin");
+    throw usageError("Local companion URL must be a loopback HTTP or HTTPS endpoint");
   }
-  return url.origin;
+  return url.toString().replace(/\/$/, "");
 }
 
 async function readResponse(response) {
