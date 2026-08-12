@@ -163,6 +163,24 @@ test("unchanged host heartbeats do not repeat automation status requests", () =>
   );
 });
 
+test("quota-aware host policy status uses a throttled refresh", () => {
+  const effectsSource = appSource.slice(
+    appSource.indexOf("useEffect(() => {\n    setAutomationError(null)"),
+    appSource.indexOf("let acknowledgedFrameChallenge"),
+  );
+  assert.match(appSource, /const AUTOMATION_STATUS_REFRESH_INTERVAL_MS = 60_000/);
+  assert.match(
+    effectsSource,
+    /!selectedProjectAutomation\?\.enabledByUser\s*\|\| !selectedProjectAutomation\.quotaAware/,
+  );
+  assert.match(
+    effectsSource,
+    /window\.setInterval\(\(\) => \{\s*void reconcileProjectAutomation\(\);\s*\}, AUTOMATION_STATUS_REFRESH_INTERVAL_MS\)/,
+  );
+  assert.match(effectsSource, /return \(\) => window\.clearInterval\(timer\)/);
+  assert.doesNotMatch(effectsSource, /setInterval\([^)]*1_000/);
+});
+
 test("opening settings and changing projects reconcile with the host list", () => {
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),

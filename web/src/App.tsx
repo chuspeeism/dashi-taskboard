@@ -265,6 +265,7 @@ const DEVICE_WORKSPACE_PATHS_KEY = "taskboard.deviceWorkspacePaths.v1";
 const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
 const ISSUE_READ_KEY_PREFIX = "taskboard.issue-read.v1";
 const FIRST_USE_COMPLETE_KEY = "taskboard.first-use-complete.v1";
+const AUTOMATION_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
@@ -1317,6 +1318,23 @@ export function App() {
     setAutomationError(null);
     void reconcileProjectAutomation();
   }, [selectedProjectId, reconcileProjectAutomation]);
+
+  useEffect(() => {
+    if (
+      !automationRequestContext
+      || !selectedProjectAutomation?.enabledByUser
+      || !selectedProjectAutomation.quotaAware
+    ) return;
+    const timer = window.setInterval(() => {
+      void reconcileProjectAutomation();
+    }, AUTOMATION_STATUS_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    automationRequestContext,
+    reconcileProjectAutomation,
+    selectedProjectAutomation?.enabledByUser,
+    selectedProjectAutomation?.quotaAware,
+  ]);
 
   useEffect(() => {
     if (!embedded || window.parent === window) return;
