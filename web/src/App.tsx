@@ -22,9 +22,11 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
+  createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
   deleteArchivedTask as deleteArchivedTaskRequest,
+  deleteProjectLabel as deleteProjectLabelRequest,
   deleteProject as deleteProjectRequest,
   getCodexThreadProgress,
   getHostRuntime,
@@ -84,7 +86,6 @@ import {
   MAIN_STATUSES,
   type OtherTaskTab,
 } from "./issueBoardStatuses";
-import { DEFAULT_LABELS } from "./labels";
 import {
   normalizeCodexThreadId,
   taskCardPresentation,
@@ -317,6 +318,7 @@ const EVENT_NAMES = [
   "attachment.created",
   "attachment.deleted",
   "project.created",
+  "project.labels.updated",
   "workflow.updated",
 ] as const;
 
@@ -521,16 +523,25 @@ function LocalRealtimeSync({
 
     const handleEvent = (event: Event) => {
       const message = event as MessageEvent<string>;
-      let payload: { projectId?: string; taskId?: string } = {};
+      let payload: { projectId?: string; taskId?: string; project?: Project } = {};
       try {
-        payload = JSON.parse(message.data) as { projectId?: string; taskId?: string };
+        payload = JSON.parse(message.data) as {
+          projectId?: string;
+          taskId?: string;
+          project?: Project;
+        };
       } catch {
         // A malformed event should not interrupt later updates.
       }
+      const eventProjectId = payload.projectId ?? payload.project?.id;
       const affectsSelectedProject = Boolean(selectedProjectId)
-        && (!payload.projectId || payload.projectId === selectedProjectId);
+        && (!eventProjectId || eventProjectId === selectedProjectId);
       if (event.type === "project.created") {
         scheduleRefresh({ projects: true });
+        return;
+      }
+      if (event.type === "project.labels.updated") {
+        scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
         return;
       }
       if (event.type.startsWith("task.")) {
@@ -828,13 +839,7 @@ export function App() {
   const contextMenuTask = contextMenu
     ? tasks.find((task) => task.id === contextMenu.taskId) ?? null
     : null;
-  const availableLabels = useMemo(
-    () => [...new Set([
-      ...DEFAULT_LABELS.map((label) => label.name),
-      ...tasks.flatMap((task) => task.labels),
-    ])],
-    [tasks],
-  );
+  const availableLabels = selectedProject?.labels ?? [];
   const projectChoices = useMemo<ProjectChoice[]>(() => {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
     const seen = new Set<string>();
@@ -2054,6 +2059,33 @@ export function App() {
     }
   }
 
+  async function persistProjectLabel(label: string) {
+    setActionError(null);
+    try {
+      const project = await createProjectLabelRequest(selectedProjectId, label);
+      setProjects((current) => current.map((candidate) => (
+        candidate.id === project.id ? project : candidate
+      )));
+    } catch (error) {
+      setActionError(errorMessage(error));
+      throw error;
+    }
+  }
+
+  async function removeProjectLabel(label: string) {
+    setActionError(null);
+    try {
+      const project = await deleteProjectLabelRequest(selectedProjectId, label);
+      setProjects((current) => current.map((candidate) => (
+        candidate.id === project.id ? project : candidate
+      )));
+      await refreshTasks(selectedProjectId, { quiet: true });
+    } catch (error) {
+      setActionError(errorMessage(error));
+      throw error;
+    }
+  }
+
   async function mutateTaskRelation(
     action: "add" | "remove",
     task: Task,
@@ -2716,6 +2748,8 @@ export function App() {
             developmentScanLoading={developmentScanLoading}
             commentsRevision={commentsRevision}
             attachmentsRevision={attachmentsRevision}
+            onCreateLabel={persistProjectLabel}
+            onDeleteLabel={removeProjectLabel}
             onUpdate={(current, changes) => updateTaskProperties(current, changes)}
             onOpenTask={openTaskDetail}
             onAddRelation={(current, type, relatedTaskId) => (
@@ -2826,6 +2860,7 @@ export function App() {
                         contextMenuTaskId={contextMenu?.taskId ?? null}
                         availableLabels={availableLabels}
                         currentUser={currentUser}
+                        onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
                         onEdit={openTaskDetail}
                         onUpdate={updateTaskProperties}
@@ -2857,6 +2892,7 @@ export function App() {
                     contextMenuTaskId={contextMenu?.taskId ?? null}
                     availableLabels={availableLabels}
                     currentUser={currentUser}
+                    onCreateLabel={persistProjectLabel}
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}
                     onTabChange={setOtherTasksTab}
@@ -3087,6 +3123,7 @@ export function App() {
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
+          onCreateLabel={persistProjectLabel}
           onCancel={(draft) => {
             if (!editor.task) setNewTaskDraft(draft);
             setEditor(null);

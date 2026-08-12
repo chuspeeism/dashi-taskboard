@@ -10,6 +10,19 @@ export const TASK_STATUSES = [
 export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];
 
 export const DEFAULT_PROJECT_ID = "local";
+export const DEFAULT_LABEL_NAMES = [
+  "缺陷",
+  "特性",
+  "for-claude",
+  "hold",
+  "改进",
+  "phase-1",
+  "phase-2",
+  "phase-3",
+  "phase-4",
+  "phase-5",
+  "phase-6",
+];
 
 export function isTaskStatus(value) {
   return TASK_STATUSES.includes(value);

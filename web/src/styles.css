@@ -6619,6 +6619,29 @@ kbd {
   overflow: auto;
 }
 
+.label-option-row {
+  display: flex;
+  align-items: center;
+}
+
+.label-option-row > button[role="option"] {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.label-options .label-delete-button {
+  width: 32px;
+  flex: 0 0 32px;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-tertiary);
+}
+
+.label-options .label-delete-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 .label-options button,
 .more-popover button,
 .due-popover button {

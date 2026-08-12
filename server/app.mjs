@@ -491,6 +491,12 @@ function parseProjectCreate(body) {
   return { id, name, workspacePath };
 }
 
+function parseProjectLabel(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["label"]));
+  return stringField(body.label, "label", { required: true, maxLength: 64 });
+}
+
 function parseThreadId(value) {
   if (value === undefined) return undefined;
   return stringField(value, "threadId", { required: true, maxLength: 256 });
@@ -2059,6 +2065,29 @@ export function createTaskboardServer(options = {}) {
           return sendEmpty(response, 204);
         }
         return methodNotAllowed(response, ["DELETE"]);
+      }
+
+      const projectLabelsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/labels$/);
+      if (projectLabelsRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project label routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectLabelsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method !== "POST" && request.method !== "DELETE") {
+          return methodNotAllowed(response, ["POST", "DELETE"]);
+        }
+        const label = parseProjectLabel(await readJson(request));
+        const project = request.method === "POST"
+          ? database.addProjectLabel(projectId, label)
+          : database.deleteProjectLabel(projectId, label);
+        events.emit("project.labels.updated", { project });
+        return sendJson(response, 200, { project });
       }
 
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);

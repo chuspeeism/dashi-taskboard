@@ -83,6 +83,7 @@ interface TaskEditorProps {
   currentUser: ActorIdentity;
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
+  onCreateLabel: (label: string) => Promise<void>;
   onCancel: (draft: NewTaskEditorDraft | null) => void;
   onSave: (
     draft: TaskDraft,
@@ -135,6 +136,7 @@ export function TaskEditor({
   currentUser,
   developmentScan,
   developmentScanLoading,
+  onCreateLabel,
   onCancel,
   onSave,
 }: TaskEditorProps) {
@@ -471,6 +473,7 @@ export function TaskEditor({
               showIcon
               onOpenChange={(open) => setMenu(open ? "labels" : null)}
               onChange={setSelectedLabels}
+              onCreateLabel={onCreateLabel}
             />
 
             <label className="property-control property-development" title={developmentScan.workspacePath ?? undefined}>
