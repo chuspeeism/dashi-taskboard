@@ -1494,14 +1494,24 @@ async function createTask(env, input, actor) {
           FROM (
             SELECT value
             FROM (
-              SELECT value, 0 AS source_order, key AS label_order
-              FROM json_each(projects.labels)
-              UNION ALL
-              SELECT value, 1 AS source_order, key AS label_order
-              FROM json_each(?)
+              SELECT
+                value,
+                source_order,
+                label_order,
+                ROW_NUMBER() OVER (
+                  PARTITION BY value
+                  ORDER BY source_order, label_order
+                ) AS occurrence_rank
+              FROM (
+                SELECT value, 0 AS source_order, key AS label_order
+                FROM json_each(projects.labels)
+                UNION ALL
+                SELECT value, 1 AS source_order, key AS label_order
+                FROM json_each(?)
+              )
             )
-            GROUP BY value
-            ORDER BY MIN(source_order), MIN(label_order)
+            WHERE occurrence_rank = 1
+            ORDER BY source_order, label_order
           )
         ),
         updated_at = ?
@@ -1663,14 +1673,24 @@ async function updateTask(env, id, input, actor) {
           FROM (
             SELECT value
             FROM (
-              SELECT value, 0 AS source_order, key AS label_order
-              FROM json_each(projects.labels)
-              UNION ALL
-              SELECT value, 1 AS source_order, key AS label_order
-              FROM json_each(?)
+              SELECT
+                value,
+                source_order,
+                label_order,
+                ROW_NUMBER() OVER (
+                  PARTITION BY value
+                  ORDER BY source_order, label_order
+                ) AS occurrence_rank
+              FROM (
+                SELECT value, 0 AS source_order, key AS label_order
+                FROM json_each(projects.labels)
+                UNION ALL
+                SELECT value, 1 AS source_order, key AS label_order
+                FROM json_each(?)
+              )
             )
-            GROUP BY value
-            ORDER BY MIN(source_order), MIN(label_order)
+            WHERE occurrence_rank = 1
+            ORDER BY source_order, label_order
           )
         ),
         updated_at = ?
