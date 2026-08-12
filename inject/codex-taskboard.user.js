@@ -937,6 +937,25 @@
     } catch (_) {}
   }
 
+  async function handleAttachmentOpen(payload) {
+    try {
+      await requestHost("open-attachment", {
+        attachmentId: payload?.attachmentId,
+        filename: payload?.filename,
+      });
+    } catch (_) {
+      postToFrame({
+        type: "taskboard:attachment-open-error",
+        payload: {
+          error: hostText(
+            "无法用系统默认应用打开附件，请重试。",
+            "Could not open the attachment in its default app. Try again.",
+          ),
+        },
+      });
+    }
+  }
+
   function challengeFrameDocument(event) {
     if (!frame || event.currentTarget !== frame) return;
     frameReady = false;
@@ -989,6 +1008,10 @@
     }
     if (message.type === "taskboard:open-external") {
       handleExternalOpen(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:open-attachment") {
+      void handleAttachmentOpen(message.payload);
       return;
     }
     if (message.type === "taskboard:create-thread") void createThreadForTask(message.payload);

@@ -742,9 +742,9 @@ async function loadTaskboardFrameViaCdp(cdp, frameName, frameCapability) {
   throw new Error("Timed out waiting for the isolated Taskboard frame");
 }
 
-async function openExternalUrl(request) {
+async function openWithDefaultApplication(target) {
   await new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/open", [request.url], {
+    const child = spawn("/usr/bin/open", [target], {
       detached: true,
       env: withoutTaskboardLauncherEnvironment(process.env),
       stdio: "ignore",
@@ -755,6 +755,28 @@ async function openExternalUrl(request) {
       resolve();
     });
   });
+}
+
+async function openExternalUrl(request) {
+  await openWithDefaultApplication(request.url);
+  return { opened: true };
+}
+
+async function openAttachment(request) {
+  const response = await fetch(
+    `${taskboardBaseUrl}/api/attachments/${encodeURIComponent(request.attachmentId)}/download`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) throw new Error(`Attachment download returned HTTP ${response.status}`);
+  const directory = path.join(
+    taskboardDataDirectory,
+    "opened-attachments",
+    request.attachmentId,
+  );
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const attachmentPath = path.join(directory, request.filename);
+  await writeFile(attachmentPath, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
+  await openWithDefaultApplication(attachmentPath);
   return { opened: true };
 }
 
@@ -1194,6 +1216,7 @@ function installTaskboardHostBinding(cdp, supervisor, startupToken) {
         request.frameCapability,
       ),
       openExternal: openExternalUrl,
+      openAttachment,
       runAutomation: (request) => (
         (async () => {
           const rpc = (method, body) => requestCodexAutomationViaCdp(

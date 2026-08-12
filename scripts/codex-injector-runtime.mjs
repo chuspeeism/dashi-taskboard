@@ -35,6 +35,17 @@ function parseHostRequest(payload, parseAutomationRequest) {
       }
     } catch {}
   }
+  if (
+    request.action === "open-attachment"
+    && typeof request.attachmentId === "string"
+    && /^[a-f0-9-]{36}$/i.test(request.attachmentId)
+    && typeof request.filename === "string"
+    && request.filename.length > 0
+    && request.filename.length <= 240
+    && request.filename !== "."
+    && request.filename !== ".."
+    && !/[\u0000-\u001f\u007f/\\]/.test(request.filename)
+  ) return { id, request, error: null };
   if (request.action === "automation") {
     const parsed = parseAutomationRequest(request);
     return parsed
@@ -85,6 +96,8 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.loadFrame(parsed.request);
     } else if (parsed.request.action === "open-external") {
       result = await handlers.openExternal(parsed.request);
+    } else if (parsed.request.action === "open-attachment") {
+      result = await handlers.openAttachment(parsed.request);
     } else if (parsed.request.action === "automation") {
       result = await handlers.runAutomation(parsed.request, params.executionContextId);
     } else {
