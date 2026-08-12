@@ -191,10 +191,16 @@ function fixtureHtml(origin) {
 
         for (let attempt = 0; attempt < 500; attempt += 1) {
           const frame = document.getElementById("codex-taskboard-frame");
-          if (frame && window.__externalOpenUrl && window.__hostileNavigationLoaded) break;
+          const status = document.getElementById("codex-taskboard-status");
+          if (
+            frame
+            && window.__externalOpenUrl
+            && window.__hostileNavigationLoaded
+            && frame.hidden
+            && status?.hidden === false
+          ) break;
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        await new Promise((resolve) => setTimeout(resolve, 250));
 
         const page = document.getElementById("codex-taskboard-page");
         const frame = document.getElementById("codex-taskboard-frame");
