@@ -31,6 +31,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use uuid::Uuid;
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(target_os = "macos")]
+const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 #[cfg(target_os = "macos")]
 const TASKBOARD_LISTEN_FD: i32 = 5;
@@ -68,6 +70,8 @@ struct LauncherState {
     lifecycle: Mutex<()>,
     #[cfg(target_os = "macos")]
     taskboard_listener: Mutex<Option<TcpListener>>,
+    #[cfg(target_os = "macos")]
+    codex_port: Mutex<Option<u16>>,
     #[cfg(target_os = "windows")]
     child_control: Mutex<Option<ChildStdin>>,
     _instance_lock: File,
@@ -104,6 +108,8 @@ impl LauncherState {
             lifecycle: Mutex::new(()),
             #[cfg(target_os = "macos")]
             taskboard_listener: Mutex::new(None),
+            #[cfg(target_os = "macos")]
+            codex_port: Mutex::new(None),
             #[cfg(target_os = "windows")]
             child_control: Mutex::new(None),
             _instance_lock: instance_lock,
@@ -163,7 +169,7 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Erro
     Ok(())
 }
 
-fn ephemeral_taskboard_listener() -> Result<TcpListener, String> {
+fn loopback_listener() -> Result<TcpListener, String> {
     TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())
 }
 
@@ -171,7 +177,7 @@ fn ephemeral_taskboard_listener() -> Result<TcpListener, String> {
 fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), String> {
     let mut listener = state.taskboard_listener.lock().unwrap();
     if listener.is_none() {
-        *listener = Some(ephemeral_taskboard_listener()?);
+        *listener = Some(loopback_listener()?);
     }
     let listener = listener.as_ref().unwrap();
     let port = listener
@@ -183,13 +189,28 @@ fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), Strin
 
 #[cfg(target_os = "windows")]
 fn taskboard_listener(_state: &LauncherState) -> Result<(Option<i32>, u16), String> {
-    let listener = ephemeral_taskboard_listener()?;
+    let listener = loopback_listener()?;
     let port = listener
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
     drop(listener);
     Ok((None, port))
+}
+
+#[cfg(target_os = "macos")]
+fn codex_port(state: &LauncherState) -> Result<u16, String> {
+    let mut port = state.codex_port.lock().unwrap();
+    if let Some(port) = *port {
+        return Ok(port);
+    }
+    let listener = loopback_listener()?;
+    let selected = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    *port = Some(selected);
+    Ok(selected)
 }
 
 fn update_snapshot(
@@ -380,6 +401,22 @@ fn terminate_process_group(pid: u32) {
 }
 
 #[cfg(target_os = "macos")]
+fn stop_launcher_process_group(pid: u32) {
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    if !wait_for_process_group_exit(pid, LAUNCHER_STOP_TIMEOUT) {
+        send_process_group_signal(pid, libc::SIGKILL);
+        let _ = wait_for_process_group_exit(pid, Duration::from_secs(1));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn stop_launcher_process_group(pid: u32) {
+    terminate_process_group(pid);
+}
+
+#[cfg(target_os = "macos")]
 fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let output = StdCommand::new("/bin/ps")
         .args(["-p", &record.pid.to_string(), "-o", "command="])
@@ -420,7 +457,7 @@ fn stop_recorded_child(state: &LauncherState) {
         .and_then(|content| serde_json::from_str::<LauncherPidRecord>(&content).ok());
     if let Some(record) = record {
         if process_matches_record(&record) {
-            terminate_process_group(record.pid);
+            stop_launcher_process_group(record.pid);
         }
     }
     let _ = fs::remove_file(&state.pid_record_path);
@@ -465,7 +502,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
             terminate_process_group(pid);
         }
         #[cfg(target_os = "macos")]
-        terminate_process_group(pid);
+        stop_launcher_process_group(pid);
         clear_pid_record(state, pid);
     }
     update_snapshot(app, state, |snapshot| {
@@ -595,6 +632,8 @@ fn start_launcher_locked(
         .map_err(|error| error.to_string())?
     };
     let (_taskboard_listener_fd, taskboard_port) = taskboard_listener(state)?;
+    #[cfg(target_os = "macos")]
+    let codex_port = codex_port(state)?.to_string();
     let instance_token = Uuid::new_v4().to_string();
     let instance_secret = Uuid::new_v4().to_string();
     let version = state.snapshot.lock().unwrap().version.clone();
@@ -611,8 +650,11 @@ fn start_launcher_locked(
     command.arg(&injector_path);
     #[cfg(target_os = "windows")]
     command.arg(r"scripts\codex-injector.mjs");
+    #[cfg(target_os = "macos")]
+    command.args(["--launch", "--watch", "--open", "--port", &codex_port]);
+    #[cfg(target_os = "windows")]
+    command.args(["--launch", "--watch", "--open", "--cdp-pipe"]);
     command
-        .args(["--launch", "--watch", "--open", "--cdp-pipe"])
         .args(["--startup-token", &instance_token, "--app-path"])
         .arg(&codex_app)
         .env("CODEX_TASKBOARD_DATA_DIR", &state.data_directory)
@@ -675,10 +717,18 @@ fn start_launcher_locked(
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.child_pid = Some(pid);
     });
+    #[cfg(target_os = "macos")]
     append_log(
         state,
         &format!(
-            "Started launcher child {pid} on Taskboard {taskboard_port} with private CDP pipe"
+            "Started launcher child {pid} on Taskboard {taskboard_port} with Codex CDP {codex_port}"
+        ),
+    );
+    #[cfg(target_os = "windows")]
+    append_log(
+        state,
+        &format!(
+            "Started launcher child {pid} on Taskboard {taskboard_port} with a private Codex CDP pipe"
         ),
     );
     if let Some(stdout) = stdout {
@@ -1335,11 +1385,12 @@ fn main() {
             let Some(state) = app_handle.try_state::<Arc<LauncherState>>() else {
                 return;
             };
-            if let Err(error) = restart_launcher(app_handle, &state) {
-                append_log(&state, &format!("Launcher reopen failed: {error}"));
+            let result = start_launcher(app_handle, &state).and_then(|_| open_taskboard(&state));
+            if let Err(error) = result {
+                append_log(&state, &format!("Launcher panel reopen failed: {error}"));
                 show_error_dialog(
                     app_handle,
-                    "Codex Taskboard 启动失败",
+                    "Codex Taskboard 打开失败",
                     &format!("{error}\n\n请确认官方 Codex/ChatGPT App 已安装。"),
                 );
             }

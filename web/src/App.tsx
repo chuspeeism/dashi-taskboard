@@ -131,6 +131,18 @@ type DetailSourceScroll =
   | { projectId: string; view: "list"; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
 type ActionError = string | readonly [string, string];
+type ProjectLoadError = {
+  source: "projects";
+  operation: "initial" | "refresh";
+  requestId: number;
+  message: string;
+};
+type TasksLoadError = {
+  source: "tasks";
+  requestId: number;
+  message: string;
+};
+type LoadError = ProjectLoadError | TasksLoadError;
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
 
@@ -635,7 +647,9 @@ export function App() {
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [projectLoadError, setProjectLoadError] = useState<ProjectLoadError | null>(null);
+  const [tasksLoadError, setTasksLoadError] = useState<TasksLoadError | null>(null);
+  const loadError: LoadError | null = projectLoadError ?? tasksLoadError;
   const [actionError, setActionError] = useState<ActionError | null>(null);
   const actionErrorText = actionError === null
     ? null
@@ -690,6 +704,7 @@ export function App() {
   const [automationError, setAutomationError] = useState<string | null>(null);
   const [announcement, setAnnouncementValue] = useState("");
   const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
+  const projectsRequestRef = useRef(0);
   const tasksRequestRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
   const undoSequenceRef = useRef(0);
@@ -1437,13 +1452,17 @@ export function App() {
   }, [detailTaskId, embedded, embeddedFrameChallenge, selectedProjectId]);
 
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
-    setLoadError(null);
+    const requestId = ++projectsRequestRef.current;
+    setProjectLoadError((current) => (
+      current?.operation === "initial" ? { ...current, requestId } : current
+    ));
     try {
       const [nextProjects, metadata, workspaces] = await Promise.all([
         listProjects(signal),
         getTaskboardMetadata(signal),
         listDeviceWorkspaces(signal),
       ]);
+      if (requestId !== projectsRequestRef.current) return;
       setTaskboardMetadata((current) => (
         current
         && current.mode === metadata.mode
@@ -1472,8 +1491,18 @@ export function App() {
           ?? nextProjects[0]?.id
           ?? GLOBAL_PROJECT_ID;
       });
+      setProjectLoadError((current) => (
+        current?.operation === "initial" && current.requestId === requestId ? null : current
+      ));
     } catch (error) {
-      if ((error as Error).name !== "AbortError") setLoadError(errorMessage(error));
+      if ((error as Error).name !== "AbortError" && requestId === projectsRequestRef.current) {
+        setProjectLoadError({
+          source: "projects",
+          operation: "initial",
+          requestId,
+          message: errorMessage(error),
+        });
+      }
     }
   }, []);
 
@@ -1484,10 +1513,26 @@ export function App() {
   }, [loadProjectList]);
 
   const refreshProjectList = useCallback(async () => {
+    const requestId = ++projectsRequestRef.current;
+    setProjectLoadError((current) => (
+      current?.operation === "refresh" ? { ...current, requestId } : current
+    ));
     try {
-      setProjects(await listProjects());
+      const nextProjects = await listProjects();
+      if (requestId !== projectsRequestRef.current) return;
+      setProjects(nextProjects);
+      setProjectLoadError((current) => (
+        current?.operation === "refresh" && current.requestId === requestId ? null : current
+      ));
     } catch (error) {
-      setLoadError(errorMessage(error));
+      if (requestId === projectsRequestRef.current) {
+        setProjectLoadError({
+          source: "projects",
+          operation: "refresh",
+          requestId,
+          message: errorMessage(error),
+        });
+      }
     }
   }, []);
 
@@ -1497,7 +1542,9 @@ export function App() {
   ) => {
     const requestId = ++tasksRequestRef.current;
     if (!options.quiet) setTasksLoading(true);
-    setLoadError(null);
+    setTasksLoadError((current) => (
+      current ? { ...current, requestId } : current
+    ));
     try {
       const [nextTasks, nextArchivedTasks] = await Promise.all([
         listTasks(projectId, options.signal),
@@ -1507,9 +1554,12 @@ export function App() {
       setTasks(sortTasks(nextTasks));
       setArchivedTasks(sortTasks(nextArchivedTasks));
       setHasLoadedTasks(true);
+      setTasksLoadError((current) => (
+        current?.requestId === requestId ? null : current
+      ));
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === tasksRequestRef.current) {
-        setLoadError(errorMessage(error));
+        setTasksLoadError({ source: "tasks", requestId, message: errorMessage(error) });
       }
     } finally {
       if (!options.quiet && requestId === tasksRequestRef.current) setTasksLoading(false);
@@ -2723,12 +2773,15 @@ export function App() {
         {(loadError || actionErrorText) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionErrorText ?? loadError}</p></div>
+            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionErrorText ?? loadError?.message}</p></div>
             <button
               type="button"
               onClick={() => {
                 setActionError(null);
-                if (selectedProjectId) void refreshTasks(selectedProjectId);
+                if (loadError?.source === "projects") {
+                  if (loadError.operation === "initial") void loadProjectList();
+                  else void refreshProjectList();
+                } else if (selectedProjectId) void refreshTasks(selectedProjectId);
                 else void loadProjectList();
               }}
             >

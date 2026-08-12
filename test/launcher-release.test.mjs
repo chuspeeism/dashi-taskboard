@@ -7,14 +7,17 @@ const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.j
 const releaseWorkflow = await readFile(new URL("../.github/workflows/release-macos.yml", import.meta.url), "utf8");
 const checkWorkflow = await readFile(new URL("../.github/workflows/check.yml", import.meta.url), "utf8");
 
-test("the macOS launcher uses one instance, serialized lifecycle changes, and a private CDP pipe", () => {
+test("the macOS launcher uses one instance, serialized lifecycle changes, and a loopback CDP port", () => {
   assert.match(launcherSource, /libc::flock/);
   assert.match(launcherSource, /lifecycle: Mutex/);
   assert.match(launcherSource, /generation: AtomicU64/);
   assert.match(launcherSource, /TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/);
   assert.equal(launcherSource.match(/TcpListener::bind/g)?.length, 1);
-  assert.match(launcherSource, /"--cdp-pipe"/);
-  assert.doesNotMatch(launcherSource, /cdp_port/);
+  assert.match(launcherSource, /codex_port: Mutex<Option<u16>>/);
+  assert.match(
+    launcherSource,
+    /#\[cfg\(target_os = "macos"\)\]\s+command\.args\(\["--launch", "--watch", "--open", "--port", &codex_port\]\);/,
+  );
   assert.doesNotMatch(launcherSource, /const LAUNCHER_PORT/);
 });
 

@@ -713,6 +713,7 @@
   border-radius: 12px;
   background: var(--surface-hover);
   box-shadow: var(--card-shadow);
+  cursor: pointer;
 }
 
 .dashboard-view .dashboard-running-open {

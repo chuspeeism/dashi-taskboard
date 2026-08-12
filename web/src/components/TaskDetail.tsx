@@ -75,6 +75,7 @@ import {
 } from "./IssueRelations";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { buildIssueUrl } from "../issueRoute";
+import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
 
@@ -159,6 +160,18 @@ function fileSize(value: number): string {
 }
 
 async function downloadAttachmentFile(attachment: Attachment) {
+  const host = new URL(document.baseURI).searchParams.get("host");
+  if (host === "codex" && window.parent !== window) {
+    postEmbeddedHostMessage({
+      type: "taskboard:open-attachment",
+      payload: {
+        attachmentId: attachment.id,
+        filename: attachment.filename,
+      },
+    });
+    return;
+  }
+
   const response = await fetch(resolveTaskboardUrl(attachmentDownloadUrl(attachment)));
   if (!response.ok) {
     throw new ApiError(response.status, await response.json().catch(() => ({})));
@@ -472,6 +485,18 @@ export function TaskDetail({
     );
     return () => controller.abort();
   }, [attachmentsRevision, task.id]);
+
+  useEffect(() => {
+    function receiveAttachmentOpenError(event: MessageEvent) {
+      if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
+      if (event.data.type !== "taskboard:attachment-open-error") return;
+      setAttachmentsError(typeof event.data.payload?.error === "string"
+        ? event.data.payload.error
+        : ["无法打开附件，请重试。", "Could not open the attachment. Try again."]);
+    }
+    window.addEventListener("message", receiveAttachmentOpenError);
+    return () => window.removeEventListener("message", receiveAttachmentOpenError);
+  }, []);
 
   useEffect(() => {
     const key = `taskboard.comment-draft.${task.id}`;

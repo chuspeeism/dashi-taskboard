@@ -566,11 +566,18 @@ export function DashboardView({
             <header><span>{text("运行中对话", "Active conversations")}</span></header>
             <div className="dashboard-task-list">
               {runningTasks.length ? runningTasks.map((task) => (
-                <article className="dashboard-running-card" key={task.id}>
+                <article
+                  className="dashboard-running-card"
+                  key={task.id}
+                  onClick={() => onOpenTask(task)}
+                >
                   <button
                     type="button"
                     className="dashboard-running-open"
-                    onClick={() => onOpenTask(task)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenTask(task);
+                    }}
                   >
                     <small>ID: {task.identifier}</small>
                     <strong>{task.title}</strong>
