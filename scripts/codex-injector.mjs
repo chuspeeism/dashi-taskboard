@@ -42,7 +42,7 @@ const taskboardDataDirectory = process.env.CODEX_TASKBOARD_DATA_DIR
   : path.join(projectRoot, ".data");
 const taskboardRuntimeFile = process.env.CODEX_TASKBOARD_RUNTIME_FILE
   ? path.resolve(process.env.CODEX_TASKBOARD_RUNTIME_FILE)
-  : null;
+  : path.join(taskboardDataDirectory, "launcher-runtime.json");
 const taskboardListenFd = process.env.CODEX_TASKBOARD_LISTEN_FD === undefined
   ? null
   : Number(process.env.CODEX_TASKBOARD_LISTEN_FD);

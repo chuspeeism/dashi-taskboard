@@ -9,6 +9,7 @@
 ## 系统要求
 
 - Node.js 22.5 或更高版本
+- 构建 macOS App 和 DMG：Xcode Command Line Tools、Rust 1.88 或更高版本，以及 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` target。`npm install` 会安装本项目使用的 Tauri CLI。
 
 ## 本地运行
 
@@ -90,15 +91,26 @@ CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
 
 该命令会在需要时启动本地 Taskboard 服务，使用独立配置文件和仅限回环访问的端口 `9231` 启动官方 macOS Codex App，等待主渲染器和侧边栏，在 Plugins 后注入一个原生外观的 Taskboard 入口，并持续监视服务和替换后的渲染器。现有 Codex 窗口不会变化。使用嵌入式面板时，请让该命令保持运行。启动器不会修改 `ChatGPT.app` 或其 `app.asar`。
 
+源码启动器会把带身份信息的服务地址写入 `.data/launcher-runtime.json`。通过 `npm link` 安装的 `taskctl` 默认读取此文件。因此，普通 shell 和从面板打开的 Codex 任务无需设置额外环境变量，即可使用同一个 Taskboard 服务。
+
 ### macOS App：无需终端即可打开和注入
 
-构建一次本地启动器：
+如需进行 Tauri 开发，请运行：
 
 ```bash
-npm run app:codex
+npm run app:dev
 ```
 
-然后从 Finder 打开 `dist/macos/Codex Taskboard.app`。该 App 包含自己的 Node 运行时、Taskboard 服务、构建后的 Web UI、Skill、CLI 包装器和注入脚本。它会启动服务，启动官方 Codex App，等待渲染器，注入侧边栏入口，并在不显示终端窗口的情况下打开面板。该 App 可以复制到本检出目录之外；目标 Mac 只需安装官方 Codex App，不需要此仓库、系统 Node 安装或单独的 Codex CLI 安装。Taskboard 数据存储在 `~/Library/Application Support/Codex Taskboard`，启动器输出写入 `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`。
+如需构建本地 App 和 DMG，请先安装两个 Rust target，然后运行构建：
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run app:build
+```
+
+从 Finder 打开 `src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app`。DMG 位于 `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`。如果只需安装稳定版，请从 [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest) 下载当前 DMG。
+
+该 App 包含自己的 Node 运行时、Taskboard 服务、构建后的 Web UI、Skill、CLI 包装器和注入脚本。它会启动服务，启动官方 Codex App，等待渲染器，注入侧边栏入口，并在不显示终端窗口的情况下打开面板。该 App 可以复制到本检出目录之外；目标 Mac 只需安装官方 Codex App，不需要此仓库、系统 Node 安装或单独的 Codex CLI 安装。Taskboard 数据存储在 `~/Library/Application Support/Codex Taskboard`，启动器输出写入 `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`。
 
 本地构建使用 ad-hoc 代码签名进行直接验证。公开的 macOS 下载仍需要 Developer ID 签名和 Apple 公证。
 
