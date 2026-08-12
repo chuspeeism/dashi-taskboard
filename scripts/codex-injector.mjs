@@ -764,10 +764,10 @@ async function openExternalUrl(request) {
 
 async function openAttachment(request) {
   const response = await fetch(
-    `${taskboardBaseUrl}/api/attachments/${encodeURIComponent(request.attachmentId)}/download`,
+    `${taskboardBaseUrl}/api/attachments/${encodeURIComponent(request.attachmentId)}/content`,
     { cache: "no-store" },
   );
-  if (!response.ok) throw new Error(`Attachment download returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Attachment content returned HTTP ${response.status}`);
   const directory = path.join(
     taskboardDataDirectory,
     "opened-attachments",
