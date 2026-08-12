@@ -16,6 +16,8 @@ interface LabelPickerProps {
   triggerContent?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onChange: (labels: string[]) => void;
+  onCreateLabel: (label: string) => Promise<void>;
+  onDeleteLabel?: (label: string) => Promise<void>;
 }
 
 export function LabelPicker({
@@ -31,12 +33,15 @@ export function LabelPicker({
   triggerContent,
   onOpenChange,
   onChange,
+  onCreateLabel,
+  onDeleteLabel,
 }: LabelPickerProps) {
   const { language, text } = useTaskboardI18n();
   const resolvedPlaceholder = placeholder ?? text("标签", "Labels");
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [search, setSearch] = useState("");
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const normalizedSearch = search.trim();
   const filteredLabels = availableLabels.filter((label) => (
     !normalizedSearch
@@ -74,10 +79,36 @@ export function LabelPicker({
   }, [onOpenChange, open]);
 
   function toggleLabel(label: string) {
-    if (disabled) return;
+    if (disabled || pendingLabel) return;
     onChange(selectedLabels.includes(label)
       ? selectedLabels.filter((item) => item !== label)
       : [...selectedLabels, label]);
+  }
+
+  async function createLabel() {
+    const label = normalizedSearch;
+    setPendingLabel(label);
+    try {
+      await onCreateLabel(label);
+      onChange(selectedLabels.includes(label) ? selectedLabels : [...selectedLabels, label]);
+      setSearch("");
+    } catch {
+      // The caller reports API errors in the shared action banner.
+    } finally {
+      setPendingLabel(null);
+    }
+  }
+
+  async function deleteLabel(label: string) {
+    if (!onDeleteLabel) return;
+    setPendingLabel(label);
+    try {
+      await onDeleteLabel(label);
+    } catch {
+      // The caller reports API errors in the shared action banner.
+    } finally {
+      setPendingLabel(null);
+    }
   }
 
   return (
@@ -126,28 +157,38 @@ export function LabelPicker({
             {filteredLabels.map((label) => {
               const presentation = labelPresentation(label, language);
               return (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selectedLabels.includes(label)}
-                  disabled={disabled}
-                  key={label}
-                  onClick={() => toggleLabel(label)}
-                >
-                  <i style={{ background: presentation.tone ? presentation.color : "transparent" }} />
-                  <span>{presentation.name}</span>
-                  {selectedLabels.includes(label) && <b><LinearIcon name="check" /></b>}
-                </button>
+                <div className="label-option-row" role="presentation" key={label}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selectedLabels.includes(label)}
+                    disabled={disabled || pendingLabel !== null}
+                    onClick={() => toggleLabel(label)}
+                  >
+                    <i style={{ background: presentation.tone ? presentation.color : "transparent" }} />
+                    <span>{presentation.name}</span>
+                    {selectedLabels.includes(label) && <b><LinearIcon name="check" /></b>}
+                  </button>
+                  {onDeleteLabel && (
+                    <button
+                      type="button"
+                      className="label-delete-button"
+                      disabled={disabled || pendingLabel !== null}
+                      aria-label={text(`删除标签 ${presentation.name}`, `Delete label ${presentation.name}`)}
+                      title={text("删除标签", "Delete label")}
+                      onClick={() => void deleteLabel(label)}
+                    >
+                      <LinearIcon name="trash" />
+                    </button>
+                  )}
+                </div>
               );
             })}
             {canCreateLabel && (
               <button
                 type="button"
-                disabled={disabled}
-                onClick={() => {
-                  toggleLabel(normalizedSearch);
-                  setSearch("");
-                }}
+                disabled={disabled || pendingLabel !== null}
+                onClick={() => void createLabel()}
               >
                 <i style={{
                   background: labelPresentation(normalizedSearch, language).tone

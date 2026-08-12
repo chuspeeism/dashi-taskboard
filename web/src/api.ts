@@ -334,6 +334,28 @@ export async function createProject(input: {
   return data.project;
 }
 
+export async function createProjectLabel(projectId: string, label: string): Promise<Project> {
+  const data = await request<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels`,
+    {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    },
+  );
+  return data.project;
+}
+
+export async function deleteProjectLabel(projectId: string, label: string): Promise<Project> {
+  const data = await request<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ label }),
+    },
+  );
+  return data.project;
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   await request(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE",

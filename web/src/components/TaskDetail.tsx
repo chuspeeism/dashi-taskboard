@@ -89,6 +89,8 @@ interface TaskDetailProps {
   developmentScanLoading: boolean;
   commentsRevision: number;
   attachmentsRevision: number;
+  onCreateLabel: (label: string) => Promise<void>;
+  onDeleteLabel: (label: string) => Promise<void>;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
   onOpenTask: (task: TaskRelationSummary) => void;
   onAddRelation: (
@@ -342,6 +344,8 @@ export function TaskDetail({
   developmentScanLoading,
   commentsRevision,
   attachmentsRevision,
+  onCreateLabel,
+  onDeleteLabel,
   onUpdate,
   onOpenTask,
   onAddRelation,
@@ -1485,6 +1489,8 @@ export function TaskDetail({
                 placeholder={text("添加标签…", "Add labels…")}
                 onOpenChange={(open) => setPropertyMenu(open ? "labels" : null)}
                 onChange={(nextLabels) => void saveTask({ labels: nextLabels }, "labels")}
+                onCreateLabel={onCreateLabel}
+                onDeleteLabel={onDeleteLabel}
               />
             </div>
             <label className="detail-property-row development-property">

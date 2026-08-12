@@ -176,6 +176,7 @@ export interface Project {
   id: string;
   name: string;
   workspacePath: string | null;
+  labels: string[];
   issueCount: number;
   createdAt: string;
   updatedAt: string;

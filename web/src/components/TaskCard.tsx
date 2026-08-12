@@ -36,6 +36,7 @@ interface TaskCardProps {
   isContextMenuOpen: boolean;
   availableLabels: string[];
   currentUser: ActorIdentity;
+  onCreateLabel: (label: string) => Promise<void>;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
   onComplete?: (task: Task) => void;
@@ -349,6 +350,7 @@ export function TaskCard({
   isContextMenuOpen,
   availableLabels,
   currentUser,
+  onCreateLabel,
   onEdit,
   onUpdate,
   onComplete,
@@ -478,6 +480,7 @@ export function TaskCard({
               triggerContent={<TaskLabels task={task} />}
               onOpenChange={(open) => setPropertyMenu(open ? "labels" : null)}
               onChange={(labels) => updateProperty({ labels }, "labels")}
+              onCreateLabel={onCreateLabel}
             />
           )}
           <DueDateControl

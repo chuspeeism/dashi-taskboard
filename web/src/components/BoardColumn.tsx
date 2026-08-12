@@ -77,6 +77,7 @@ interface BoardColumnProps {
   contextMenuTaskId: string | null;
   availableLabels: string[];
   currentUser: ActorIdentity;
+  onCreateLabel: (label: string) => Promise<void>;
   onCreate: (status: TaskStatus) => void;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
@@ -104,6 +105,7 @@ export function BoardColumn({
   contextMenuTaskId,
   availableLabels,
   currentUser,
+  onCreateLabel,
   onCreate,
   onEdit,
   onUpdate,
@@ -214,6 +216,7 @@ export function BoardColumn({
               isContextMenuOpen={contextMenuTaskId === task.id}
               availableLabels={availableLabels}
               currentUser={currentUser}
+              onCreateLabel={onCreateLabel}
               onEdit={onEdit}
               onUpdate={onUpdate}
               onComplete={onComplete}

@@ -1,7 +1,9 @@
 import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mjs";
+import { DEFAULT_LABEL_NAMES } from "../../shared/domain.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
+const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TASK_STATUSES = [
   "backlog",
@@ -467,6 +469,7 @@ function projectFromRow(row) {
     id: row.id,
     name: row.name,
     workspacePath: null,
+    labels: JSON.parse(row.labels),
     issueCount: Number(row.issue_count ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -919,6 +922,12 @@ function parseProjectCreate(body) {
   return { id, name };
 }
 
+function parseProjectLabel(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["label"]));
+  return stringField(body.label, "label", { required: true, maxLength: 64 });
+}
+
 function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
@@ -1199,6 +1208,7 @@ async function listProjects(env) {
       projects.id,
       projects.name,
       projects.workspace_path,
+      projects.labels,
       projects.created_at,
       projects.updated_at,
       COUNT(tasks.id) AS issue_count
@@ -1210,6 +1220,7 @@ async function listProjects(env) {
       projects.id,
       projects.name,
       projects.workspace_path,
+      projects.labels,
       projects.created_at,
       projects.updated_at
     ORDER BY projects.created_at, projects.id
@@ -1223,6 +1234,7 @@ async function getProject(env, id) {
       projects.id,
       projects.name,
       projects.workspace_path,
+      projects.labels,
       projects.created_at,
       projects.updated_at,
       COUNT(tasks.id) AS issue_count
@@ -1235,6 +1247,7 @@ async function getProject(env, id) {
       projects.id,
       projects.name,
       projects.workspace_path,
+      projects.labels,
       projects.created_at,
       projects.updated_at
   `).bind(id).first();
@@ -1246,9 +1259,9 @@ async function createProject(env, input) {
   try {
     await env.DB.prepare(`
       INSERT INTO projects (
-        id, name, workspace_path, next_task_number, created_at, updated_at
-      ) VALUES (?, ?, NULL, 1, ?, ?)
-    `).bind(input.id, input.name, timestamp, timestamp).run();
+        id, name, workspace_path, labels, next_task_number, created_at, updated_at
+      ) VALUES (?, ?, NULL, ?, 1, ?, ?)
+    `).bind(input.id, input.name, DEFAULT_PROJECT_LABELS_JSON, timestamp, timestamp).run();
   } catch (error) {
     if (String(error.message).includes("UNIQUE constraint failed")) {
       throw new ApiError(409, "PROJECT_EXISTS", `Project '${input.id}' already exists`);
@@ -1256,6 +1269,56 @@ async function createProject(env, input) {
     throw error;
   }
   return getProject(env, input.id);
+}
+
+async function addProjectLabel(env, projectId, label) {
+  await requireProject(env, projectId);
+  await env.DB.prepare(`
+    UPDATE projects
+    SET labels = json_insert(labels, '$[#]', ?), updated_at = ?
+    WHERE id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(projects.labels) WHERE value = ?
+      )
+  `).bind(label, now(), projectId, label).run();
+  return getProject(env, projectId);
+}
+
+async function deleteProjectLabel(env, projectId, label) {
+  await requireProject(env, projectId);
+  const timestamp = now();
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE projects
+      SET
+        labels = (
+          SELECT COALESCE(json_group_array(value), '[]')
+          FROM json_each(projects.labels)
+          WHERE value != ?
+        ),
+        updated_at = ?
+      WHERE id = ?
+        AND EXISTS (
+          SELECT 1 FROM json_each(projects.labels) WHERE value = ?
+        )
+    `).bind(label, timestamp, projectId, label),
+    env.DB.prepare(`
+      UPDATE tasks
+      SET
+        labels = (
+          SELECT COALESCE(json_group_array(value), '[]')
+          FROM json_each(tasks.labels)
+          WHERE value != ?
+        ),
+        version = version + 1,
+        updated_at = ?
+      WHERE project_id = ?
+        AND EXISTS (
+          SELECT 1 FROM json_each(tasks.labels) WHERE value = ?
+        )
+    `).bind(label, timestamp, projectId, label),
+  ]);
+  return getProject(env, projectId);
 }
 
 async function deleteProject(env, id) {
@@ -1426,9 +1489,40 @@ async function createTask(env, input, actor) {
           FROM tasks
           WHERE id = ?
         ),
+        labels = (
+          SELECT json_group_array(value)
+          FROM (
+            SELECT value
+            FROM (
+              SELECT
+                value,
+                source_order,
+                label_order,
+                ROW_NUMBER() OVER (
+                  PARTITION BY value
+                  ORDER BY source_order, label_order
+                ) AS occurrence_rank
+              FROM (
+                SELECT value, 0 AS source_order, key AS label_order
+                FROM json_each(projects.labels)
+                UNION ALL
+                SELECT value, 1 AS source_order, key AS label_order
+                FROM json_each(?)
+              )
+            )
+            WHERE occurrence_rank = 1
+            ORDER BY source_order, label_order
+          )
+        ),
         updated_at = ?
       WHERE id = ?
-    `).bind(suffixStart, id, timestamp, input.projectId),
+    `).bind(
+      suffixStart,
+      id,
+      JSON.stringify(input.labels),
+      timestamp,
+      input.projectId,
+    ),
   ]);
   if (!changed(results[0]) || !changed(results[1])) {
     throw new ApiError(
@@ -1448,6 +1542,10 @@ async function updateTask(env, id, input, actor) {
     ? await requireProject(env, input.changes.projectId)
     : null;
   const projectChanged = Boolean(targetProject && targetProject.id !== currentTask.projectId);
+  const destinationProjectId = targetProject?.id ?? currentTask.projectId;
+  const taskLabels = Object.hasOwn(input.changes, "labels")
+    ? input.changes.labels
+    : currentTask.labels;
   if (projectChanged) {
     const relation = await env.DB.prepare(`
       SELECT 1
@@ -1564,6 +1662,59 @@ async function updateTask(env, id, input, actor) {
       current.id,
       input.version + 1,
       timestamp,
+    ));
+  }
+  if (taskLabels.length > 0) {
+    statements.push(env.DB.prepare(`
+      UPDATE projects
+      SET
+        labels = (
+          SELECT json_group_array(value)
+          FROM (
+            SELECT value
+            FROM (
+              SELECT
+                value,
+                source_order,
+                label_order,
+                ROW_NUMBER() OVER (
+                  PARTITION BY value
+                  ORDER BY source_order, label_order
+                ) AS occurrence_rank
+              FROM (
+                SELECT value, 0 AS source_order, key AS label_order
+                FROM json_each(projects.labels)
+                UNION ALL
+                SELECT value, 1 AS source_order, key AS label_order
+                FROM json_each(?)
+              )
+            )
+            WHERE occurrence_rank = 1
+            ORDER BY source_order, label_order
+          )
+        ),
+        updated_at = ?
+      WHERE id = ?
+        AND EXISTS (
+          SELECT 1 FROM tasks WHERE id = ? AND version = ? AND updated_at = ?
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(?) AS task_labels
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM json_each(projects.labels) AS project_labels
+            WHERE project_labels.value = task_labels.value
+          )
+        )
+    `).bind(
+      JSON.stringify(taskLabels),
+      timestamp,
+      destinationProjectId,
+      current.id,
+      input.version + 1,
+      timestamp,
+      JSON.stringify(taskLabels),
     ));
   }
   const results = await env.DB.batch(statements);
@@ -2423,6 +2574,22 @@ async function routeApi(request, env, actor, url) {
     if (request.method !== "DELETE") methodNotAllowed(["DELETE"]);
     await deleteProject(env, projectId);
     return empty(204);
+  }
+
+  const projectLabelsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/labels$/);
+  if (projectLabelsMatch) {
+    requireNoQuery(url, "Project label routes");
+    const projectId = validateProjectId(
+      decodePathPart(projectLabelsMatch[1], "Project id"),
+    );
+    if (request.method !== "POST" && request.method !== "DELETE") {
+      methodNotAllowed(["POST", "DELETE"]);
+    }
+    const label = parseProjectLabel(await readJson(request));
+    const project = request.method === "POST"
+      ? await addProjectLabel(env, projectId, label)
+      : await deleteProjectLabel(env, projectId, label);
+    return json(200, { project });
   }
 
   const workflowMatch = pathname.match(
