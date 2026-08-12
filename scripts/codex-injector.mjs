@@ -1674,7 +1674,7 @@ async function main() {
 
   let codexProcess = null;
   let managedCodex = null;
-  let managedCodexLaunchPromise = null;
+  let pendingCodexLaunch = null;
   let cdpRuntime = null;
   let runtimePublishPromise = null;
   const injectedTargets = new Map();
@@ -1755,9 +1755,19 @@ async function main() {
   const startManagedCodex = async () => {
     if (stopping) return;
     if (options.cdpPipe) {
-      const launched = await launchCodexWithPipe(options.appPath);
-      codexProcess = launched.child;
-      cdpRuntime = pipeCdpRuntime(launched.browser);
+      const launchPromise = (async () => {
+        const launched = await launchCodexWithPipe(options.appPath);
+        codexProcess = launched.child;
+        cdpRuntime = pipeCdpRuntime(launched.browser);
+      })();
+      pendingCodexLaunch = launchPromise;
+      try {
+        await launchPromise;
+      } catch (error) {
+        if (!stopping) throw error;
+      } finally {
+        if (pendingCodexLaunch === launchPromise) pendingCodexLaunch = null;
+      }
       return;
     }
     const launchPromise = launchCodexWithLaunchServices(
@@ -1765,13 +1775,13 @@ async function main() {
       options.port,
       () => stopping,
     );
-    managedCodexLaunchPromise = launchPromise;
+    pendingCodexLaunch = launchPromise;
     try {
       managedCodex = await launchPromise;
     } catch (error) {
       if (!stopping) throw error;
     } finally {
-      if (managedCodexLaunchPromise === launchPromise) managedCodexLaunchPromise = null;
+      if (pendingCodexLaunch === launchPromise) pendingCodexLaunch = null;
     }
     if (stopping) return;
     try {
@@ -1806,11 +1816,13 @@ async function main() {
       })();
       supervisorCleanupPromise.catch(() => {});
       runtimeCleanupPromise.catch(() => {});
-      const pendingManagedCodexLaunch = managedCodexLaunchPromise;
-      if (pendingManagedCodexLaunch) {
+      const launchPromise = pendingCodexLaunch;
+      if (launchPromise) {
         try {
-          await pendingManagedCodexLaunch;
+          await launchPromise;
         } catch (_) {}
+        cdpRuntime?.close();
+        cdpRuntime = null;
       }
       const launchedCodex = codexProcess;
       let launchedManagedCodex = managedCodex;
