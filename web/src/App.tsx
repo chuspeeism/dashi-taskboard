@@ -1481,6 +1481,7 @@ export function App() {
   const refreshProjectList = useCallback(async () => {
     try {
       setProjects(await listProjects());
+      setLoadError(null);
     } catch (error) {
       setLoadError(errorMessage(error));
     }
@@ -1502,6 +1503,7 @@ export function App() {
       setTasks(sortTasks(nextTasks));
       setArchivedTasks(sortTasks(nextArchivedTasks));
       setHasLoadedTasks(true);
+      setLoadError(null);
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === tasksRequestRef.current) {
         setLoadError(errorMessage(error));

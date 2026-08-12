@@ -78,20 +78,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
+  const readRequest = method === "GET" || method === "HEAD";
   let response: Response;
-  try {
-    response = await fetch(resolveTaskboardUrl(path), { ...init, headers });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new ApiError(0, {
-      error: {
-        code: "SERVICE_UNAVAILABLE",
-        message: apiText(
-          "无法连接本地 Taskboard 服务，请重新通过 Taskboard 启动 Codex。",
-          "Could not connect to the local Taskboard service. Start Codex from Taskboard again.",
-        ),
-      },
-    });
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await fetch(resolveTaskboardUrl(path), { ...init, headers });
+      break;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      if (readRequest && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        continue;
+      }
+      const failure = error instanceof Error && error.name === "TimeoutError"
+        ? "timeout"
+        : error instanceof TypeError
+          ? "browser-network"
+          : "network";
+      throw new ApiError(0, {
+        error: {
+          code: readRequest ? "READ_FAILED" : "SERVICE_UNAVAILABLE",
+          message: readRequest
+            ? apiText(
+                "暂时无法读取 Taskboard 数据。面板会自动重试，请稍后再试。",
+                "Taskboard data is temporarily unavailable. The panel will retry automatically.",
+              )
+            : apiText(
+                "暂时无法连接 Taskboard 服务，请稍后重试。",
+                "The Taskboard service is temporarily unavailable. Try again later.",
+              ),
+          details: { method, failure },
+        },
+      });
+    }
   }
   let body: T & ApiErrorBody;
   try {

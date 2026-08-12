@@ -1126,11 +1126,12 @@ fn main() {
             let Some(state) = app_handle.try_state::<Arc<LauncherState>>() else {
                 return;
             };
-            if let Err(error) = restart_launcher(app_handle, &state) {
-                append_log(&state, &format!("Launcher reopen failed: {error}"));
+            let result = start_launcher(app_handle, &state).and_then(|_| open_taskboard(&state));
+            if let Err(error) = result {
+                append_log(&state, &format!("Launcher panel reopen failed: {error}"));
                 show_error_dialog(
                     app_handle,
-                    "Codex Taskboard 启动失败",
+                    "Codex Taskboard 打开失败",
                     &format!("{error}\n\n请确认官方 Codex/ChatGPT App 已安装。"),
                 );
             }

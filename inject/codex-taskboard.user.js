@@ -1118,7 +1118,7 @@
     text.textContent = hostErrorText(loadError);
     const retry = document.createElement("button");
     retry.type = "button";
-    retry.textContent = hostText("重新启动", "Restart");
+    retry.textContent = hostText("重新加载面板", "Reload panel");
     retry.addEventListener("click", openTaskboard, { once: true });
     content.append(text, retry);
     status.replaceChildren(content);
