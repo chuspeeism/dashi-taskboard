@@ -295,9 +295,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --draft \
             --title "Codex Taskboard $RELEASE_TAG" \
-            --notes "Codex Taskboard 是本地优先的任务面板，与 Codex 深度集成。它也提供 Web UI、taskctl CLI 和 Skill，用于管理任务、评论、附件、对话与 Worktree。
-
-          产品支持中文和英文界面，并提供 Dashboard、List、Gantt、自动化和 AI Chat，帮助你在同一工作区查看进度、组织工作并协同执行。" \
+            --generate-notes \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
