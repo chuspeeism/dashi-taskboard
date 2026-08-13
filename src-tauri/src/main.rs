@@ -33,7 +33,7 @@ use uuid::Uuid;
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(target_os = "macos")]
 const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 #[cfg(target_os = "macos")]
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
