@@ -333,23 +333,39 @@ function DescriptionDocument({ value }: { value: string }) {
 function ConversationLink({
   threadId,
   onOpen,
+  onCopy,
 }: {
   threadId: string;
   onOpen: (threadId: string) => void;
+  onCopy: (text: string, announcement: string) => void;
 }) {
   const { text } = useTaskboardI18n();
   return (
-    <button
-      className="issue-conversation-link"
-      type="button"
-      title={text(`查看对话 ${threadId}`, `View conversation ${threadId}`)}
-      onClick={() => onOpen(threadId)}
-    >
-      <TaskboardIcon name="conversation" />
-      <strong>{text("查看对话", "View conversation")}</strong>
-      <span className="conversation-divider" aria-hidden="true" />
-      <span className="conversation-thread-id">{threadId}</span>
-    </button>
+    <div className="issue-conversation-actions">
+      <button
+        className="issue-conversation-link"
+        type="button"
+        title={text(`查看对话 ${threadId}`, `View conversation ${threadId}`)}
+        onClick={() => onOpen(threadId)}
+      >
+        <TaskboardIcon name="conversation" />
+        <strong>{text("查看对话", "View conversation")}</strong>
+        <span className="conversation-divider" aria-hidden="true" />
+        <span className="conversation-thread-id">{threadId}</span>
+      </button>
+      <button
+        className="issue-conversation-copy"
+        type="button"
+        title={text("复制 Codex 恢复命令", "Copy Codex resume command")}
+        onClick={() => onCopy(
+          `codex resume ${threadId}`,
+          text("Codex 恢复命令已复制。", "Codex resume command copied."),
+        )}
+      >
+        <LinearIcon name="copy" />
+        <span>{text("复制命令", "Copy command")}</span>
+      </button>
+    </div>
   );
 }
 
@@ -944,7 +960,11 @@ export function TaskDetail({
                     className="issue-conversation-list"
                     aria-label={text("处理此议题的对话", "Conversations for this issue")}
                   >
-                    <ConversationLink threadId={currentTask.threadId} onOpen={onOpenThread} />
+                    <ConversationLink
+                      threadId={currentTask.threadId}
+                      onOpen={onOpenThread}
+                      onCopy={onCopy}
+                    />
                   </div>
                 )}
               </div>
@@ -1308,7 +1328,11 @@ export function TaskDetail({
                       )}
                       {comment.threadId && (
                         <div className="comment-conversation-link">
-                          <ConversationLink threadId={comment.threadId} onOpen={onOpenThread} />
+                          <ConversationLink
+                            threadId={comment.threadId}
+                            onOpen={onOpenThread}
+                            onCopy={onCopy}
+                          />
                         </div>
                       )}
                     </div>

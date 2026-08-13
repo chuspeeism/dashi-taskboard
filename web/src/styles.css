@@ -2780,10 +2780,19 @@ kbd {
   margin-top: 18px;
 }
 
+.issue-conversation-actions {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 6px;
+}
+
 .issue-conversation-link {
   display: inline-flex;
   align-items: center;
+  flex: 1 1 auto;
   max-width: 100%;
+  min-width: 0;
   min-height: 36px;
   gap: 8px;
   padding: 0 11px;
@@ -2817,6 +2826,38 @@ kbd {
   flex: 0 0 auto;
   font-size: 11px;
   font-weight: 600;
+}
+
+.issue-conversation-copy {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 36px;
+  gap: 6px;
+  padding: 0 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  transition: border-color 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.issue-conversation-copy:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.issue-conversation-copy:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.issue-conversation-copy > svg {
+  width: 14px;
+  height: 14px;
 }
 
 .conversation-divider {
@@ -8757,6 +8798,10 @@ kbd {
   }
 
   .issue-conversation-link {
+    width: 100%;
+  }
+
+  .issue-conversation-actions {
     width: 100%;
   }
 
