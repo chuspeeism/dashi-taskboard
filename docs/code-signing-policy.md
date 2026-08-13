@@ -1,15 +1,26 @@
 # Code signing policy
 
-Codex Taskboard does not sign the Windows artifacts produced by the current
-continuous-integration workflow. A future public Windows release can use
-SignPath Foundation only after the project has completed its application and
-the signing service has approved it.
+For official Windows releases after the application is approved: **Free code
+signing provided by [SignPath.io](https://signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).** Current Windows
+continuous-integration artifacts remain unsigned until that approval.
 
 ## Scope
 
 This policy applies to official Windows executables and installers published
 by the Codex Taskboard project. Development builds, pull-request artifacts,
 and local builds are not signed.
+
+## Team roles
+
+- Authors and committers: [@jadon7](https://github.com/jadon7) and
+  [@chuspeeism](https://github.com/chuspeeism).
+- Reviewers: [@jadon7](https://github.com/jadon7) and
+  [@chuspeeism](https://github.com/chuspeeism). Changes from other
+  contributors are reviewed through pull requests before merge.
+- Approver: repository owner
+  [@chuspeeism](https://github.com/chuspeeism). Every signing request requires
+  manual approval.
 
 ## Build and approval
 
@@ -22,6 +33,11 @@ and local builds are not signed.
 - Signing roles must use individual accounts with multi-factor authentication.
   Signing credentials must not be stored in the repository or workflow logs.
 - A signed artifact must be published without modification after signing.
+
+## Privacy
+
+Codex Taskboard's data handling and network activity are documented in the
+[Privacy policy](../PRIVACY.md).
 
 ## Incident response
 
