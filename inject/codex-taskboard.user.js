@@ -948,8 +948,8 @@
         type: "taskboard:attachment-open-error",
         payload: {
           error: hostText(
-            "无法用系统默认应用打开附件，请重试。",
-            "Could not open the attachment in its default app. Try again.",
+            "无法在 Finder 中显示附件，请重试。",
+            "Could not reveal the attachment in Finder. Try again.",
           ),
         },
       });

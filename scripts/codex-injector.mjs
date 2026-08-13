@@ -869,6 +869,24 @@ async function openWithDefaultApplication(target) {
   });
 }
 
+async function revealAttachmentInFinder(attachmentPath, directory) {
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn("/usr/bin/open", ["-R", attachmentPath], {
+        env: withoutTaskboardLauncherEnvironment(process.env),
+        stdio: "ignore",
+      });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error("Finder could not reveal the attachment"));
+      });
+    });
+  } catch {
+    await openWithDefaultApplication(directory);
+  }
+}
+
 async function openExternalUrl(request) {
   await openWithDefaultApplication(request.url);
   return { opened: true };
@@ -888,7 +906,7 @@ async function openAttachment(request) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const attachmentPath = path.join(directory, request.filename);
   await writeFile(attachmentPath, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
-  await openWithDefaultApplication(attachmentPath);
+  await revealAttachmentInFinder(attachmentPath, directory);
   return { opened: true };
 }
 
