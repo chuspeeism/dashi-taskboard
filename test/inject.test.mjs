@@ -122,7 +122,9 @@ test("opening asks the resident launcher to ensure the service and rebuilds fail
   assert.match(source, /const HOST_REQUEST_MESSAGE = "__codexTaskboardHostRequestV1"/);
   assert.match(source, /return requestHost\("ensure"\)/);
   assert.match(source, /result\.restarted/);
-  assert.match(source, /loadTaskboardFrame\(\)/);
+  assert.match(source, /const FRAME_LOAD_ATTEMPTS = 2/);
+  assert.match(source, /async function loadTaskboardFrameUntilReady\(cacheBust = false\)/);
+  assert.match(source, /await loadTaskboardFrameUntilReady\(\)/);
   assert.match(source, /waitForFrameReady\(\)/);
   assert.match(source, /function onHostBridgeMessage/);
   assert.match(source, /function hasLiveHostBinding/);
@@ -132,7 +134,7 @@ test("opening asks the resident launcher to ensure the service and rebuilds fail
 test("the injected iframe can be cache-busted without reloading the Codex shell", () => {
   assert.match(source, /const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh"/);
   assert.match(source, /function reloadFrame\(\)/);
-  assert.match(source, /loadTaskboardFrame\(true\)/);
+  assert.match(source, /loadTaskboardFrameUntilReady\(true\)/);
   assert.match(source, /reloadFrame,/);
 });
 
