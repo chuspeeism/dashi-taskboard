@@ -315,9 +315,9 @@ export function normalizeCodexEvent(raw) {
     return {
       kind: "event",
       type: raw.type,
-      role: "error",
+      role: "activity",
       content: errorMessage(raw.message ?? raw.error),
-      data: { status: "failed" },
+      data: { status: "warning" },
     };
   }
 

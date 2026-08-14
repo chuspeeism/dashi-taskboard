@@ -369,6 +369,39 @@ test("protocol terminal events determine run success and item errors remain non-
   }
 });
 
+test("a root Codex error remains the run diagnostic when completion never arrives", async () => {
+  const fixture = await createFixture();
+  try {
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, { message: "ROOT_ERROR_ZERO" });
+    await waitFor(() => fixture.service.getRun(run.id)?.status !== "running");
+
+    const finished = fixture.service.getRun(run.id);
+    assert.equal(finished.status, "failed");
+    assert.equal(finished.error, "Protocol root error");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a root Codex error preceding completion is recorded as a warning", async () => {
+  const fixture = await createFixture();
+  try {
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, { message: "WARNING_THEN_COMPLETED" });
+    await waitFor(() => fixture.service.getRun(run.id)?.status !== "running");
+
+    const warning = fixture.service.getThreadSnapshot(thread.id).events.find(
+      (event) => event.type === "error" && event.content === "Skill descriptions were shortened",
+    );
+    assert.equal(fixture.service.getRun(run.id).status, "completed");
+    assert.equal(warning?.role, "activity");
+    assert.equal(warning?.data.status, "warning");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("a Codex command event slightly over one MiB completes and keeps only bounded output", async () => {
   const fixture = await createFixture();
   try {

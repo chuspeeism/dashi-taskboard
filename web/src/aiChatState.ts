@@ -187,7 +187,7 @@ export function filterVisibleAiEvents<
 export function aiChatEventStatus(
   event: Pick<AiChatEvent, "role" | "type" | "data">,
 ): "running" | "completed" | "failed" {
-  if (event.role === "error" || event.type === "error" || event.type === "turn.failed") {
+  if (event.role === "error" || event.type === "turn.failed") {
     return "failed";
   }
   const status = event.data?.status;

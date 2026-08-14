@@ -224,6 +224,13 @@ test("activity status treats started, running and in_progress as active and fail
     content: "",
     data: { status: "completed" },
   }), "completed");
+  assert.equal(aiChatEventStatus({
+    id: "5",
+    type: "error",
+    role: "activity",
+    content: "Skill descriptions were shortened",
+    data: { status: "warning" },
+  }), "completed");
 });
 
 test("snapshot hint refreshes allow one in-flight request and one queued request", async () => {

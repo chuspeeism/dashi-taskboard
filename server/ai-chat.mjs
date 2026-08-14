@@ -291,6 +291,7 @@ export class AiChatService {
       let startedThreadId = null;
       let terminalOutcome = null;
       let terminalError = "";
+      let pendingError = "";
       const { child, completion } = spawnCodexTurn({
         executable: this.codexExecutable,
         args,
@@ -323,6 +324,8 @@ export class AiChatService {
           } else if (raw.type === "turn.failed") {
             terminalOutcome = "failed";
             terminalError ||= normalized.content;
+          } else if (raw.type === "error") {
+            pendingError ||= normalized.content;
           }
           this.#emit(threadId, { type: "ai.event", event });
         },
@@ -339,6 +342,7 @@ export class AiChatService {
           startedThreadId: () => startedThreadId,
           terminalOutcome: () => terminalOutcome,
           terminalError: () => terminalError,
+          pendingError: () => pendingError,
         }),
         (error) => this.#finishRun({
           run,
@@ -348,6 +352,7 @@ export class AiChatService {
           startedThreadId: () => startedThreadId,
           terminalOutcome: () => terminalOutcome,
           terminalError: () => terminalError,
+          pendingError: () => pendingError,
         }),
       );
       this.completions.set(run.id, finalization);
@@ -519,6 +524,7 @@ export class AiChatService {
     startedThreadId,
     terminalOutcome,
     terminalError,
+    pendingError,
   }) {
     let status;
     let publicError = null;
@@ -538,7 +544,7 @@ export class AiChatService {
         : `Codex exited with code ${result.exitCode}`;
     } else if (terminalOutcome() !== "completed") {
       status = "failed";
-      publicError = "Codex exited without reporting turn completion";
+      publicError = pendingError() || "Codex exited without reporting turn completion";
     } else if (!resumingThreadId && !startedThreadId()) {
       status = "failed";
       publicError = "Codex did not provide a thread id";
