@@ -147,6 +147,7 @@ function parseArgs(argv) {
   if (options.cdpPipe && !options.launch) {
     throw new Error("--cdp-pipe requires --launch");
   }
+  if (options.launch) options.attachExisting = true;
   return options;
 }
 

@@ -24,6 +24,7 @@
   const HOST_CAPABILITY = window.__CODEX_TASKBOARD_HOST_CAPABILITY__;
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
+  const FRAME_LOAD_ATTEMPTS = 2;
   const HOST_REQUEST_TIMEOUT_MS = 12_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
@@ -261,14 +262,17 @@
   function findReferenceButton() {
     const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
     if (!scroll) return null;
-    const buttons = Array.from(scroll.querySelectorAll("button"));
-    const plugin = buttons.find((button) => buttonMatches(button, PLUGIN_LABELS));
-    if (plugin && plugin.parentElement) {
-      const siblings = Array.from(plugin.parentElement.children).filter((child) => child.tagName === "BUTTON");
-      if (siblings.length >= 3) return plugin;
-    }
-
     const firstSection = scroll.querySelector("[data-app-action-sidebar-section]");
+    const buttons = Array.from(scroll.querySelectorAll("button"));
+    const nativeActionButtons = firstSection
+      ? buttons.filter((button) => (
+        !firstSection.contains(button)
+        && (button.compareDocumentPosition(firstSection) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      ))
+      : buttons;
+    const plugin = nativeActionButtons.find((button) => buttonMatches(button, PLUGIN_LABELS));
+    if (plugin?.parentElement) return plugin;
+
     const sectionTop = firstSection?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
     const groups = Array.from(scroll.querySelectorAll("div")).filter((element) => {
       const directButtons = Array.from(element.children).filter((child) => child.tagName === "BUTTON");
@@ -1289,13 +1293,29 @@
     return { frameName, frameCapability };
   }
 
+  async function loadTaskboardFrameUntilReady(cacheBust = false) {
+    let lastError = null;
+    for (let attempt = 0; attempt < FRAME_LOAD_ATTEMPTS; attempt += 1) {
+      const frameRequest = loadTaskboardFrame(cacheBust || attempt > 0);
+      try {
+        await requestHostLoadFrame(frameRequest);
+        await waitForFrameReady();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError ?? hostError(
+      "任务面板页面加载失败",
+      "Taskboard page failed to load",
+    );
+  }
+
   function reloadFrame() {
     if (!frame) return false;
     const generation = ++openGeneration;
     if (active) showLoading();
-    const frameRequest = loadTaskboardFrame(true);
-    void requestHostLoadFrame(frameRequest)
-      .then(() => waitForFrameReady())
+    void loadTaskboardFrameUntilReady(true)
       .then(() => {
           if (!active || generation !== openGeneration) return;
           showFrame();
@@ -1446,9 +1466,7 @@
       };
       if (!frameReady || result.restarted || !frameMatchesTaskboardUrl(taskboardUrl)) {
         showLoading();
-        const frameRequest = loadTaskboardFrame();
-        await requestHostLoadFrame(frameRequest);
-        await waitForFrameReady();
+        await loadTaskboardFrameUntilReady();
       }
       if (!active || generation !== openGeneration) return;
       showFrame();

@@ -46,7 +46,10 @@ async function chromeExecutable() {
   return null;
 }
 
-function fixtureHtml(origin) {
+function fixtureHtml(
+  origin,
+  { omitFirstFrameReady = false, exerciseFrameActions = true, reportAfterMs = null } = {},
+) {
   const encodedSource = Buffer.from(source).toString("base64");
   return `<!doctype html>
 <html>
@@ -102,6 +105,7 @@ function fixtureHtml(origin) {
       window.__browserPanelClosed = false;
       window.__injectionError = null;
       window.__frameMessages = [];
+      window.__loadFrameAttempts = 0;
       window.__externalOpenUrl = null;
       window.__frameVisibleBeforeNavigation = false;
       window.__statusHiddenBeforeNavigation = false;
@@ -123,24 +127,47 @@ function fixtureHtml(origin) {
           && event.data.capability === "fullheight-host-capability"
         ) {
           const request = event.data.payload;
+          const respond = () => window.postMessage({
+            type: "__codexTaskboardHostResponseV1",
+            capability: "fullheight-host-capability",
+            response: { id: request.id, ok: true, loaded: true },
+          }, window.location.origin);
           if (request.action === "load-frame") {
-            const frame = document.querySelector('iframe[name="' + request.frameName + '"]');
-            frame.srcdoc = '<a id="external-link" href="https://example.com/review" target="_blank">Review</a>'
-              + '<script>'
-              + ${JSON.stringify(embeddedHostClassicSource)}
-              + '\\nglobalThis.__CODEX_TASKBOARD_FRAME_CAPABILITY__='
-              + JSON.stringify(request.frameCapability)
-              + ';installEmbeddedExternalLinkHandler();'
-              + 'let activated=false,acknowledgedChallenge="";window.addEventListener("message",function(event){'
-              + 'if(event.data?.type!=="taskboard:frame-challenge")return;'
-              + 'const challenge=event.data.payload?.challenge;if(!challenge||challenge===acknowledgedChallenge)return;'
-              + 'acknowledgedChallenge=challenge;setEmbeddedFrameChallenge(challenge);'
-              + 'postEmbeddedHostMessage({type:"taskboard:ready"});'
-              + 'if(activated)return;activated=true;'
-              + 'parent.postMessage({type:"taskboard:ready"},"*");'
-              + 'parent.postMessage({type:"taskboard:open-thread",payload:{threadId:"forged"}},"*");'
-              + 'document.getElementById("external-link").click();'
-              + '});postEmbeddedHostMessage({type:"taskboard:frame-awaiting-challenge"});<\\/script>';
+            window.__loadFrameAttempts += 1;
+            if (window.__loadFrameAttempts === 1) window.__firstFrameRequestAt = Date.now();
+            if (window.__loadFrameAttempts === 2) window.__secondFrameRequestAt = Date.now();
+            const shouldSendReady = ${JSON.stringify(!omitFirstFrameReady)}
+              || window.__loadFrameAttempts > 1;
+            const shouldExerciseFrameActions = ${JSON.stringify(exerciseFrameActions)}
+              && shouldSendReady;
+            const mountFrame = () => {
+              const frame = document.querySelector('iframe[name="' + request.frameName + '"]');
+              if (!frame) {
+                window.setTimeout(mountFrame, 0);
+                return;
+              }
+              frame.srcdoc = '<a id="external-link" href="https://example.com/review" target="_blank">Review</a>'
+                + '<script>'
+                + ${JSON.stringify(embeddedHostClassicSource)}
+                + '\\nglobalThis.__CODEX_TASKBOARD_FRAME_CAPABILITY__='
+                + JSON.stringify(request.frameCapability)
+                + ';installEmbeddedExternalLinkHandler();'
+                + 'let activated=false,acknowledgedChallenge="";window.addEventListener("message",function(event){'
+                + 'if(event.data?.type!=="taskboard:frame-challenge")return;'
+                + 'const challenge=event.data.payload?.challenge;if(!challenge||challenge===acknowledgedChallenge)return;'
+                + 'acknowledgedChallenge=challenge;setEmbeddedFrameChallenge(challenge);'
+                + (shouldSendReady ? 'postEmbeddedHostMessage({type:"taskboard:ready"});' : '')
+                + (shouldExerciseFrameActions
+                  ? 'if(activated)return;activated=true;'
+                    + 'parent.postMessage({type:"taskboard:ready"},"*");'
+                    + 'parent.postMessage({type:"taskboard:open-thread",payload:{threadId:"forged"}},"*");'
+                    + 'document.getElementById("external-link").click();'
+                  : '')
+                + '});postEmbeddedHostMessage({type:"taskboard:frame-awaiting-challenge"});<\\/script>';
+              respond();
+            };
+            mountFrame();
+            return;
           }
           if (request.action === "open-external") {
             window.__externalOpenUrl = request.url;
@@ -154,11 +181,7 @@ function fixtureHtml(origin) {
             frame.removeAttribute("srcdoc");
             frame.src = ${JSON.stringify(`${origin}/attacker`)};
           }
-          window.postMessage({
-            type: "__codexTaskboardHostResponseV1",
-            capability: "fullheight-host-capability",
-            response: { id: request.id, ok: true, loaded: true },
-          }, window.location.origin);
+          respond();
         }
         if (event.source === window && event.data?.type === "navigate-to-route") {
           window.__forgedThreadOpened = true;
@@ -192,13 +215,19 @@ function fixtureHtml(origin) {
           window.__resolveHostileNavigationLoaded = resolve;
         });
         entry?.click();
-        await hostileNavigationLoaded;
+        const reportAfterMs = ${JSON.stringify(reportAfterMs)};
+        if (reportAfterMs === null) await hostileNavigationLoaded;
+        else await new Promise((resolve) => setTimeout(resolve, reportAfterMs));
 
         const page = document.getElementById("codex-taskboard-page");
         const frame = document.getElementById("codex-taskboard-frame");
         const surface = document.getElementById("surface");
         const conversation = document.getElementById("conversation");
         const result = {
+          loadFrameAttempts: window.__loadFrameAttempts,
+          ...(Number.isFinite(window.__secondFrameRequestAt)
+            ? { retryDelayMs: window.__secondFrameRequestAt - window.__firstFrameRequestAt }
+            : {}),
           panelVisibleBefore,
           browserPanelClosed: window.__browserPanelClosed,
           conversationTop: conversation.getBoundingClientRect().top,
@@ -298,6 +327,7 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
   assert.ok(encodedResult, "fixture did not report an injection result");
   const result = JSON.parse(Buffer.from(encodedResult, "base64").toString("utf8"));
   assert.deepEqual(result, {
+    loadFrameAttempts: 1,
     panelVisibleBefore: true,
     browserPanelClosed: true,
     conversationTop: 0,
@@ -319,6 +349,65 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
     statusHiddenBeforeNavigation: true,
     hostileNavigationRevoked: true,
     forgedThreadOpened: false,
+    injectionError: null,
+  });
+});
+
+test("Taskboard issues a second iframe load request when the first ready signal is missing", async (t) => {
+  const chrome = await chromeExecutable();
+  if (!chrome) {
+    t.skip("Chrome or Chromium is not installed");
+    return;
+  }
+
+  const server = http.createServer((request, response) => {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(fixtureHtml(origin, {
+      omitFirstFrameReady: true,
+      exerciseFrameActions: false,
+      reportAfterMs: 14_000,
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  }));
+
+  const profile = await mkdtemp(path.join(os.tmpdir(), "taskboard-delayed-ready-chrome-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const url = `http://127.0.0.1:${server.address().port}/fixture`;
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(chrome, [
+      "--headless=new",
+      "--disable-gpu",
+      "--no-sandbox",
+      `--user-data-dir=${profile}`,
+      "--virtual-time-budget=18000",
+      "--dump-dom",
+      url,
+    ], { maxBuffer: 5 * 1024 * 1024, timeout: 24_000 }));
+  } catch (error) {
+    if (!String(error?.stdout ?? "").trim()) {
+      t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");
+      return;
+    }
+    throw error;
+  }
+
+  const encodedResult = stdout.match(/<output id="result">([^<]+)<\/output>/)?.[1];
+  assert.ok(encodedResult, "fixture did not report an injection result");
+  const result = JSON.parse(Buffer.from(encodedResult, "base64").toString("utf8"));
+  assert.equal(result.injectionError, null);
+  assert.deepEqual({
+    loadFrameAttempts: result.loadFrameAttempts,
+    retryDelayMs: result.retryDelayMs,
+    injectionError: result.injectionError,
+  }, {
+    loadFrameAttempts: 2,
+    retryDelayMs: 12_000,
     injectionError: null,
   });
 });

@@ -16,6 +16,7 @@ const packageJson = JSON.parse(
 );
 
 test("the resident injector authenticates its launcher-managed Taskboard service", () => {
+  assert.match(source, /if \(options\.launch\) options\.attachExisting = true;/);
   assert.match(supervisorSource, /function createTaskboardSupervisor/);
   assert.match(source, /CODEX_TASKBOARD_INSTANCE_TOKEN/);
   assert.match(source, /createHmac\("sha256"/);
