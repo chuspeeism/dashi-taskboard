@@ -45,8 +45,8 @@ const DEFAULT_OPTIONS: AutomationOptions = {
   enabledByUser: false,
   quotaAware: false,
   intervalMinutes: 5,
-  model: "gpt-5.5",
-  reasoningEffort: "high",
+  model: "gpt-5.6-luna",
+  reasoningEffort: "max",
 };
 
 const EFFORT_LABELS: Record<AutomationReasoningEffort, readonly [string, string]> = {

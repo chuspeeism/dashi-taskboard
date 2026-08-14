@@ -14,7 +14,7 @@ export const AUTOMATION_MODELS = [
   {
     label: "5.6 Luna",
     slug: "gpt-5.6-luna",
-    defaultEffort: "medium",
+    defaultEffort: "max",
     efforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {

@@ -27,7 +27,10 @@ test("project automation state is device-local and scoped by taskboard project",
   assert.match(appSource, /automationId\?: string/);
   assert.match(appSource, /codexProjectId: string/);
   assert.match(appSource, /type AutomationIntervalMinutes = 5 \| 10 \| 15 \| 30 \| 60/);
-  assert.match(appSource, /DEFAULT_AUTOMATION_OPTIONS[\s\S]*?model: "gpt-5\.5"[\s\S]*?reasoningEffort: "high"/);
+  assert.match(appSource, /DEFAULT_AUTOMATION_OPTIONS[\s\S]*?model: "gpt-5\.6-luna"[\s\S]*?reasoningEffort: "max"/);
+  assert.match(appSource, /candidate\.model \?\? "gpt-5\.6-luna"/);
+  assert.match(appSource, /candidate\.reasoningEffort \?\? "max"/);
+  assert.match(menuSource, /DEFAULT_OPTIONS[\s\S]*?model: "gpt-5\.6-luna"[\s\S]*?reasoningEffort: "max"/);
   assert.match(appSource, /taskboardStorage\.getItem\(PROJECT_AUTOMATIONS_KEY\)/);
   assert.match(appSource, /taskboardStorage\.setItem\(PROJECT_AUTOMATIONS_KEY, JSON\.stringify\(next\)\)/);
   assert.match(appSource, /projectAutomations\[selectedProjectId\]/);

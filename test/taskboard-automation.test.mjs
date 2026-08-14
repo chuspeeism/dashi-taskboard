@@ -29,8 +29,8 @@ const baseRequest = {
   enabledByUser: true,
   quotaAware: false,
   intervalMinutes: 5,
-  model: "gpt-5.5",
-  reasoningEffort: "high",
+  model: "gpt-5.6-luna",
+  reasoningEffort: "max",
 };
 
 test("the automation model catalog matches Codex and normalizes unsupported efforts", () => {
@@ -50,7 +50,7 @@ test("the automation model catalog matches Codex and normalizes unsupported effo
     {
       label: "5.6 Luna",
       slug: "gpt-5.6-luna",
-      defaultEffort: "medium",
+      defaultEffort: "max",
       efforts: ["low", "medium", "high", "xhigh", "max"],
     },
     {
@@ -86,7 +86,7 @@ test("the automation model catalog matches Codex and normalizes unsupported effo
   assert.deepEqual(withAutomationModel(current, "gpt-5.6-luna"), {
     ...current,
     model: "gpt-5.6-luna",
-    reasoningEffort: "medium",
+    reasoningEffort: "max",
   });
 });
 
@@ -186,6 +186,11 @@ test("the stable name and generated prompt are project-scoped and encode the cla
   assert.match(prompt, /关键改动、验证结果、执行结果和剩余风险/);
   assert.match(prompt, /in_review/);
   assert.match(prompt, /已绑定.*branch.*worktree/);
+  assert.match(prompt, /扫描和领取后的主执行.*gpt-5\.6-luna \/ max/);
+  assert.match(prompt, /默认 gpt-5\.6-luna \/ max/);
+  assert.match(prompt, /subagent.*已加载 luna_worker.*默认使用 luna_worker/);
+  assert.match(prompt, /未加载时由当前 gpt-5\.6-luna \/ max 主执行继续处理/);
+  assert.match(prompt, /明确指定其他模型或 Agent.*覆盖/);
 });
 
 test("the generated automation command uses an argv runtime file instead of an env assignment", () => {
@@ -215,8 +220,8 @@ test("the generated cron spec uses the selected whitelisted local Codex options"
     projectId: "codex-project-123",
     executionEnvironment: "local",
     localEnvironmentConfigPath: null,
-    model: "gpt-5.5",
-    reasoningEffort: "high",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
     rrule: "RRULE:FREQ=MINUTELY;INTERVAL=5",
   });
   assert.deepEqual(buildTaskboardAutomationSpec({
@@ -226,7 +231,12 @@ test("the generated cron spec uses the selected whitelisted local Codex options"
     reasoningEffort: "medium",
   }), {
     ...buildTaskboardAutomationSpec(baseRequest),
-    prompt: buildTaskboardAutomationPrompt({ ...baseRequest, intervalMinutes: 30 }),
+    prompt: buildTaskboardAutomationPrompt({
+      ...baseRequest,
+      intervalMinutes: 30,
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+    }),
     model: "gpt-5.4",
     reasoningEffort: "medium",
     rrule: "RRULE:FREQ=MINUTELY;INTERVAL=30",
@@ -466,8 +476,8 @@ test("pause never creates and list returns only sanitized matching project autom
     items: [{
       id: "matching",
       status: "ACTIVE",
-      model: "gpt-5.5",
-      reasoningEffort: "high",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "max",
       rrule: "RRULE:FREQ=MINUTELY;INTERVAL=5",
     }],
   });
