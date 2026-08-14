@@ -320,7 +320,7 @@ export class AiChatService {
           });
           if (raw.type === "turn.completed" && terminalOutcome === null) {
             terminalOutcome = "completed";
-          } else if (raw.type === "turn.failed" || raw.type === "error") {
+          } else if (raw.type === "turn.failed") {
             terminalOutcome = "failed";
             terminalError ||= normalized.content;
           }

@@ -111,6 +111,9 @@ if (args[0] === "app-server") {
     emit({type:"item.completed",item:{type:"reasoning",text:"SECRET REASONING"}});
     emit({type:"item.completed",item:{type:"agent_message",text:"Visible answer"}});
     emit({type:"item.completed",item:{type:"command_execution",command:"npm test",status:"completed",exit_code:0,aggregated_output:"ok"}});
+    if (prompt.includes("LARGE_COMMAND_OUTPUT")) {
+      emit({type:"item.completed",item:{type:"command_execution",command:"large output",status:"completed",exit_code:0,aggregated_output:"x".repeat(1_048_577)}});
+    }
     if (prompt.includes("TURN_FAILED_ZERO")) {
       emit({type:"turn.failed",error:{message:"Protocol turn failed"}});
       return;
@@ -118,6 +121,9 @@ if (args[0] === "app-server") {
     if (prompt.includes("ROOT_ERROR_ZERO")) {
       emit({type:"error",message:"Protocol root error"});
       return;
+    }
+    if (prompt.includes("WARNING_THEN_COMPLETED")) {
+      emit({type:"error",message:"Skill descriptions were shortened"});
     }
     if (prompt.includes("NO_TERMINAL")) return;
     if (prompt.includes("ITEM_ERROR")) {
@@ -351,12 +357,30 @@ test("protocol terminal events determine run success and item errors remain non-
       ["ROOT_ERROR_ZERO", "failed"],
       ["NO_TERMINAL", "failed"],
       ["ITEM_ERROR", "completed"],
+      ["WARNING_THEN_COMPLETED", "completed"],
     ]) {
       const thread = await fixture.service.createThread({ projectId: "project" });
       const run = await fixture.service.startTurn(thread.id, { message });
       await waitFor(() => fixture.service.getRun(run.id).status !== "running");
       assert.equal(fixture.service.getRun(run.id).status, expectedStatus, message);
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a Codex command event slightly over one MiB completes and keeps only bounded output", async () => {
+  const fixture = await createFixture();
+  try {
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, { message: "LARGE_COMMAND_OUTPUT" });
+    await waitFor(() => fixture.service.getRun(run.id)?.status !== "running");
+
+    assert.equal(fixture.service.getRun(run.id).status, "completed");
+    const largeOutputEvent = fixture.service.getThreadSnapshot(thread.id).events.find(
+      (event) => event.type === "command_execution" && event.content === "large output",
+    );
+    assert.equal(largeOutputEvent.data.output.length, 65_536);
   } finally {
     await fixture.close();
   }

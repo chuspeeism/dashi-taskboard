@@ -6,6 +6,7 @@ import { signalProcessTree } from "../shared/process-tree.mjs";
 
 const VISIBLE_TEXT_LIMIT = 65_536;
 const STDERR_LIMIT = 65_536;
+const MAX_CODEX_JSONL_LINE_BYTES = 16 * 1024 * 1024;
 const SKILL_MARKER = "\uFFFC";
 const TURN_OWNER_PATH = fileURLToPath(new URL("./ai-turn-owner.mjs", import.meta.url));
 const ITEM_TYPES = new Set([
@@ -339,7 +340,7 @@ export function spawnCodexTurn({
   prompt,
   env,
   onRawEvent,
-  maxLineBytes = 1_048_576,
+  maxLineBytes = MAX_CODEX_JSONL_LINE_BYTES,
 }) {
   const child = spawn(process.execPath, [TURN_OWNER_PATH, executable, JSON.stringify(args)], {
     detached: true,
