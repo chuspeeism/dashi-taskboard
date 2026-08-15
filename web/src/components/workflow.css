@@ -383,7 +383,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--text-tertiary);
+  background: var(--fill-tertiary);
 }
 
 .workflow-step-state.is-configured {
@@ -537,7 +537,7 @@
 .workflow-sequence-add:hover,
 .workflow-sequence-add:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--border-strong));
-  color: var(--accent);
+  color: var(--accent-text);
   opacity: 1;
 }
 
@@ -606,7 +606,7 @@
   border-style: solid;
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border-strong));
   background: var(--surface-raised);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .workflow-empty-add svg {
@@ -659,7 +659,7 @@
 .workflow-plan-add:hover {
   border-style: solid;
   border-color: color-mix(in srgb, var(--accent) 44%, var(--border-strong));
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .workflow-plan-add svg {
@@ -840,7 +840,6 @@
   place-items: center;
   padding: 24px;
   background: color-mix(in srgb, var(--bg) 48%, transparent);
-  backdrop-filter: blur(2px);
 }
 
 .workflow-step-picker {

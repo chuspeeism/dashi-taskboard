@@ -10,7 +10,7 @@ const STATUS_LABELS = {
   in_progress: "处理中",
   in_review: "等你确认",
   blocked: "遇到阻碍",
-  done: "完成",
+  done: "已完成",
   canceled: "取消",
 };
 

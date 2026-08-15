@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Taskboard material integration fixture</title>
+    <script>
+      document.documentElement.dataset.fixturePhase = "html-loaded";
+      const reportFixtureError = (value) => {
+        document.documentElement.dataset.result = encodeURIComponent(JSON.stringify({
+          infrastructureError: String(value),
+          phase: document.documentElement.dataset.fixturePhase,
+        }));
+      };
+      window.addEventListener("error", (event) => reportFixtureError(event.error || event.message));
+      window.addEventListener("unhandledrejection", (event) => reportFixtureError(event.reason));
+      window.reportFixtureError = reportFixtureError;
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

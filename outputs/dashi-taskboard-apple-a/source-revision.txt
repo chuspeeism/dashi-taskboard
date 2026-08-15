@@ -1,0 +1,9 @@
+branch: feature/apple-light-a
+implementation-commit: c28f11f85a905f092ecfd43d92ea18e7748fc8c4
+review-fix-commit: 8b3daceea2c86355b3001c9815ddec0441bbf1a3
+runner-fix-commit: 07c57e638a93e410d433096243fa233ccb146e6b
+final-review-fix-commit: 841a3edaa0072ba796963988144f977a1fe0770b
+status-label-fix-commit: 0ce83c846c759689d9a7486325ad0875e4a296c5
+upstream-baseline: a2c0c59425f9d5d24a6bbf73ee6c6ac3955c3985 (v1.0.3)
+task-5-base: 437f281434c2166d0cb54f3547867464a423a61a
+delivery: local source via npm run codex; no signed custom App or DMG

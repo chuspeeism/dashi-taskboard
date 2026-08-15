@@ -73,15 +73,13 @@
 
 .dashboard-view .dashboard-hero-value strong {
   flex: 0 0 auto;
-  background: linear-gradient(93.9348deg, #5e6ad2 1.6282%, #d767c9 48.065%, #ff7236 77.088%, #f0bf00 98.372%);
-  background-clip: text;
-  color: transparent;
+  background: none;
+  color: var(--accent);
   font-size: 66px;
   font-weight: 660;
   letter-spacing: -3.43px;
   line-height: 66px;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  -webkit-text-fill-color: currentColor;
 }
 
 .dashboard-view .dashboard-hero-value span {
@@ -337,7 +335,7 @@
 }
 
 .dashboard-view .dashboard-progress-legend .tone-scope { color: var(--text-quaternary); }
-.dashboard-view .dashboard-progress-legend .tone-started { color: #6a79ff; }
+.dashboard-view .dashboard-progress-legend .tone-started { color: var(--accent-text); }
 .dashboard-view .dashboard-progress-legend .tone-completed { color: #22b889; }
 
 .dashboard-view .dashboard-progress-body {
@@ -379,8 +377,8 @@
   stroke-width: 4;
 }
 
-.dashboard-view .dashboard-progress-line.tone-scope { stroke: var(--text-quaternary); }
-.dashboard-view .dashboard-progress-line.tone-started { stroke: #6a79ff; }
+.dashboard-view .dashboard-progress-line.tone-scope { stroke: var(--fill-quaternary); }
+.dashboard-view .dashboard-progress-line.tone-started { stroke: var(--accent); }
 .dashboard-view .dashboard-progress-line.tone-completed { stroke: #22b889; }
 
 .dashboard-view .dashboard-progress-projection {
@@ -406,13 +404,13 @@
   stroke-width: 1.1;
 }
 
-.dashboard-view .dashboard-progress-point.tone-scope { fill: var(--text-quaternary); }
-.dashboard-view .dashboard-progress-point.tone-started { fill: #6a79ff; }
+.dashboard-view .dashboard-progress-point.tone-scope { fill: var(--fill-quaternary); }
+.dashboard-view .dashboard-progress-point.tone-started { fill: var(--accent); }
 .dashboard-view .dashboard-progress-point.tone-completed { fill: #22b889; }
 
 .dashboard-view .dashboard-progress-hover-line {
   pointer-events: none;
-  stroke: var(--text-tertiary);
+  stroke: var(--fill-tertiary);
   stroke-dasharray: 4 4;
   stroke-width: 1;
 }
@@ -441,7 +439,7 @@
 }
 
 .dashboard-view .dashboard-progress-tooltip .dashboard-progress-tooltip-delta {
-  fill: var(--text-tertiary);
+  fill: var(--fill-tertiary);
   text-anchor: start;
 }
 
@@ -451,7 +449,7 @@
 }
 
 .dashboard-view .dashboard-progress-axis-label {
-  fill: var(--text-tertiary);
+  fill: var(--fill-tertiary);
   font-size: 10px;
   font-weight: 500;
 }

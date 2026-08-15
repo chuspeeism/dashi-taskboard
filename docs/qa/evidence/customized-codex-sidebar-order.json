@@ -1,0 +1,28 @@
+{
+  "capturedAt": "2026-08-15T14:00:00+07:00",
+  "method": "read-only CDP Runtime.evaluate and Page.captureScreenshot",
+  "target": {
+    "title": "Codex",
+    "url": "app://-/index.html",
+    "colorScheme": "light"
+  },
+  "injector": {
+    "runtimePresent": true,
+    "entryMounted": true,
+    "pageVisible": true
+  },
+  "sidebar": {
+    "pluginLabel": "插件",
+    "taskboardLabel": "任务面板",
+    "sameParent": true,
+    "pluginIndex": 0,
+    "taskboardIndex": 1,
+    "visibleEntriesBetween": [],
+    "passesAfterPlugins": true
+  },
+  "listeners": [
+    "127.0.0.1:47823",
+    "127.0.0.1:9231"
+  ],
+  "privacy": "No task, thread, token, user, or workspace content is included."
+}

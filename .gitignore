@@ -6,6 +6,7 @@ dist/
 .tmp/
 cloud-migration-exports/
 .playwright-cli/
+.artifacts/
 *.log
 .DS_Store
 /*-proof.png

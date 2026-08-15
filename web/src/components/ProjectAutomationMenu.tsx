@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AUTOMATION_MODELS,
@@ -67,6 +67,8 @@ export function ProjectAutomationMenu({
   onChange,
 }: ProjectAutomationMenuProps) {
   const { locale, text } = useTaskboardI18n();
+  const autoClaimLabelId = useId();
+  const quotaLimitLabelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const wasPendingRef = useRef(pending);
@@ -160,12 +162,13 @@ export function ProjectAutomationMenu({
         </span>
       </div>
       <div className="project-automation-switch">
-        <span>{text("自动认领开关", "Auto-claim")}</span>
+        <span id={autoClaimLabelId}>{text("自动认领开关", "Auto-claim")}</span>
         <button
           type="button"
           className={`board-setting-switch${draft.enabledByUser ? " is-on" : ""}`}
           role="switch"
           aria-checked={draft.enabledByUser}
+          aria-labelledby={autoClaimLabelId}
           disabled={disabled}
           onClick={() => submitChange({
             ...draft,
@@ -176,12 +179,13 @@ export function ProjectAutomationMenu({
         </button>
       </div>
       <div className="project-automation-switch">
-        <span>{text("根据额度启用/关闭", "Use quota limits")}</span>
+        <span id={quotaLimitLabelId}>{text("根据额度启用/关闭", "Use quota limits")}</span>
         <button
           type="button"
           className={`board-setting-switch${draft.quotaAware ? " is-on" : ""}`}
           role="switch"
           aria-checked={draft.quotaAware}
+          aria-labelledby={quotaLimitLabelId}
           disabled={disabled}
           onClick={() => submitChange({
             ...draft,

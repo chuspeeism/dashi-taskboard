@@ -263,6 +263,14 @@ export function TaskContextMenu({
       onContextMenu={(event) => event.preventDefault()}
     >
       <div className="context-menu-group">
+        {task.status === "done" && (
+          <MenuItem
+            label={text("继续任务", "Continue task")}
+            icon={<LinearIcon name="recurrence" />}
+            onPointerEnter={closeSubmenu}
+            onClick={() => closeThen(() => onStatusChange(task, "in_progress"))}
+          />
+        )}
         <MenuItem
           label={text("状态", "Status")}
           icon={<LinearIcon name="status" />}

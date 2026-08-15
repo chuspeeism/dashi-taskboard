@@ -15,12 +15,14 @@ import type {
   TaskCardPresentation,
   TaskConversationItem,
 } from "../taskConversations";
+import { presentTaskElapsed, presentTaskProgress } from "../taskProgress.mjs";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearPriorityIcon } from "./LinearIcon";
 import { LabelPicker } from "./LabelPicker";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 import { TaskboardIcon } from "./TaskboardIcon";
+import { TaskProgressSummary } from "./TaskProgressSummary";
 import completeIcon from "../assets/figma-taskboard/card-complete.svg";
 import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
 
@@ -55,16 +57,6 @@ function createdDate(value: string, locale: string, text: (chinese: string, engl
   const formatted = new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
     .format(new Date(value));
   return text(`${formatted}创建`, `Created ${formatted}`);
-}
-
-function elapsedTime(startedAt: string | null, now: number) {
-  if (!startedAt) return "";
-  const elapsed = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
-  if (elapsed < 60) return `${elapsed}s`;
-  const minutes = Math.floor(elapsed / 60);
-  if (minutes < 60) return `${minutes}m${elapsed % 60 ? `${elapsed % 60}s` : ""}`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h${minutes % 60 ? `${minutes % 60}m` : ""}`;
 }
 
 function firstTaskImage(task: Task) {
@@ -128,37 +120,6 @@ function TaskCardMedia({ src }: { src: string }) {
   );
 }
 
-function ProcessingProgress({
-  presentation,
-}: {
-  presentation: TaskCardPresentation;
-}) {
-  const { text } = useTaskboardI18n();
-  const { processing } = presentation;
-  const hasProgress = processing.total !== null
-    && processing.total > 0
-    && processing.completed !== null;
-  if (!hasProgress) return null;
-
-  const total = processing.total!;
-  const completed = Math.max(0, Math.min(processing.completed!, total));
-  const label = text(`处理进度 ${completed}/${total}`, `Processing progress ${completed}/${total}`);
-
-  return (
-    <div className="card-progress-row">
-      <div
-        className={`task-progress-segments${processing.running ? " is-running" : ""}`}
-        aria-label={label}
-        title={label}
-      >
-        {Array.from({ length: total }, (_, index) => (
-          <span className={index < completed ? "is-complete" : ""} key={index} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ProcessingStatusRow({
   presentation,
   now,
@@ -169,16 +130,21 @@ function ProcessingStatusRow({
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }) {
   const { text } = useTaskboardI18n();
-  const elapsed = elapsedTime(presentation.processing.startedAt, now);
   const running = presentation.processing.running;
+  const elapsed = presentTaskElapsed(presentation.processing.startedAt, now);
+  const hasProgress = presentTaskProgress(presentation.processing) !== null;
+  const showActivity = running || !hasProgress;
+  if (!showActivity && presentation.conversations.length === 0) return null;
   return (
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
-      {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
-      <span className="task-processing-label">
-        {running
-          ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
-          : text("暂停处理", "Processing paused")}
-      </span>
+      {showActivity && running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
+      {showActivity && (
+        <span className="task-processing-label">
+          {running
+            ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
+            : text("已暂停", "Paused")}
+        </span>
+      )}
       <span className="task-processing-spacer" aria-hidden="true" />
       {presentation.conversations.length > 0 && (
         <TaskConversationMenu
@@ -196,6 +162,7 @@ function ParticipantAvatars({ participants }: { participants: ActorIdentity[] })
   return (
     <span
       className="task-participants"
+      role="img"
       aria-label={text(
         `参与人：${participants.map((participant) => participant.name).join("、")}`,
         `Participants: ${participants.map((participant) => participant.name).join(", ")}`,
@@ -426,7 +393,7 @@ export function TaskCard({
         <span className="card-reference">
           <span className="task-identifier">ID: {displayIdentifier}</span>
         </span>
-        {presentation.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
+        {presentation.unread && <span className="task-unread-dot" role="img" aria-label={text("有未读更新", "Unread updates")} />}
         {task.status === "in_review" && onComplete && (
           <button
             className="task-card-complete"
@@ -516,7 +483,7 @@ export function TaskCard({
 
       {processingCard && (
         <>
-          <ProcessingProgress presentation={presentation} />
+          <TaskProgressSummary processing={presentation.processing} />
           <ProcessingStatusRow
             presentation={presentation}
             now={now}

@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
 
 import { createTaskboardServer } from "../server/index.mjs";
+import { lanTestOptions } from "./support/safety-policy.mjs";
 
 const runningApps = [];
 
@@ -1089,7 +1090,7 @@ test("device workspaces come from this machine's Codex project roots", async () 
   });
 });
 
-test("accepts private LAN requests and rejects public Host and Origin headers", async () => {
+test("accepts private LAN requests and rejects public Host and Origin headers", lanTestOptions(process.env), async () => {
   const baseUrl = await startServer(undefined, { host: "0.0.0.0" });
 
   const codexOriginResult = await request(baseUrl, "/health", {
@@ -2075,7 +2076,7 @@ test("request boundaries reject unknown fields and invalid values", async () => 
   assert.equal(invalidWorktree.body.error.code, "INVALID_FIELD");
 });
 
-test("task changes from one LAN client are broadcast to another client", async () => {
+test("task changes from one LAN client are broadcast to another client", lanTestOptions(process.env), async () => {
   const baseUrl = await startServer(undefined, { host: "0.0.0.0" });
   const lanHeaders = {
     host: "192.168.1.24:47823",

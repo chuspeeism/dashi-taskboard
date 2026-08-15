@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { main } from "../cli/taskctl.mjs";
 import { createTaskboardServer } from "../server/index.mjs";
+import { lanTestOptions } from "./support/safety-policy.mjs";
 
 const temporaryDirectories = [];
 
@@ -650,7 +651,7 @@ test("configured server proxies business APIs without touching local rows and ad
   }
 });
 
-test("cloud mode exposes machine capabilities only to loopback while local mode keeps LAN access", async (t) => {
+test("cloud mode exposes machine capabilities only to loopback while local mode keeps LAN access", lanTestOptions(process.env), async (t) => {
   const lanAddress = firstLanAddress();
   if (!lanAddress) {
     t.skip("No non-loopback IPv4 interface is available");

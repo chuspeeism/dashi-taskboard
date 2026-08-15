@@ -1,15 +1,43 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import vm from "node:vm";
 
 import { parseTaskboardAutomationHostRequest } from "../shared/taskboard-automation.mjs";
+import {
+  chromeFixtureSkipReason,
+  runChromeFixture,
+} from "./support/chrome-fixture-policy.mjs";
 
 const sourceUrl = new URL("../inject/codex-taskboard.user.js", import.meta.url);
 const source = (await readFile(sourceUrl, "utf8")).replaceAll("\r\n", "\n");
 const webStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 const embeddedHost = await readFile(new URL("../web/src/embeddedHost.mjs", import.meta.url), "utf8");
+const execFileAsync = promisify(execFile);
+const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+
+async function chromeExecutable() {
+  for (const candidate of [
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ].filter(Boolean)) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {}
+  }
+  return null;
+}
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
@@ -473,4 +501,67 @@ test("host integration stays thin", () => {
   assert.doesNotMatch(source, /__codexSessionDeleteBridge/);
   assert.doesNotMatch(source, /import\s*\(/);
   assert.doesNotMatch(source, /window\.fetch\s*=/);
+});
+
+test("an embedded Taskboard applies the Codex host theme message", async (t) => {
+  const chrome = await chromeExecutable();
+  const skipReason = chromeFixtureSkipReason(chrome);
+  if (skipReason) {
+    t.skip(skipReason);
+    return;
+  }
+  await execFileAsync(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--config", "web/vite.config.ts"], {
+    cwd: projectRoot,
+  });
+  const appDirectory = path.join(projectRoot, "dist", "web");
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === "/fixture") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(`<!doctype html><iframe id="taskboard" src="/app/?host=codex"></iframe><output id="result"></output><script>
+        window.addEventListener("message", (event) => {
+          if (event.source !== document.getElementById("taskboard").contentWindow) return;
+          if (event.data?.type !== "taskboard:frame-awaiting-challenge") return;
+          event.source.postMessage({ type: "taskboard:theme", theme: "dark" }, window.location.origin);
+          setTimeout(() => {
+            const theme = document.getElementById("taskboard").contentDocument?.documentElement.dataset.theme;
+            document.getElementById("result").textContent = theme ?? "";
+          }, 100);
+        });
+      </script>`);
+      return;
+    }
+    const relativePath = url.pathname.replace(/^\/app\/?/, "") || "index.html";
+    if (relativePath.includes("..")) {
+      response.statusCode = 400;
+      response.end();
+      return;
+    }
+    try {
+      const file = await readFile(path.join(appDirectory, relativePath));
+      response.setHeader("content-type", relativePath.endsWith(".js") ? "text/javascript" : "text/html; charset=utf-8");
+      response.end(file);
+    } catch {
+      response.statusCode = 404;
+      response.end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  }));
+  const profile = await mkdtemp(path.join(os.tmpdir(), "taskboard-theme-chrome-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const url = `http://127.0.0.1:${server.address().port}/fixture`;
+  const { stdout } = await runChromeFixture(chrome, (executable) => execFileAsync(executable, [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-sandbox",
+    `--user-data-dir=${profile}`,
+    "--virtual-time-budget=8000",
+    "--dump-dom",
+    url,
+  ], { maxBuffer: 5 * 1024 * 1024, timeout: 20_000 }));
+  assert.match(stdout, /<output id="result">dark<\/output>/);
 });

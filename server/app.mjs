@@ -1403,7 +1403,7 @@ export function resolvePort(value = process.env.CODEX_TASKBOARD_PORT ?? "47823")
   return port;
 }
 
-export function resolveHost(value = process.env.CODEX_TASKBOARD_HOST ?? "0.0.0.0") {
+export function resolveHost(value = process.env.CODEX_TASKBOARD_HOST ?? "127.0.0.1") {
   const host = String(value).trim();
   if (host !== "127.0.0.1" && host !== "0.0.0.0") {
     throw new Error("CODEX_TASKBOARD_HOST must be 127.0.0.1 or 0.0.0.0");
