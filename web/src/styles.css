@@ -58,8 +58,8 @@
   --status-canceled: #9e9ea1;
   --scrollbar-thumb: rgba(27, 27, 27, 0.15);
   --scrollbar-thumb-hover: rgba(27, 27, 27, 0.46);
-  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 8px rgba(15, 23, 42, 0.035);
-  --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
+  --card-shadow: none;
+  --dialog-shadow: none;
   --taskboard-spacing: 24px;
   --taskboard-section-gap: var(--taskboard-spacing);
   --board-column-radius: 20px;
@@ -122,8 +122,8 @@
   --status-canceled: #85858b;
   --scrollbar-thumb: rgba(238, 238, 239, 0.15);
   --scrollbar-thumb-hover: rgba(238, 238, 239, 0.5);
-  --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
-  --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
+  --card-shadow: none;
+  --dialog-shadow: none;
 }
 
 * {
@@ -1016,7 +1016,7 @@ kbd {
   outline: 0;
   background: transparent;
   color: var(--text-secondary);
-  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, .02)) drop-shadow(0 1px .5px rgba(0, 0, 0, .04));
+  filter: none;
   font: inherit;
   font-size: 10px;
   font-weight: 500;
@@ -11561,13 +11561,13 @@ kbd {
 /* Linear-style list */
 .issue-list-view {
   margin-top: 0;
-  padding: 20px 10px 24px;
+  padding: 24px;
   background: var(--list-canvas);
 }
 
 .issue-list-groups {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .issue-list-group {
@@ -12508,4 +12508,23 @@ kbd {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+}
+
+/* Flat Apple material contract: depth comes from surface color and borders, never shadows. */
+body,
+body *,
+body *::before,
+body *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+body :focus-visible {
+  outline: 2px solid var(--focus-ring) !important;
+  outline-offset: 2px;
+}
+
+.board-column.is-drop-target {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }

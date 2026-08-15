@@ -371,6 +371,8 @@ test("light list view separates the white canvas from stronger category rows", a
       category: getComputedStyle(category).backgroundColor,
       canvasTop: Math.round(canvasRect.top - toolbarRect.bottom),
       categoryTop: Math.round(categoryRect.top - toolbarRect.bottom),
+      categoryLeft: Math.round(categoryRect.left - canvasRect.left),
+      categoryRight: Math.round(canvasRect.right - categoryRect.right),
       topGapIsListCanvas: Boolean(topGapOwner && canvas.contains(topGapOwner)),
     };
   });
@@ -379,10 +381,105 @@ test("light list view separates the white canvas from stronger category rows", a
     canvas: "rgb(255, 255, 255)",
     category: "rgb(242, 242, 246)",
     canvasTop: 0,
-    categoryTop: 20,
+    categoryTop: 24,
+    categoryLeft: 24,
+    categoryRight: 24,
     topGapIsListCanvas: true,
   });
   await screenshot(page, "list-view-surfaces-light-1440.png");
+});
+
+test("dashboard keeps 24px outer spacing around visible content", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(boardPath({ theme: "light" }));
+  await waitForBoard(page);
+  await page.getByRole("button", { name: "仪表盘", exact: true }).click();
+
+  const spacing = await page.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>(".board-toolbar");
+    const view = document.querySelector<HTMLElement>(".dashboard-view");
+    const content = document.querySelector<HTMLElement>(".dashboard-content");
+    const heading = document.querySelector<HTMLElement>(".dashboard-heading h1");
+    const summary = document.querySelector<HTMLElement>(".dashboard-summary-bubble");
+    if (!toolbar || !view || !content || !heading || !summary) {
+      throw new Error("Expected toolbar and visible dashboard content");
+    }
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const viewRect = view.getBoundingClientRect();
+    const contentRect = content.getBoundingClientRect();
+    return {
+      top: Math.round(contentRect.top - toolbarRect.bottom),
+      headingTop: Math.round(heading.getBoundingClientRect().top - toolbarRect.bottom),
+      summaryTop: Math.round(summary.getBoundingClientRect().top - toolbarRect.bottom),
+      left: Math.round(contentRect.left - viewRect.left),
+      right: Math.round(viewRect.right - contentRect.right),
+      bottom: Math.round(
+        view.scrollHeight - (contentRect.bottom - viewRect.top + view.scrollTop),
+      ),
+    };
+  });
+
+  expect(spacing).toEqual({
+    top: 24,
+    headingTop: 24,
+    summaryTop: 24,
+    left: 24,
+    right: 24,
+    bottom: 24,
+  });
+  await screenshot(page, "dashboard-spacing-light-1440.png");
+});
+
+test("all taskboard views and overlays render without shadows", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  for (const theme of ["light", "dark"] as const) {
+    await page.goto(boardPath({ theme }));
+    await waitForBoard(page);
+
+    for (const viewName of ["议题看板", "列表视图", "甘特图", "仪表盘"]) {
+      await page.getByRole("button", { name: viewName, exact: true }).click();
+      const shadows = await page.evaluate(() => {
+        const offenders: string[] = [];
+        const elements = Array.from(document.body.querySelectorAll<HTMLElement>("*"));
+        const inspect = (element: HTMLElement, pseudo?: "::before" | "::after") => {
+          const style = getComputedStyle(element, pseudo);
+          const hasBoxShadow = style.boxShadow !== "none";
+          const hasTextShadow = style.textShadow !== "none";
+          const hasDropShadow = style.filter.includes("drop-shadow");
+          if (hasBoxShadow || hasTextShadow || hasDropShadow) {
+            const identity = element.className
+              ? `${element.tagName.toLowerCase()}.${String(element.className).trim().replace(/\\s+/g, ".")}`
+              : element.tagName.toLowerCase();
+            offenders.push(`${identity}${pseudo ?? ""}`);
+          }
+        };
+        for (const element of elements) {
+          inspect(element);
+          inspect(element, "::before");
+          inspect(element, "::after");
+        }
+        return offenders.slice(0, 20);
+      });
+      expect(shadows, `${theme} ${viewName} shadow offenders`).toEqual([]);
+    }
+
+    await page.getByRole("button", { name: "议题看板", exact: true }).click();
+    await page.getByRole("button", { name: "切换项目" }).click();
+    await expect(page.getByRole("menu", { name: "项目" })).toBeVisible();
+    const overlayShadow = await page.getByRole("menu", { name: "项目" }).evaluate((element) => ({
+      boxShadow: getComputedStyle(element).boxShadow,
+      textShadow: getComputedStyle(element).textShadow,
+      filter: getComputedStyle(element).filter,
+    }));
+    expect(overlayShadow).toEqual({
+      boxShadow: "none",
+      textShadow: "none",
+      filter: "none",
+    });
+  }
 });
 
 test("completed is a visible board column and archive has a dedicated entry", async ({ page }) => {
