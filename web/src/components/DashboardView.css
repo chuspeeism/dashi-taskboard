@@ -173,13 +173,10 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   height: 120px;
-  gap: 0;
-  overflow: hidden;
+  gap: 24px;
+  overflow: visible;
   margin-bottom: 16px;
-  border: .5px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--card-shadow);
+  background: transparent;
 }
 
 .dashboard-view .dashboard-analysis-heading {
@@ -211,15 +208,9 @@
   min-height: 0;
   gap: 12px;
   padding: 20px 22px;
-  border: 0;
-  border-left: .5px solid var(--border);
-  border-radius: 0;
-  background: transparent;
+  border-radius: 12px;
+  background: var(--surface);
   box-shadow: none;
-}
-
-.dashboard-view .dashboard-metric:first-child {
-  border-left: 0;
 }
 
 .dashboard-view .dashboard-metric.tone-progress { --metric-color: var(--status-progress); }
@@ -836,7 +827,7 @@
   color: var(--text-primary);
   font-size: 11px;
   font-weight: 600;
-  line-height: 16.5px;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -845,7 +836,7 @@
   color: var(--text-tertiary);
   font-size: 9px;
   font-weight: 400;
-  line-height: 13.5px;
+  line-height: 20px;
 }
 
 .dashboard-view .dashboard-role-share {
@@ -1044,16 +1035,14 @@
 
   .dashboard-view .dashboard-metric {
     min-height: 120px;
-    border-top: .5px solid var(--border);
-    border-left: .5px solid var(--border);
   }
 
-  .dashboard-view .dashboard-metric:nth-child(-n+2) {
-    border-top: 0;
+  .dashboard-view .dashboard-attention-row {
+    grid-template-columns: 16px minmax(0, 1fr);
   }
 
-  .dashboard-view .dashboard-metric:nth-child(odd) {
-    border-left: 0;
+  .dashboard-view .dashboard-attention-row small {
+    grid-column: 2;
   }
 
   .dashboard-view .dashboard-contribution-panel {
@@ -1137,12 +1126,7 @@
   .dashboard-view .dashboard-metric,
   .dashboard-view .dashboard-metric:nth-child(-n+2),
   .dashboard-view .dashboard-metric:nth-child(odd) {
-    border-top: .5px solid var(--border);
-    border-left: 0;
-  }
-
-  .dashboard-view .dashboard-metric:first-child {
-    border-top: 0;
+    border: 0;
   }
 
   .dashboard-view .dashboard-progress-legend {

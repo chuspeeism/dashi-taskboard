@@ -1,8 +1,8 @@
 # Dashi Taskboard Apple 浅色方案设计 QA
 
 - 日期：2026-08-16
-- 参考源：用户标注的仪表盘、议题看板、列表视图和甘特图弹窗截图
-- 实现截图：`.artifacts/playwright/screenshots/dashboard-spacing-light-1440.png`、`.artifacts/playwright/screenshots/board-light-1440.png`、`.artifacts/playwright/screenshots/list-view-surfaces-light-1440.png`、`.artifacts/playwright/screenshots/gantt-popup-layer-light.png`
+- 参考源：用户标注的仪表盘、议题看板、列表视图和甘特图弹窗截图；本轮重点为 `/var/folders/fd/m62ygxld11x4v5g23twh9pbc0000gn/T/codex-clipboard-47baf396-9674-4373-a3fc-fbf6367c5766.png`（2902 × 376）和 `/var/folders/fd/m62ygxld11x4v5g23twh9pbc0000gn/T/codex-clipboard-077489d4-6c8f-4dee-8cf4-abc35a9b8ce1.png`（2958 × 724）
+- 实现截图：`.artifacts/playwright/screenshots/dashboard-independent-metrics-light-1440.png`（1440 × 900，CSS 1440 × 900，DPR 1）、`.artifacts/playwright/screenshots/dashboard-source-implementation-comparison.png`（1500 × 2200，同图对比）、`.artifacts/playwright/screenshots/board-light-1440.png`、`.artifacts/playwright/screenshots/list-view-surfaces-light-1440.png`、`.artifacts/playwright/screenshots/gantt-popup-layer-light.png`
 - 验证视口：1440 × 900；补充响应式视口 900 × 760
 - 验证状态：浅色、深色、看板、列表、甘特图、仪表盘、项目浮层
 
@@ -19,6 +19,9 @@
 | 描边 | 组件与焦点状态混用描边 | 所有组件 border/outline 清零；键盘焦点改用实体背景反馈 | 通过 |
 | 字号 | 7–13px 小字与较大展示字号混用 | 全局仅 14/16/18/20px，最小 14px、最大 20px | 通过 |
 | 弹窗层级 | 甘特图选项被时间轴覆盖 | 导航建立独立顶层堆叠；6 类主要弹窗逐点验证位于页面最上层 | 通过 |
+| 仪表盘统计 | 5 项共用一个连续白色容器，列间距为 0 | 5 张等宽独立白色卡片，卡片间 24px、圆角 12px，总宽度随容器自适应 | 通过 |
+| 贡献图月份 | 年度起点“8月”与紧邻的“9月”发生文字重叠 | 起始月份不足 3 周展示宽度时让位给完整的下个月份，月份标签不再重叠 | 通过 |
+| 全局文字碰撞 | 月份标签、角色姓名/完成说明、900px 任务标题/ID 存在碰撞 | 角色双行文字统一 20px 行高；窄屏标题与 ID 分行；四视图在 1440/900 下全页面碰撞为 0 | 通过 |
 
 ## Apple 风格审计
 
@@ -29,8 +32,14 @@
 - 层次：移除全部投影和组件描边，以实体底色和留白区分层级；键盘焦点使用实体背景变化。
 - 弹窗：项目切换、任务筛选、自动化设置、任务右键菜单、任务编辑器、甘特图选项均验证上下两个采样点为页面最上层；无裁切或内容穿透。
 - 甘特图：数据画布维持满宽呈现，这是高密度时间轴的有意例外；其外围导航仍遵循统一间距。
+- 仪表盘：5 张统计卡统一使用 24px 间距和 12px 圆角；贡献图保留完整月份节奏，不强塞不足宽度的起始月标签。
 - 可访问性：浅色/深色 Axe serious/critical 为 0；“等你确认”蓝色已加深以满足 14px 文本对比度；交互语义保留。
 
-## 结论
+## 本轮对比历史
 
-passed
+1. P1：5 项统计在一个连续容器中，未形成用户要求的独立模块。修复为 5 张等宽卡片并以 24px 分隔；同图对比确认层级清晰。
+2. P1：贡献图“8月/9月”文字重叠。真实文字 Range 碰撞测试先得到 `8月 <> 9月` RED，修复后为 0。
+3. P2：扩展到全页面后发现角色姓名与完成说明碰撞，以及 900px 下任务标题与 ID 碰撞。分别调整行高和响应式分行后，1440/900 的看板、列表、甘特图、仪表盘均为 0 碰撞。
+4. 完整视图对比检查了排版、间距、颜色、图标/图像质量和文案；本轮未增加或替换图像资产，现有图标保持清晰，无新增 P0/P1/P2。
+
+final result: passed

@@ -453,6 +453,100 @@ test("dashboard keeps 24px outer spacing around visible content", async ({ page 
   await screenshot(page, "dashboard-spacing-light-1440.png");
 });
 
+test("dashboard metrics render as five independent responsive cards", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(boardPath({ theme: "light" }));
+  await waitForBoard(page);
+  await page.getByRole("button", { name: "仪表盘", exact: true }).click();
+
+  const layout = await page.locator(".dashboard-metrics").evaluate((container) => {
+    const cards = Array.from(container.querySelectorAll<HTMLElement>(".dashboard-metric"));
+    const rects = cards.map((card) => card.getBoundingClientRect());
+    return {
+      cardCount: cards.length,
+      containerBackground: getComputedStyle(container).backgroundColor,
+      gap: rects.slice(1).map((rect, index) => Math.round(rect.left - rects[index].right)),
+      cardBackgrounds: cards.map((card) => getComputedStyle(card).backgroundColor),
+      cardRadii: cards.map((card) => getComputedStyle(card).borderTopLeftRadius),
+      firstLeft: Math.round(rects[0].left - container.getBoundingClientRect().left),
+      lastRight: Math.round(container.getBoundingClientRect().right - rects.at(-1)!.right),
+    };
+  });
+
+  expect(layout).toEqual({
+    cardCount: 5,
+    containerBackground: "rgba(0, 0, 0, 0)",
+    gap: [24, 24, 24, 24],
+    cardBackgrounds: Array(5).fill("rgb(255, 255, 255)"),
+    cardRadii: Array(5).fill("12px"),
+    firstLeft: 0,
+    lastRight: 0,
+  });
+  await screenshot(page, "dashboard-independent-metrics-light-1440.png");
+});
+
+test("visible leaf text never overlaps across primary views", async ({ page }) => {
+  await preparePage(page);
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 900, height: 760 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(boardPath({ theme: "light" }));
+    await expect(page.getByRole("button", { name: "议题看板", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "议题看板", exact: true }).click();
+    await waitForBoard(page);
+
+    for (const viewName of ["议题看板", "列表视图", "甘特图", "仪表盘"]) {
+      await page.getByRole("button", { name: viewName, exact: true }).click();
+      const overlaps = await page.evaluate(() => {
+        const visibleText = Array.from(document.body.querySelectorAll<HTMLElement>("*"))
+          .filter((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            const hasOwnText = Array.from(element.childNodes).some(
+              (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+            );
+            return hasOwnText
+              && style.display !== "none"
+              && style.visibility !== "hidden"
+              && Number(style.opacity) > 0
+              && rect.width > 0
+              && rect.height > 0;
+          })
+          .flatMap((element) => Array.from(element.childNodes)
+            .filter((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
+            .map((node) => {
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              return {
+                element,
+                rect: range.getBoundingClientRect(),
+                text: node.textContent!.trim(),
+              };
+            }));
+        const collisions: string[] = [];
+        for (let leftIndex = 0; leftIndex < visibleText.length; leftIndex += 1) {
+          const left = visibleText[leftIndex];
+          for (let rightIndex = leftIndex + 1; rightIndex < visibleText.length; rightIndex += 1) {
+            const right = visibleText[rightIndex];
+            if (left.element.contains(right.element) || right.element.contains(left.element)) continue;
+            const overlapWidth = Math.min(left.rect.right, right.rect.right) - Math.max(left.rect.left, right.rect.left);
+            const overlapHeight = Math.min(left.rect.bottom, right.rect.bottom) - Math.max(left.rect.top, right.rect.top);
+            if (overlapWidth > 1 && overlapHeight > 1) {
+              collisions.push(`${left.text} <> ${right.text}`);
+            }
+          }
+        }
+        return collisions.slice(0, 20);
+      });
+      expect(overlaps, `${viewport.width}px ${viewName} text overlaps`).toEqual([]);
+    }
+  }
+});
+
 test("all taskboard views and overlays render without shadows", async ({ page }) => {
   await preparePage(page);
   await page.setViewportSize({ width: 1440, height: 900 });
