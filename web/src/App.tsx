@@ -165,6 +165,7 @@ type TasksLoadError = {
 type LoadError = ProjectLoadError | TasksLoadError;
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
+const TASKBOARD_SPACING = 60;
 
 const AiChat = lazy(() => import("./components/AiChat").then((module) => ({
   default: module.AiChat,
@@ -2109,10 +2110,10 @@ export function App() {
   const mainStatuses = hasBlockedTasks
     ? MAIN_STATUSES
     : MAIN_STATUSES.filter((status) => status !== "blocked");
-  const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * 24);
-  const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * 24);
+  const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * TASKBOARD_SPACING);
+  const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * TASKBOARD_SPACING);
   const otherTasksColumnCount = mainStatuses.length + 1;
-  const otherTasksWidth = `clamp(300px, calc(${100 / otherTasksColumnCount}% - ${(36 + (mainStatuses.length * 24)) / otherTasksColumnCount}px), 400px)`;
+  const otherTasksWidth = `clamp(300px, calc(${100 / otherTasksColumnCount}% - ${(36 + (mainStatuses.length * TASKBOARD_SPACING)) / otherTasksColumnCount}px), 400px)`;
 
   const taskPresentations = useMemo(() => Object.fromEntries(tasks.map((task) => {
     const unread = (task.status === "in_review" || task.status === "blocked")

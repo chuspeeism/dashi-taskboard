@@ -58,7 +58,8 @@
   --scrollbar-thumb-hover: rgba(27, 27, 27, 0.46);
   --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 8px rgba(15, 23, 42, 0.035);
   --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
-  --taskboard-section-gap: 40px;
+  --taskboard-spacing: 60px;
+  --taskboard-section-gap: var(--taskboard-spacing);
   --z-navigation: 10;
   --z-popover: 20;
 }
@@ -9361,7 +9362,7 @@ kbd {
   min-width: 0;
   min-height: 0;
   margin: var(--taskboard-section-gap) 0 0;
-  padding: 0 18px;
+  padding: 0;
   column-gap: 0;
   overflow: hidden;
   background: var(--surface);
@@ -9389,7 +9390,7 @@ kbd {
   max-width: var(--main-board-max-width, 1248px);
   min-width: 0;
   min-height: 0;
-  padding: 0;
+  padding: 0 var(--taskboard-spacing) var(--taskboard-spacing);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -9404,7 +9405,7 @@ kbd {
   min-width: var(--main-board-min-width, 948px);
   height: 100%;
   min-height: 0;
-  gap: 24px;
+  gap: var(--taskboard-spacing);
 }
 
 .board-column {

@@ -263,7 +263,7 @@ test("project switcher is an unclipped overlay above workspace navigation", asyn
   await screenshot(page, "project-switcher-overlay-light.png");
 });
 
-test("toolbar and issue board keep a 40px section gap in light and dark layouts", async ({ page }) => {
+test("issue board keeps 60px separation on every annotated edge", async ({ page }) => {
   await preparePage(page);
 
   for (const scenario of [
@@ -274,13 +274,38 @@ test("toolbar and issue board keep a 40px section gap in light and dark layouts"
     await page.goto(boardPath({ theme: scenario.theme }));
     await waitForBoard(page);
 
-    const gap = await page.evaluate(() => {
+    const spacing = await page.evaluate(() => {
       const toolbar = document.querySelector<HTMLElement>(".board-toolbar");
-      const board = document.querySelector<HTMLElement>(".issue-board-layout");
-      if (!toolbar || !board) throw new Error("Expected toolbar and issue board");
-      return Math.round(board.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom);
+      const layout = document.querySelector<HTMLElement>(".issue-board-layout");
+      const scroll = document.querySelector<HTMLElement>(".board-scroll");
+      const board = document.querySelector<HTMLElement>(".board");
+      const columns = Array.from(document.querySelectorAll<HTMLElement>(".board-column"));
+      if (!toolbar || !layout || !scroll || !board || columns.length < 2) {
+        throw new Error("Expected toolbar, issue board, and at least two columns");
+      }
+
+      const toolbarRect = toolbar.getBoundingClientRect();
+      const layoutRect = layout.getBoundingClientRect();
+      const scrollRect = scroll.getBoundingClientRect();
+      const boardRect = board.getBoundingClientRect();
+      const firstRect = columns[0].getBoundingClientRect();
+      const secondRect = columns[1].getBoundingClientRect();
+
+      return {
+        top: Math.round(layoutRect.top - toolbarRect.bottom),
+        left: Math.round(firstRect.left - scrollRect.left + scroll.scrollLeft),
+        betweenColumns: Math.round(secondRect.left - firstRect.right),
+        right: Math.round(scroll.scrollWidth - (boardRect.right - scrollRect.left + scroll.scrollLeft)),
+        bottom: Math.round(scrollRect.bottom - boardRect.bottom),
+      };
     });
-    expect(gap).toBe(40);
+    expect(spacing).toEqual({
+      top: 60,
+      left: 60,
+      betweenColumns: 60,
+      right: 60,
+      bottom: 60,
+    });
     await screenshot(page, `taskboard-spacing-${scenario.theme}-${scenario.width}.png`);
   }
 });
