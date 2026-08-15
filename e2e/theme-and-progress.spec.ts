@@ -290,21 +290,36 @@ test("issue board keeps 60px separation on every annotated edge", async ({ page 
       const boardRect = board.getBoundingClientRect();
       const firstRect = columns[0].getBoundingClientRect();
       const secondRect = columns[1].getBoundingClientRect();
+      const firstHeader = columns[0].querySelector<HTMLElement>(".column-header");
+      if (!firstHeader) throw new Error("Expected a column header");
+      const firstHeaderRect = firstHeader.getBoundingClientRect();
+      const topGapOwner = document.elementFromPoint(
+        firstRect.left + 20,
+        toolbarRect.bottom + 30,
+      );
 
       return {
-        top: Math.round(layoutRect.top - toolbarRect.bottom),
+        layoutTop: Math.round(layoutRect.top - toolbarRect.bottom),
+        top: Math.round(firstRect.top - toolbarRect.bottom),
+        topGapInsideBoard: Boolean(topGapOwner && layout.contains(topGapOwner)),
         left: Math.round(firstRect.left - scrollRect.left + scroll.scrollLeft),
         betweenColumns: Math.round(secondRect.left - firstRect.right),
         right: Math.round(scroll.scrollWidth - (boardRect.right - scrollRect.left + scroll.scrollLeft)),
         bottom: Math.round(scrollRect.bottom - boardRect.bottom),
+        headerLeft: Math.round(firstHeaderRect.left - firstRect.left),
+        headerRight: Math.round(firstRect.right - firstHeaderRect.right),
       };
     });
     expect(spacing).toEqual({
+      layoutTop: 0,
       top: 60,
+      topGapInsideBoard: true,
       left: 60,
       betweenColumns: 60,
       right: 60,
       bottom: 60,
+      headerLeft: 12,
+      headerRight: 12,
     });
     await screenshot(page, `taskboard-spacing-${scenario.theme}-${scenario.width}.png`);
   }

@@ -60,6 +60,7 @@
   --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
   --taskboard-spacing: 60px;
   --taskboard-section-gap: var(--taskboard-spacing);
+  --column-header-inline-gap: 12px;
   --z-navigation: 10;
   --z-popover: 20;
 }
@@ -9361,7 +9362,7 @@ kbd {
   max-width: none;
   min-width: 0;
   min-height: 0;
-  margin: var(--taskboard-section-gap) 0 0;
+  margin: 0;
   padding: 0;
   column-gap: 0;
   overflow: hidden;
@@ -9390,7 +9391,7 @@ kbd {
   max-width: var(--main-board-max-width, 1248px);
   min-width: 0;
   min-height: 0;
-  padding: 0 var(--taskboard-spacing) var(--taskboard-spacing);
+  padding: var(--taskboard-section-gap) var(--taskboard-spacing) var(--taskboard-spacing);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -9429,7 +9430,7 @@ kbd {
   top: auto;
   flex: 0 0 36px;
   height: 36px;
-  margin-bottom: 8px;
+  margin: 0 var(--column-header-inline-gap) 8px;
   padding: 0 16px;
   border-radius: 12px;
   background: transparent;
@@ -9462,7 +9463,7 @@ kbd {
 .board-column:not(:first-child) .column-header::before {
   position: absolute;
   top: 10px;
-  left: -20px;
+  left: calc(-20px - var(--column-header-inline-gap));
   width: 16px;
   height: 16px;
   background: center / 16px 16px no-repeat url("./assets/figma-taskboard/column-flow-arrow.svg");
