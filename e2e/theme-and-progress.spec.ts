@@ -367,7 +367,7 @@ test("light list view separates the white canvas from stronger category rows", a
 
   expect(colors).toEqual({
     canvas: "rgb(255, 255, 255)",
-    category: "rgb(232, 232, 239)",
+    category: "rgb(223, 241, 255)",
   });
   await screenshot(page, "list-view-surfaces-light-1440.png");
 });
