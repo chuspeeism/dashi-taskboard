@@ -11560,7 +11560,8 @@ kbd {
 
 /* Linear-style list */
 .issue-list-view {
-  padding: 12px 10px 24px;
+  margin-top: 0;
+  padding: 20px 10px 24px;
   background: var(--list-canvas);
 }
 

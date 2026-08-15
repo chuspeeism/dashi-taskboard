@@ -356,18 +356,31 @@ test("light list view separates the white canvas from stronger category rows", a
   await expect(categoryRows).toHaveCount(7);
 
   const colors = await page.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>(".board-toolbar");
     const canvas = document.querySelector<HTMLElement>(".issue-list-view");
     const category = document.querySelector<HTMLElement>(".issue-list-group-header");
-    if (!canvas || !category) throw new Error("Expected list canvas and category row");
+    if (!toolbar || !canvas || !category) {
+      throw new Error("Expected toolbar, list canvas, and category row");
+    }
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const categoryRect = category.getBoundingClientRect();
+    const topGapOwner = document.elementFromPoint(canvasRect.left + 20, toolbarRect.bottom + 10);
     return {
       canvas: getComputedStyle(canvas).backgroundColor,
       category: getComputedStyle(category).backgroundColor,
+      canvasTop: Math.round(canvasRect.top - toolbarRect.bottom),
+      categoryTop: Math.round(categoryRect.top - toolbarRect.bottom),
+      topGapIsListCanvas: Boolean(topGapOwner && canvas.contains(topGapOwner)),
     };
   });
 
   expect(colors).toEqual({
     canvas: "rgb(255, 255, 255)",
     category: "rgb(223, 241, 255)",
+    canvasTop: 0,
+    categoryTop: 20,
+    topGapIsListCanvas: true,
   });
   await screenshot(page, "list-view-surfaces-light-1440.png");
 });
