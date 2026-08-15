@@ -178,6 +178,6 @@ test("light and dark drop targets have explicit opaque surfaces above legacy tra
 
   assert.match(light, /background:\s*#[0-9a-f]{6}\s*;/i);
   assert.match(dark, /background:\s*#[0-9a-f]{6}\s*;/i);
-  assert.match(light, /box-shadow:[^;]*var\(--focus-ring\)/);
-  assert.match(dark, /box-shadow:[^;]*var\(--focus-ring\)/);
+  assert.doesNotMatch(light, /box-shadow/);
+  assert.doesNotMatch(dark, /box-shadow/);
 });

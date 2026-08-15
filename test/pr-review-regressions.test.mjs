@@ -59,10 +59,10 @@ test("task list activity queries project metadata while detail routes retain ful
   }
 });
 
-test("view tabs expose a visible keyboard focus indicator", () => {
+test("view tabs expose a visible borderless keyboard focus indicator", () => {
   assert.match(
     styles,
-    /button:focus-visible,[\s\S]*?\[tabindex\][^{]*\{[^}]*outline:\s*2px solid var\(--focus-ring\);[^}]*outline-offset:\s*1px;/s,
+    /body :focus-visible\s*\{[^}]*background-color:\s*var\(--surface-active\)\s*!important;[^}]*\}/s,
   );
-  assert.doesNotMatch(styles, /\.view-tab:focus-visible\s*\{[^}]*outline:\s*0;/s);
+  assert.match(styles, /body \*,[\s\S]*?outline:\s*0\s*!important;/s);
 });

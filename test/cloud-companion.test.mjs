@@ -35,11 +35,21 @@ function jsonResponse(payload, status = 200) {
 async function runCli(argv, overrides = {}) {
   const stdout = capture();
   const stderr = capture();
+  const explicitEnv = overrides.env ?? {};
+  const hasExplicitConnection = Boolean(
+    explicitEnv.CODEX_TASKBOARD_URL
+    || explicitEnv.CODEX_TASKBOARD_COMPANION_URL
+    || explicitEnv.CODEX_TASKBOARD_RUNTIME_FILE,
+  );
+  const env = {
+    ...(hasExplicitConnection ? {} : { CODEX_TASKBOARD_URL: "http://127.0.0.1:47823" }),
+    ...explicitEnv,
+  };
   const exitCode = await main(argv, {
     stdout: stdout.stream,
     stderr: stderr.stream,
-    env: {},
     ...overrides,
+    env,
   });
   return { exitCode, stdout, stderr };
 }

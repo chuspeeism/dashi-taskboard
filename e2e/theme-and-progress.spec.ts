@@ -8,6 +8,7 @@ import {
   type APIRequestContext,
   type APIResponse,
   type Frame,
+  type Locator,
   type Page,
 } from "@playwright/test";
 
@@ -169,6 +170,27 @@ async function screenshot(page: Page, filename: string) {
     path: path.join(SCREENSHOT_DIRECTORY, filename),
     fullPage: false,
   });
+}
+
+async function expectOverlayTopmost(overlay: Locator, label: string) {
+  await expect(overlay, `${label} is visible`).toBeVisible();
+  const stacking = await overlay.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const points = [
+      { x: rect.left + rect.width / 2, y: rect.top + Math.min(12, rect.height / 2) },
+      { x: rect.left + rect.width / 2, y: rect.bottom - Math.min(12, rect.height / 2) },
+    ];
+    return points.map((point) => {
+      const topElement = document.elementFromPoint(point.x, point.y);
+      return {
+        isOverlay: Boolean(topElement && element.contains(topElement)),
+        topElement: topElement instanceof HTMLElement
+          ? `${topElement.tagName.toLowerCase()}.${String(topElement.className).trim().replace(/\s+/g, ".")}`
+          : topElement?.nodeName ?? null,
+      };
+    });
+  });
+  expect(stacking.every((point) => point.isOverlay), `${label}: ${JSON.stringify(stacking)}`).toBe(true);
 }
 
 async function mountCodexFrame(page: Page): Promise<Frame> {
@@ -479,6 +501,126 @@ test("all taskboard views and overlays render without shadows", async ({ page })
       textShadow: "none",
       filter: "none",
     });
+  }
+});
+
+test("gantt view options stay above the timeline", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(boardPath({ theme: "light" }));
+  await waitForBoard(page);
+  await page.getByRole("button", { name: "甘特图", exact: true }).click();
+  await page.getByRole("button", { name: "时间轴视图选项" }).click();
+
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitemradio")).toHaveCount(3);
+  const stacking = await menu.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const point = {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.bottom - 12),
+    };
+    const topElement = document.elementFromPoint(point.x, point.y);
+    return {
+      bottom: Math.round(rect.bottom),
+      toolbarBottom: Math.round(document.querySelector<HTMLElement>(".board-toolbar")?.getBoundingClientRect().bottom ?? 0),
+      topElementIsMenu: Boolean(topElement && element.contains(topElement)),
+      topElement: topElement instanceof HTMLElement
+        ? `${topElement.tagName.toLowerCase()}.${topElement.className}`
+        : topElement?.nodeName ?? null,
+      toolbarZIndex: getComputedStyle(document.querySelector<HTMLElement>(".board-toolbar")!).zIndex,
+      zIndex: getComputedStyle(element).zIndex,
+    };
+  });
+  expect(stacking.bottom).toBeGreaterThan(stacking.toolbarBottom);
+  expect(stacking.topElementIsMenu, JSON.stringify(stacking)).toBe(true);
+  expect(stacking.zIndex).toBe("20");
+  await screenshot(page, "gantt-popup-layer-light.png");
+});
+
+test("all primary popups stay above page content", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(boardPath({ theme: "light" }));
+  await waitForBoard(page);
+
+  await page.getByRole("button", { name: "切换项目" }).click();
+  await expectOverlayTopmost(page.getByRole("menu", { name: "项目" }), "project switcher");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "筛选议题" }).click();
+  await expectOverlayTopmost(page.locator(".task-filter-menu"), "task filter");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "自动化" }).click();
+  await expectOverlayTopmost(page.getByRole("dialog", { name: "自动认领待办设置" }), "automation settings");
+  await page.keyboard.press("Escape");
+
+  await page.locator(`[data-task-id="${seed.progress.id}"]`).click({ button: "right" });
+  await expectOverlayTopmost(page.locator(".task-context-menu"), "task context menu");
+  await page.keyboard.press("Escape");
+
+  await page.locator(".header-create-button").click();
+  await expectOverlayTopmost(page.locator(".task-dialog"), "issue editor dialog");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "甘特图", exact: true }).click();
+  await page.getByRole("button", { name: "时间轴视图选项" }).click();
+  await expectOverlayTopmost(page.locator(".gantt-view-menu"), "gantt options");
+});
+
+test("visible typography follows the 14 16 18 20 scale and components have no borders", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(boardPath({ theme: "light" }));
+  await waitForBoard(page);
+
+  for (const viewName of ["议题看板", "列表视图", "甘特图", "仪表盘"]) {
+    await page.getByRole("button", { name: viewName, exact: true }).click();
+    const audit = await page.evaluate(() => {
+      const allowed = new Set([14, 16, 18, 20]);
+      const textOffenders: string[] = [];
+      const borderOffenders: string[] = [];
+      const elements = Array.from(document.body.querySelectorAll<HTMLElement>("*"));
+      for (const element of elements) {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const visible = style.display !== "none"
+          && style.visibility !== "hidden"
+          && Number(style.opacity) > 0
+          && rect.width > 0
+          && rect.height > 0;
+        if (!visible) continue;
+        const identity = element.className
+          ? `${element.tagName.toLowerCase()}.${String(element.className).trim().replace(/\\s+/g, ".")}`
+          : element.tagName.toLowerCase();
+        const hasOwnText = Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+        if (hasOwnText) {
+          const size = Number.parseFloat(style.fontSize);
+          if (!allowed.has(size)) textOffenders.push(`${identity}:${style.fontSize}`);
+        }
+        const borderWidth = [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+          .some((width) => Number.parseFloat(width) > 0);
+        if (borderWidth || Number.parseFloat(style.outlineWidth) > 0) {
+          borderOffenders.push(identity);
+        }
+      }
+      return {
+        textOffenders: textOffenders.slice(0, 30),
+        borderOffenders: borderOffenders.slice(0, 30),
+        navigationSizes: Array.from(document.querySelectorAll<HTMLElement>(".brand-row, .header-project-button, .view-tab"))
+          .filter((element) => element.getBoundingClientRect().width > 0)
+          .map((element) => getComputedStyle(element).fontSize),
+        pageHeadingSizes: Array.from(document.querySelectorAll<HTMLElement>("h1"))
+          .filter((element) => element.getBoundingClientRect().width > 0)
+          .map((element) => getComputedStyle(element).fontSize),
+      };
+    });
+    expect(audit.textOffenders, `${viewName} typography offenders`).toEqual([]);
+    expect(audit.borderOffenders, `${viewName} border offenders`).toEqual([]);
+    expect(audit.navigationSizes.every((size) => size === "16px")).toBe(true);
+    expect(audit.pageHeadingSizes.every((size) => size === "18px")).toBe(true);
   }
 });
 

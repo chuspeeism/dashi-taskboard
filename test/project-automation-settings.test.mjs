@@ -130,7 +130,7 @@ test("automation play and pause retain the exported 16px presentation", () => {
   assert.match(pauseIcon, /width="16" height="16" viewBox="0 0 16 16"/);
 });
 
-test("the automation menu reuses accessible board switches and keeps a visible select focus ring", () => {
+test("the automation menu reuses accessible board switches and keeps a visible borderless select focus state", () => {
   assert.match(menuSource, /const autoClaimLabelId = useId\(\)/);
   assert.match(menuSource, /const quotaLimitLabelId = useId\(\)/);
   assert.match(menuSource, /id=\{autoClaimLabelId\}[^]*?aria-labelledby=\{autoClaimLabelId\}/);
@@ -141,7 +141,7 @@ test("the automation menu reuses accessible board switches and keeps a visible s
   assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.quotaAware \? " is-on" : ""\}`\}/);
   assert.match(menuSource, /aria-checked=\{draft\.quotaAware\}/);
   assert.doesNotMatch(menuSource, /type="checkbox"/);
-  assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:[^;]*var\(--focus-ring\);/s);
+  assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*background:\s*var\(--surface-active\);/s);
   assert.match(styles, /\.project-automation-field select:disabled\s*\{[^}]*opacity:\s*1;/s);
   assert.match(styles, /\.board-setting-switch:disabled\s*\{[^}]*opacity:\s*1;/s);
   assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);

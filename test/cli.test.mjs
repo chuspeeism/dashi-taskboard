@@ -22,12 +22,24 @@ function response(payload, status = 200) {
 async function run(argv, fetchImplementation, overrides = {}) {
   const stdout = capture();
   const stderr = capture();
+  const explicitEnv = overrides.env ?? {};
+  const hasExplicitConnection = Boolean(
+    explicitEnv.CODEX_TASKBOARD_URL
+    || explicitEnv.CODEX_TASKBOARD_COMPANION_URL
+    || explicitEnv.CODEX_TASKBOARD_RUNTIME_FILE
+    || argv.some((value) => value === "--runtime-file" || value.startsWith("--runtime-file=")),
+  );
+  const env = {
+    ...(overrides.env === undefined ? { CODEX_THREAD_ID: "thread-current" } : {}),
+    ...(hasExplicitConnection ? {} : { CODEX_TASKBOARD_URL: "http://127.0.0.1:47823" }),
+    ...explicitEnv,
+  };
   const exitCode = await main(argv, {
     fetch: fetchImplementation,
     stdout: stdout.stream,
     stderr: stderr.stream,
-    env: { CODEX_THREAD_ID: "thread-current" },
     ...overrides,
+    env,
   });
   return {
     exitCode,

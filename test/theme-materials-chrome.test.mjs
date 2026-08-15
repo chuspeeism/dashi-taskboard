@@ -181,9 +181,9 @@ function dumpDomUntilSnapshot(executable, arguments_, options = {}) {
   });
 }
 
-function assertBlurredGlass(snapshot, label) {
+function assertNavigationGlass(snapshot, label) {
   assert.match(snapshot.backdrop, /blur\(18px\)/, `${label} must use the restrained navigation blur`);
-  assert.notEqual(snapshot.boxShadow, "none", `${label} must retain the glass edge shadow`);
+  assert.equal(snapshot.boxShadow, "none", `${label} must not use a shadow`);
 }
 
 function assertSolidContent(snapshot, label) {
@@ -253,13 +253,13 @@ test("Scheme A limits glass to navigation controls and keeps task content solid 
   assert.equal(light.contentSurface, "#ffffff");
   assert.match(light.fontFamily, /SF Pro Text/);
   assert.equal(light.materials.taskCard.background, "rgb(255, 255, 255)");
-  for (const key of GLASS_KEYS) assertBlurredGlass(light.materials[key], key);
+  for (const key of GLASS_KEYS) assertNavigationGlass(light.materials[key], key);
   for (const key of CONTENT_KEYS) assertSolidContent(light.materials[key], key);
 
   const dark = await capture("dark");
   assert.equal(dark.colorScheme, "dark");
   assert.notEqual(dark.accent, "");
-  for (const key of GLASS_KEYS) assertBlurredGlass(dark.materials[key], key);
+  for (const key of GLASS_KEYS) assertNavigationGlass(dark.materials[key], key);
   for (const key of CONTENT_KEYS) assertSolidContent(dark.materials[key], key);
 
   const reduced = await capture("light", [

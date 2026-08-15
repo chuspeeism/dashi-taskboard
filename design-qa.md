@@ -1,8 +1,8 @@
 # Dashi Taskboard Apple 浅色方案设计 QA
 
 - 日期：2026-08-16
-- 参考源：用户标注的仪表盘、议题看板、列表视图截图
-- 实现截图：`.artifacts/playwright/screenshots/dashboard-spacing-light-1440.png`、`.artifacts/playwright/screenshots/taskboard-spacing-light-1440.png`、`.artifacts/playwright/screenshots/list-view-surfaces-light-1440.png`
+- 参考源：用户标注的仪表盘、议题看板、列表视图和甘特图弹窗截图
+- 实现截图：`.artifacts/playwright/screenshots/dashboard-spacing-light-1440.png`、`.artifacts/playwright/screenshots/board-light-1440.png`、`.artifacts/playwright/screenshots/list-view-surfaces-light-1440.png`、`.artifacts/playwright/screenshots/gantt-popup-layer-light.png`
 - 验证视口：1440 × 900；补充响应式视口 900 × 760
 - 验证状态：浅色、深色、看板、列表、甘特图、仪表盘、项目浮层
 
@@ -16,16 +16,20 @@
 | 主要内容间距 | 混用 8/10/14/18/19 | 统一到 12/16/20/24 体系 | 通过 |
 | 列表分类背景 | 层级偏弱 | 浅色使用 `#F2F2F6`，画布使用 `#FFFFFF` | 通过 |
 | 投影 | 卡片、菜单、弹窗、导航存在投影 | 所有视图及浮层计算样式均无 box/text/drop shadow | 通过 |
+| 描边 | 组件与焦点状态混用描边 | 所有组件 border/outline 清零；键盘焦点改用实体背景反馈 | 通过 |
+| 字号 | 7–13px 小字与较大展示字号混用 | 全局仅 14/16/18/20px，最小 14px、最大 20px | 通过 |
+| 弹窗层级 | 甘特图选项被时间轴覆盖 | 导航建立独立顶层堆叠；6 类主要弹窗逐点验证位于页面最上层 | 通过 |
 
 ## Apple 风格审计
 
-- 排版：保留 SF Pro / PingFang 系统字体栈和原有信息层级。
+- 排版：保留 SF Pro / PingFang 系统字体栈；内文/小标题 14px、导航 16px、页面标题 18px、关键数字 20px。
 - 间距：页面与主要容器严格采用 12/16/20/24；图标光学校准、1px 分隔线和图表网格不作为布局间距。
 - 圆角：看板列 20px、列标题 12px，保持柔和且层级清楚。
 - 颜色：浅色画布采用冷灰白与实体白内容面；分类行采用 `#F2F2F6`；状态色仅用于语义提示。深色模式维持同构层级。
-- 层次：移除全部投影后，以实体底色、边框和留白区分层级；键盘焦点改用高对比轮廓，不依赖阴影。
+- 层次：移除全部投影和组件描边，以实体底色和留白区分层级；键盘焦点使用实体背景变化。
+- 弹窗：项目切换、任务筛选、自动化设置、任务右键菜单、任务编辑器、甘特图选项均验证上下两个采样点为页面最上层；无裁切或内容穿透。
 - 甘特图：数据画布维持满宽呈现，这是高密度时间轴的有意例外；其外围导航仍遵循统一间距。
-- 可访问性：浅色/深色 Axe serious/critical 为 0；焦点轮廓、文本对比和交互语义保留。
+- 可访问性：浅色/深色 Axe serious/critical 为 0；“等你确认”蓝色已加深以满足 14px 文本对比度；交互语义保留。
 
 ## 结论
 

@@ -29,7 +29,7 @@
   --accent: #0a84ff;
   --accent-hover: #0077ed;
   --accent-soft: rgba(10, 132, 255, 0.12);
-  --accent-text: #0066cc;
+  --accent-text: #005bb8;
   --action-fill: #0066cc;
   --action-fill-hover: #0057b8;
   --progress-accent: #0a84ff;
@@ -987,6 +987,8 @@ kbd {
 }
 
 .board-toolbar {
+  position: relative;
+  z-index: var(--z-popover);
   display: flex;
   flex: 0 0 44px;
   align-items: center;
@@ -1345,7 +1347,7 @@ kbd {
 
 .project-automation-field select:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  background: var(--surface-active);
 }
 
 .project-automation-field select:disabled {
@@ -9511,7 +9513,7 @@ kbd {
 
 :root[data-theme="dark"] .board-column.status-todo .column-header { color: #a970ff; }
 .board-column.status-in_progress .column-header { color: var(--column-progress-text); }
-.board-column.status-in_review .column-header { color: #317cff; }
+.board-column.status-in_review .column-header { color: var(--accent-text); }
 .board-column.status-blocked .column-header { color: #e5484d; }
 
 .column-actions {
@@ -12434,13 +12436,11 @@ kbd {
 :root:not([data-theme="dark"]) .board-column.is-drop-target {
   --board-column-surface: #e8f3ff;
   background: #e8f3ff;
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 :root[data-theme="dark"] .board-column.is-drop-target {
   --board-column-surface: #20334c;
   background: #20334c;
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 .brand-mark,
@@ -12515,16 +12515,47 @@ body,
 body *,
 body *::before,
 body *::after {
+  border-width: 0 !important;
   box-shadow: none !important;
+  outline: 0 !important;
   text-shadow: none !important;
 }
 
 body :focus-visible {
-  outline: 2px solid var(--focus-ring) !important;
-  outline-offset: 2px;
+  background-color: var(--surface-active) !important;
 }
 
 .board-column.is-drop-target {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  background: var(--drop-target-surface);
+}
+
+/* Apple type scale: body and component titles never fall below 14px. */
+body,
+body * {
+  font-size: 14px !important;
+}
+
+.brand-row,
+.brand-row > span,
+.header-project-button,
+.header-project-button .project-name,
+.view-tab,
+.primary-nav .nav-item {
+  font-size: 16px !important;
+  line-height: 20px;
+}
+
+h1,
+.dashboard-heading h1,
+.dialog-header h2,
+.issue-detail-title {
+  font-size: 18px !important;
+  line-height: 24px;
+}
+
+.dashboard-heading-value,
+.dashboard-metric-value,
+.task-progress-percent {
+  font-size: 20px !important;
+  line-height: 24px;
 }

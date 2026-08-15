@@ -193,6 +193,6 @@ test("the production bundle keeps real lazy and portal surfaces within the Schem
     assertSolid(result.normalColumn, `${theme} normal board column`);
     assertSolid(result.dropColumn, `${theme} drop-target board column`);
     assert.notEqual(result.dropColumn.background, result.normalColumn.background, `${theme} drop target must remain visibly distinct`);
-    assert.notEqual(result.dropColumn.boxShadow, "none", `${theme} drop target must retain a visible focus boundary`);
+    assert.equal(result.dropColumn.boxShadow, "none", `${theme} drop target must not use a shadow or outline`);
   }
 });
