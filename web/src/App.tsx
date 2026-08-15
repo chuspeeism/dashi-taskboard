@@ -165,7 +165,7 @@ type TasksLoadError = {
 type LoadError = ProjectLoadError | TasksLoadError;
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
-const TASKBOARD_SPACING = 60;
+const TASKBOARD_SPACING = 24;
 
 const AiChat = lazy(() => import("./components/AiChat").then((module) => ({
   default: module.AiChat,

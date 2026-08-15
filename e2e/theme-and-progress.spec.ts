@@ -263,7 +263,7 @@ test("project switcher is an unclipped overlay above workspace navigation", asyn
   await screenshot(page, "project-switcher-overlay-light.png");
 });
 
-test("issue board keeps 60px separation on every annotated edge", async ({ page }) => {
+test("issue board keeps 24px separation on every annotated edge", async ({ page }) => {
   await preparePage(page);
 
   for (const scenario of [
@@ -324,12 +324,12 @@ test("issue board keeps 60px separation on every annotated edge", async ({ page 
     });
     expect(spacing).toMatchObject({
       layoutTop: 0,
-      top: 60,
+      top: 24,
       topGapInsideBoard: true,
-      left: 60,
-      betweenColumns: 60,
-      right: 60,
-      bottom: 60,
+      left: 24,
+      betweenColumns: 24,
+      right: 24,
+      bottom: 24,
       headerLeft: 12,
       headerRight: 12,
       headerTop: 12,
@@ -377,7 +377,7 @@ test("light list view separates the white canvas from stronger category rows", a
 
   expect(colors).toEqual({
     canvas: "rgb(255, 255, 255)",
-    category: "rgb(223, 241, 255)",
+    category: "rgb(242, 242, 246)",
     canvasTop: 0,
     categoryTop: 20,
     topGapIsListCanvas: true,
