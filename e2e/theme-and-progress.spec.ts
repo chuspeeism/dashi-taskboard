@@ -293,6 +293,13 @@ test("issue board keeps 60px separation on every annotated edge", async ({ page 
       const firstHeader = columns[0].querySelector<HTMLElement>(".column-header");
       if (!firstHeader) throw new Error("Expected a column header");
       const firstHeaderRect = firstHeader.getBoundingClientRect();
+      const firstColumnStyle = getComputedStyle(columns[0]);
+      const firstHeaderStyle = getComputedStyle(firstHeader);
+      const contentSurfaceProbe = document.createElement("span");
+      contentSurfaceProbe.style.background = "var(--content-surface)";
+      document.body.append(contentSurfaceProbe);
+      const contentSurfaceBackground = getComputedStyle(contentSurfaceProbe).backgroundColor;
+      contentSurfaceProbe.remove();
       const topGapOwner = document.elementFromPoint(
         firstRect.left + 20,
         toolbarRect.bottom + 30,
@@ -308,9 +315,14 @@ test("issue board keeps 60px separation on every annotated edge", async ({ page 
         bottom: Math.round(scrollRect.bottom - boardRect.bottom),
         headerLeft: Math.round(firstHeaderRect.left - firstRect.left),
         headerRight: Math.round(firstRect.right - firstHeaderRect.right),
+        headerTop: Math.round(firstHeaderRect.top - firstRect.top),
+        columnRadius: firstColumnStyle.borderTopLeftRadius,
+        headerRadius: firstHeaderStyle.borderTopLeftRadius,
+        headerBackground: firstHeaderStyle.backgroundColor,
+        contentSurfaceBackground,
       };
     });
-    expect(spacing).toEqual({
+    expect(spacing).toMatchObject({
       layoutTop: 0,
       top: 60,
       topGapInsideBoard: true,
@@ -320,9 +332,44 @@ test("issue board keeps 60px separation on every annotated edge", async ({ page 
       bottom: 60,
       headerLeft: 12,
       headerRight: 12,
+      headerTop: 12,
+      columnRadius: "20px",
+      headerRadius: "12px",
     });
+    if (scenario.theme === "light") {
+      expect(spacing.headerBackground).toBe(spacing.contentSurfaceBackground);
+    }
     await screenshot(page, `taskboard-spacing-${scenario.theme}-${scenario.width}.png`);
   }
+});
+
+test("light list view separates the white canvas from stronger category rows", async ({ page }) => {
+  await preparePage(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(boardPath({ theme: "light" }));
+  await waitForBoard(page);
+  await page.getByRole("button", { name: "列表视图", exact: true }).click();
+
+  const listView = page.locator(".issue-list-view");
+  const categoryRows = page.locator(".issue-list-group-header");
+  await expect(listView).toBeVisible();
+  await expect(categoryRows).toHaveCount(7);
+
+  const colors = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLElement>(".issue-list-view");
+    const category = document.querySelector<HTMLElement>(".issue-list-group-header");
+    if (!canvas || !category) throw new Error("Expected list canvas and category row");
+    return {
+      canvas: getComputedStyle(canvas).backgroundColor,
+      category: getComputedStyle(category).backgroundColor,
+    };
+  });
+
+  expect(colors).toEqual({
+    canvas: "rgb(255, 255, 255)",
+    category: "rgb(232, 232, 239)",
+  });
+  await screenshot(page, "list-view-surfaces-light-1440.png");
 });
 
 test("completed is a visible board column and archive has a dedicated entry", async ({ page }) => {

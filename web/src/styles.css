@@ -15,6 +15,8 @@
   --surface-hover: #edf1f6;
   --surface-active: #e5ebf4;
   --column-header: #f1f3f6;
+  --list-canvas: #ffffff;
+  --list-category-surface: #e8e8ef;
   --text-primary: #202124;
   --text-secondary: #5f6368;
   --text-tertiary: #5f6670;
@@ -60,7 +62,10 @@
   --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
   --taskboard-spacing: 60px;
   --taskboard-section-gap: var(--taskboard-spacing);
+  --board-column-radius: 20px;
   --column-header-inline-gap: 12px;
+  --column-header-top-gap: 12px;
+  --column-header-radius: 12px;
   --z-navigation: 10;
   --z-popover: 20;
 }
@@ -78,6 +83,8 @@
   --surface-hover: #303034;
   --surface-active: #37373c;
   --column-header: #1d1d20;
+  --list-canvas: var(--bg);
+  --list-category-surface: var(--surface-muted);
   --text-primary: #eeeeef;
   --text-secondary: #b8b8bd;
   --text-tertiary: #96969c;
@@ -9430,9 +9437,9 @@ kbd {
   top: auto;
   flex: 0 0 36px;
   height: 36px;
-  margin: 0 var(--column-header-inline-gap) 8px;
+  margin: var(--column-header-top-gap) var(--column-header-inline-gap) 8px;
   padding: 0 16px;
-  border-radius: 12px;
+  border-radius: var(--column-header-radius);
   background: transparent;
 }
 
@@ -11554,6 +11561,7 @@ kbd {
 /* Linear-style list */
 .issue-list-view {
   padding: 12px 10px 24px;
+  background: var(--list-canvas);
 }
 
 .issue-list-groups {
@@ -11577,7 +11585,7 @@ kbd {
   padding: 0 12px;
   border: 0;
   border-radius: 8px;
-  background: var(--surface-muted);
+  background: var(--list-category-surface);
   color: var(--text-secondary);
   text-align: left;
   transition: background 100ms ease;
@@ -12412,6 +12420,7 @@ kbd {
 
 .board-column {
   background: var(--board-column-surface);
+  border-radius: var(--board-column-radius);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
@@ -12440,7 +12449,7 @@ kbd {
 }
 
 :root:not([data-theme="dark"]) .board-column.status-todo .column-header {
-  background: var(--surface-muted);
+  background: var(--content-surface);
   color: var(--text-secondary);
 }
 
