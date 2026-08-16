@@ -19,7 +19,7 @@ export const STATUS_DETAILS: Record<
   in_progress: { label: "处理中", tone: "progress" },
   in_review: { label: "等你确认", tone: "review" },
   blocked: { label: "遇到阻碍", tone: "blocked" },
-  done: { label: "完成", tone: "done" },
+  done: { label: "已完成", tone: "done" },
   canceled: { label: "取消", tone: "canceled" },
 };
 

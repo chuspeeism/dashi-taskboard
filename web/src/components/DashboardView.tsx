@@ -377,6 +377,11 @@ export function DashboardView({
   if (monthMarkers[0]?.weekIndex !== 0) {
     monthMarkers.unshift({ weekIndex: 0, label: monthFormatter.format(contributionStart) });
   }
+  const visibleMonthMarkers = monthMarkers.filter((marker, index) => (
+    index > 0
+    || monthMarkers.length === 1
+    || monthMarkers[1].weekIndex - marker.weekIndex >= 3
+  ));
 
   const attentionItems = activeTasks
     .filter((task) => task.status === "blocked" || presentations[task.id]?.unread)
@@ -640,7 +645,7 @@ export function DashboardView({
             <div className="dashboard-contribution-body">
               <div className="dashboard-contribution-chart">
                 <div className="dashboard-contribution-months" aria-hidden="true">
-                  {monthMarkers.map((marker) => (
+                  {visibleMonthMarkers.map((marker) => (
                     <span
                       style={{ gridColumn: marker.weekIndex + 1 }}
                       key={`${marker.weekIndex}-${marker.label}`}

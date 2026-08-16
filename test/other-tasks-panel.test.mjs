@@ -6,6 +6,7 @@ const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url),
 const statusSource = await readFile(new URL("../web/src/issueBoardStatuses.ts", import.meta.url), "utf8");
 const boardColumnSource = await readFile(new URL("../web/src/components/BoardColumn.tsx", import.meta.url), "utf8");
 const panelSource = await readFile(new URL("../web/src/components/OtherTasksPanel.tsx", import.meta.url), "utf8");
+const contextMenuSource = await readFile(new URL("../web/src/components/TaskContextMenu.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 
 function statusList(name) {
@@ -24,8 +25,8 @@ function cssBlock(selector) {
 }
 
 test("the issue workspace projects the seven statuses into adaptive main and secondary groups", () => {
-  assert.deepEqual(statusList("MAIN_STATUSES"), ["todo", "in_progress", "blocked", "in_review"]);
-  assert.deepEqual(statusList("SECONDARY_STATUSES"), ["backlog", "done", "canceled"]);
+  assert.deepEqual(statusList("MAIN_STATUSES"), ["todo", "in_progress", "blocked", "in_review", "done"]);
+  assert.deepEqual(statusList("SECONDARY_STATUSES"), ["backlog", "canceled"]);
   assert.match(statusSource, /satisfies readonly TaskStatus\[\]/);
   assert.match(appSource, /const mainStatuses = hasBlockedTasks[\s\S]*?MAIN_STATUSES\.filter\(\(status\) => status !== "blocked"\)/);
   assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?<BoardColumn/);
@@ -34,15 +35,20 @@ test("the issue workspace projects the seven statuses into adaptive main and sec
   assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
   assert.match(boardColumnSource, /blocked: \{ label: "遇到阻碍", tone: "blocked" \}/);
   assert.match(boardColumnSource, /in_review: \{ label: "等你确认", tone: "review" \}/);
+  assert.match(boardColumnSource, /done: \{ label: "已完成", tone: "done" \}/);
+  assert.match(contextMenuSource, /task\.status === "done"[\s\S]*?"继续任务"[\s\S]*?onStatusChange\(task, "in_progress"\)/);
 });
 
 test("other tasks is a closed-by-default non-modal panel with archived issues", () => {
   assert.match(appSource, /useState\(false\)/);
   assert.match(appSource, /useState<OtherTaskTab>\("backlog"\)/);
   assert.match(statusSource, /OTHER_TASK_TABS = \[[\s\S]*?\.\.\.SECONDARY_STATUSES,[\s\S]*?"archived"/);
-  assert.match(appSource, /className=\{`other-tasks-trigger\$\{otherTasksOpen \? " is-open" : ""\}`\}/);
+  assert.match(appSource, /className=\{`archive-tasks-trigger\$\{otherTasksOpen && otherTasksTab === "archived" \? " is-open" : ""\}`\}/);
+  assert.match(appSource, /text\("打开归档", "Open archive"\)/);
+  assert.match(appSource, /<span>\{text\("归档", "Archive"\)\}<\/span>/);
+  assert.match(appSource, /className=\{`other-tasks-trigger\$\{otherTasksOpen && otherTasksTab !== "archived" \? " is-open" : ""\}`\}/);
   assert.match(appSource, /aria-controls="other-tasks-panel"/);
-  assert.match(appSource, /aria-expanded=\{otherTasksOpen\}/);
+  assert.match(appSource, /aria-expanded=\{otherTasksOpen && otherTasksTab === "archived"\}/);
   assert.match(appSource, /otherTasksMounted && \([\s\S]*?<OtherTasksPanel/);
   assert.match(appSource, /open=\{otherTasksVisible\}/);
   assert.match(panelSource, /<aside[\s\S]*?id="other-tasks-panel"/);

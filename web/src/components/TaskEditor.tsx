@@ -748,6 +748,7 @@ export function TaskEditor({
                     className={`board-setting-switch${createMore ? " is-on" : ""}`}
                     role="switch"
                     aria-checked={createMore}
+                    aria-label={text("创建更多", "Create more")}
                     disabled={saving}
                     onClick={() => setCreateMore((current) => !current)}
                   >

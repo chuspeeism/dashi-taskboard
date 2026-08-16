@@ -72,6 +72,9 @@ import {
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { buildIssueUrl, readIssueIdentifier } from "../issueRoute";
 import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
+import type { TaskCardPresentation } from "../taskConversations";
+import { presentTaskProgress } from "../taskProgress.mjs";
+import { TaskProgressSummary } from "./TaskProgressSummary";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
 import { MarkdownDocument } from "./MarkdownDocument";
@@ -80,6 +83,7 @@ type TaskDetailError = string | readonly [string, string];
 
 interface TaskDetailProps {
   task: Task;
+  presentation: TaskCardPresentation;
   tasks: Task[];
   currentUser: ActorIdentity;
   availableLabels: string[];
@@ -382,6 +386,7 @@ function ConversationLink({
 
 export function TaskDetail({
   task,
+  presentation,
   tasks,
   currentUser,
   availableLabels,
@@ -915,6 +920,18 @@ export function TaskDetail({
                   onKeyDown={handleTitleKeyDown}
                   onBlur={() => void saveTitle()}
                 />
+                {currentTask.status === "in_progress" && (
+                  <div className={`task-detail-progress${presentation.processing.running ? " is-running" : " is-paused"}`}>
+                    <TaskProgressSummary processing={presentation.processing} />
+                    {presentTaskProgress(presentation.processing) === null && (
+                      <span className="task-detail-progress-activity">
+                        {presentation.processing.running
+                          ? text("正在处理", "Processing")
+                          : text("已暂停", "Paused")}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <IssueParentLink
                   task={currentTask}
                   tasks={tasks}
@@ -1440,6 +1457,7 @@ export function TaskDetail({
                         className={`board-setting-switch${changeStatusToTodo ? " is-on" : ""}`}
                         role="switch"
                         aria-checked={changeStatusToTodo}
+                        aria-label={text("改变状态为等待认领", "Change status to Todo")}
                         disabled={submitting}
                         onClick={() => setChangeStatusToTodo((current) => !current)}
                       >

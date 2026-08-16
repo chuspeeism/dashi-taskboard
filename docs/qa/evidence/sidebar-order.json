@@ -1,0 +1,24 @@
+{
+  "method": "read-only CDP Runtime.evaluate",
+  "page": {
+    "title": "Codex",
+    "url": "app://-/index.html"
+  },
+  "plugins": {
+    "candidateCount": 0,
+    "element": null,
+    "row": null
+  },
+  "taskboard": {
+    "candidateCount": 0,
+    "element": null,
+    "row": null
+  },
+  "sameSidebarContainer": false,
+  "pluginsIndex": -1,
+  "taskboardIndex": -1,
+  "pluginsToTaskboardPosition": "MISSING",
+  "visibleEntriesBetween": [],
+  "passesAfterPlugins": false,
+  "conclusion": "NOT RUN: no visible Plugins or Taskboard-owned DOM node was exposed to this bounded, read-only CDP evaluation."
+}

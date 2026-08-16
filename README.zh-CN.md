@@ -12,6 +12,12 @@
 - 构建 macOS App 和 DMG：Xcode Command Line Tools、Rust 1.88 或更高版本，以及 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` target。`npm install` 会安装本项目使用的 Tauri CLI。
 - 构建 Windows NSIS：Microsoft Store 版 Codex App、Rust 1.88 或更高版本，以及带 C++ 工作负载和 Windows SDK 的 Visual Studio Build Tools。
 
+## Apple Light A 变体
+
+本分支默认采用适配 Codex 的 Apple Light A，并保留随宿主切换的深色模式。议题看板显示等待认领、处理中、等你确认和已完成；阻塞列在有阻塞任务时出现。归档使用工具栏中带文字和数量的独立入口。已完成任务仍可编辑、继续到处理中或归档，归档记录可恢复。
+
+项目切换菜单使用不受工作区裁切的浮层，工具栏与任务主体保持 40px 纵向间距。详细启动、数据位置和安全回滚见[安装与回滚指南](docs/INSTALL-APPLE-LIGHT-A.zh-CN.md)，最终浏览器、Axe 与 Codex 入口证据见[Apple Light A QA](docs/qa/apple-light-a-qa.md)。
+
 ## 本地运行
 
 ```bash
@@ -148,7 +154,7 @@ npm run codex:inject -- --port 9229 --open
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `CODEX_TASKBOARD_HOST` | `0.0.0.0` | HTTP 绑定地址；使用 `127.0.0.1` 可禁用局域网访问 |
+| `CODEX_TASKBOARD_HOST` | `127.0.0.1` | HTTP 绑定地址；仅在明确需要局域网共享时才设为 `0.0.0.0` |
 | `CODEX_TASKBOARD_PORT` | `47823` | 本地 HTTP 端口 |
 | `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite 数据目录 |
 | `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API 源地址 |

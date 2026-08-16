@@ -11,6 +11,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   isAutomationModel,
   isAutomationReasoningEffort,
@@ -87,6 +88,11 @@ import {
   postEmbeddedHostMessage,
   setEmbeddedFrameChallenge,
 } from "./embeddedHost.mjs";
+import {
+  resolveTaskboardTheme,
+  themeFromHostMessage,
+  type TaskboardTheme,
+} from "./theme.mjs";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
 import {
   getTaskboardI18n,
@@ -139,7 +145,6 @@ import {
 import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPolling.mjs";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
-type Theme = "light" | "dark";
 type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
@@ -160,6 +165,7 @@ type TasksLoadError = {
 type LoadError = ProjectLoadError | TasksLoadError;
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
+const TASKBOARD_SPACING = 24;
 
 const AiChat = lazy(() => import("./components/AiChat").then((module) => ({
   default: module.AiChat,
@@ -368,18 +374,6 @@ const EVENT_NAMES = [
   "project.labels.updated",
   "workflow.updated",
 ] as const;
-
-function isTheme(value: unknown): value is Theme {
-  return value === "light" || value === "dark";
-}
-
-function getInitialTheme(): Theme {
-  const fromQuery = new URLSearchParams(window.location.search).get("theme");
-  if (isTheme(fromQuery)) return fromQuery;
-  const stored = taskboardStorage.getItem("taskboard.theme");
-  if (isTheme(stored)) return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
 
 function readDeviceWorkspacePaths(): Record<string, string> {
   try {
@@ -674,7 +668,16 @@ export function App() {
   const host = query.get("host");
   const embedded = host === "codex" || host === "workbuddy";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [hostTheme, setHostTheme] = useState<TaskboardTheme | null>(null);
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  const theme = resolveTaskboardTheme({
+    embedded,
+    hostTheme,
+    queryTheme: query.get("theme"),
+    systemDark,
+  });
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const language = resolveTaskboardLanguage(
     hostContext?.language ?? query.get("lang") ?? navigator.language,
@@ -754,6 +757,12 @@ export function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(
     () => taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
   );
+  const [projectMenuPosition, setProjectMenuPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -775,6 +784,7 @@ export function App() {
   const projectsRequestRef = useRef(0);
   const tasksRequestRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
+  const projectMenuButtonRef = useRef<HTMLButtonElement>(null);
   const undoSequenceRef = useRef(0);
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
@@ -1450,12 +1460,18 @@ export function App() {
     return () => window.removeEventListener("popstate", syncRouteFromLocation);
   }, [boardView, selectedProjectId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.embedded = String(embedded);
     document.documentElement.style.colorScheme = theme;
-    if (!embedded) taskboardStorage.setItem("taskboard.theme", theme);
   }, [embedded, theme]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateSystemTheme = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    media.addEventListener("change", updateSystemTheme);
+    return () => media.removeEventListener("change", updateSystemTheme);
+  }, []);
 
   useEffect(() => {
     if (selectedProjectId) setBoardView(readProjectBoardView(selectedProjectId));
@@ -1497,6 +1513,41 @@ export function App() {
     return () => {
       document.removeEventListener("pointerdown", closeProjectMenu);
       window.removeEventListener("keydown", closeProjectMenuWithEscape);
+    };
+  }, [projectMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!projectMenuOpen) {
+      setProjectMenuPosition(null);
+      return;
+    }
+
+    function positionProjectMenu() {
+      const button = projectMenuButtonRef.current;
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      const viewportPadding = 12;
+      const menuGap = 5;
+      const width = Math.min(240, window.innerWidth - viewportPadding * 2);
+      const left = Math.min(
+        Math.max(viewportPadding, rect.left - 4),
+        window.innerWidth - width - viewportPadding,
+      );
+      const top = Math.min(rect.bottom + menuGap, window.innerHeight - viewportPadding);
+      setProjectMenuPosition({
+        left,
+        top,
+        width,
+        maxHeight: Math.max(120, window.innerHeight - top - viewportPadding),
+      });
+    }
+
+    positionProjectMenu();
+    window.addEventListener("resize", positionProjectMenu);
+    window.addEventListener("scroll", positionProjectMenu, true);
+    return () => {
+      window.removeEventListener("resize", positionProjectMenu);
+      window.removeEventListener("scroll", positionProjectMenu, true);
     };
   }, [projectMenuOpen]);
 
@@ -1561,10 +1612,11 @@ export function App() {
         return;
       }
 
-      if (message.type === "taskboard:theme" && isTheme(message.theme)) {
-        setTheme(message.theme);
-        return;
+      const receivedTheme = themeFromHostMessage(message);
+      if (receivedTheme) {
+        setHostTheme(receivedTheme);
       }
+      if (message.type === "taskboard:theme") return;
 
       if (message.type === "taskboard:thread-prepared" && message.payload) {
         const payload = message.payload as { taskId?: unknown; threadId?: unknown };
@@ -1611,7 +1663,6 @@ export function App() {
       const payload = message.payload as HostContext;
       setHostContext(payload);
       setCurrentUserActor(payload.user);
-      if (isTheme(payload.theme)) setTheme(payload.theme);
       if (host === "codex") void publishHostRuntime(payload);
     }
 
@@ -2059,10 +2110,10 @@ export function App() {
   const mainStatuses = hasBlockedTasks
     ? MAIN_STATUSES
     : MAIN_STATUSES.filter((status) => status !== "blocked");
-  const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * 24);
-  const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * 24);
+  const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * TASKBOARD_SPACING);
+  const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * TASKBOARD_SPACING);
   const otherTasksColumnCount = mainStatuses.length + 1;
-  const otherTasksWidth = `clamp(300px, calc(${100 / otherTasksColumnCount}% - ${(36 + (mainStatuses.length * 24)) / otherTasksColumnCount}px), 400px)`;
+  const otherTasksWidth = `clamp(300px, calc(${100 / otherTasksColumnCount}% - ${(36 + (mainStatuses.length * TASKBOARD_SPACING)) / otherTasksColumnCount}px), 400px)`;
 
   const taskPresentations = useMemo(() => Object.fromEntries(tasks.map((task) => {
     const unread = (task.status === "in_review" || task.status === "blocked")
@@ -2099,7 +2150,6 @@ export function App() {
     const timer = window.setInterval(() => setProcessingNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [hasRunningTask]);
-
 
   function selectBoardView(view: BoardView) {
     closeContextMenu();
@@ -3249,19 +3299,6 @@ export function App() {
                 ? text("实时同步", "Live sync")
                 : text("正在重新连接…", "Reconnecting…")}
             </div>
-            <button
-              type="button"
-              className="theme-toggle"
-              onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
-              aria-label={theme === "dark"
-                ? text("切换到浅色模式", "Switch to light theme")
-                : text("切换到深色模式", "Switch to dark theme")}
-            >
-              <span aria-hidden="true"><LinearIcon name={theme === "dark" ? "sun" : "moon"} /></span>
-              {theme === "dark"
-                ? text("浅色模式", "Light mode")
-                : text("深色模式", "Dark mode")}
-            </button>
           </div>
         </aside>
       )}
@@ -3294,11 +3331,13 @@ export function App() {
               )}
               <div className="header-project-switcher" data-project-switcher>
                 <button
+                  ref={projectMenuButtonRef}
                   className="header-project-button"
                   type="button"
                   aria-label={text("切换项目", "Switch project")}
                   aria-haspopup="menu"
                   aria-expanded={projectMenuOpen}
+                  aria-controls={projectMenuOpen ? "header-project-menu" : undefined}
                   onClick={() => {
                     setProjectContextMenu(null);
                     setProjectMenuOpen((current) => !current);
@@ -3307,8 +3346,20 @@ export function App() {
                   <span className="project-name">{headerProjectName}</span>
                   <TaskboardIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
-                {projectMenuOpen && (
-                  <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
+                {projectMenuOpen && projectMenuPosition && createPortal(
+                  <div
+                    id="header-project-menu"
+                    className="header-project-menu"
+                    data-project-switcher
+                    role="menu"
+                    aria-label={text("项目", "Projects")}
+                    style={{
+                      left: projectMenuPosition.left,
+                      top: projectMenuPosition.top,
+                      width: projectMenuPosition.width,
+                      maxHeight: projectMenuPosition.maxHeight,
+                    }}
+                  >
                     <span>{text("切换项目", "Switch project")}</span>
                     {projectChoices.map((project) => (
                       <button
@@ -3357,7 +3408,8 @@ export function App() {
                       <TaskboardIcon className="project-avatar" name="create" />
                       <span>{text("创建项目", "Create project")}</span>
                     </button>
-                  </div>
+                  </div>,
+                  document.body,
                 )}
               </div>
             </div>
@@ -3508,19 +3560,47 @@ export function App() {
               onChange={setFilters}
             />
             {boardView === "issues" && (
-              <button
-                className={`other-tasks-trigger${otherTasksOpen ? " is-open" : ""}`}
-                type="button"
-                aria-controls="other-tasks-panel"
-                aria-expanded={otherTasksOpen}
-                aria-label={otherTasksOpen
-                  ? text("关闭其他任务", "Close other issues")
-                  : text("打开其他任务", "Open other issues")}
-                title={text("其他任务", "Other issues")}
-                onClick={() => setOtherTasksOpen((current) => !current)}
-              >
-                <TaskboardIcon name="panel" />
-              </button>
+              <>
+                <button
+                  className={`archive-tasks-trigger${otherTasksOpen && otherTasksTab === "archived" ? " is-open" : ""}`}
+                  type="button"
+                  aria-controls="other-tasks-panel"
+                  aria-expanded={otherTasksOpen && otherTasksTab === "archived"}
+                  aria-label={otherTasksOpen && otherTasksTab === "archived"
+                    ? text("关闭归档", "Close archive")
+                    : text("打开归档", "Open archive")}
+                  onClick={() => {
+                    if (otherTasksOpen && otherTasksTab === "archived") setOtherTasksOpen(false);
+                    else {
+                      setOtherTasksTab("archived");
+                      setOtherTasksOpen(true);
+                    }
+                  }}
+                >
+                  <LinearIcon name="trash" />
+                  <span>{text("归档", "Archive")}</span>
+                  {archivedTasks.length > 0 && <b>{archivedTasks.length}</b>}
+                </button>
+                <button
+                  className={`other-tasks-trigger${otherTasksOpen && otherTasksTab !== "archived" ? " is-open" : ""}`}
+                  type="button"
+                  aria-controls="other-tasks-panel"
+                  aria-expanded={otherTasksOpen && otherTasksTab !== "archived"}
+                  aria-label={otherTasksOpen && otherTasksTab !== "archived"
+                    ? text("关闭其他任务", "Close other issues")
+                    : text("打开其他任务", "Open other issues")}
+                  title={text("其他任务", "Other issues")}
+                  onClick={() => {
+                    if (otherTasksOpen && otherTasksTab !== "archived") setOtherTasksOpen(false);
+                    else {
+                      if (otherTasksTab === "archived") setOtherTasksTab("backlog");
+                      setOtherTasksOpen(true);
+                    }
+                  }}
+                >
+                  <TaskboardIcon name="panel" />
+                </button>
+              </>
             )}
           </div>}
         </div>}
@@ -3549,6 +3629,7 @@ export function App() {
           <TaskDetail
             key={detailTask.id}
             task={detailTask}
+            presentation={taskPresentations[detailTask.id]}
             tasks={tasks}
             currentUser={currentUser}
             availableLabels={availableLabels}

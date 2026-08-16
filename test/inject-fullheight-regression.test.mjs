@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
@@ -8,6 +8,15 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+import { CdpPipeBrowser } from "../scripts/codex-cdp-pipe.mjs";
+import { chromeFixtureSkipReason, runChromeFixture } from "./support/chrome-fixture-policy.mjs";
+import {
+  chromeMaterialArguments,
+  chromeMaterialSpawnOptions,
+  closeOwnedChrome,
+  waitForMaterialSnapshot,
+} from "./support/chrome-material-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -176,6 +185,7 @@ function fixtureHtml(origin) {
     <script>eval(atob(${JSON.stringify(encodedSource)}));</script>
     <script>
       (async () => {
+        document.documentElement.dataset.fixturePhase = "injecting-taskboard";
         const publishHeartbeat = () => window.postMessage({
             type: "__codexTaskboardHostHeartbeatV1",
             capability: "fullheight-host-capability",
@@ -217,6 +227,8 @@ function fixtureHtml(origin) {
           injectionError: window.__injectionError,
         };
         document.getElementById("result").textContent = btoa(JSON.stringify(result));
+        document.documentElement.dataset.fixturePhase = "complete";
+        document.documentElement.dataset.result = encodeURIComponent(JSON.stringify(result));
         clearInterval(heartbeatTimer);
         window.__codexTaskboardInjection__?.destroy();
       })();
@@ -227,8 +239,9 @@ function fixtureHtml(origin) {
 
 test("Taskboard fills the workspace, opens HTTPS links and revokes hostile iframe navigation", async (t) => {
   const chrome = await chromeExecutable();
-  if (!chrome) {
-    t.skip("Chrome or Chromium is not installed");
+  const skipReason = chromeFixtureSkipReason(chrome);
+  if (skipReason) {
+    t.skip(skipReason);
     return;
   }
 
@@ -271,32 +284,31 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
   const profile = await mkdtemp(path.join(os.tmpdir(), "taskboard-fullheight-chrome-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const url = `http://127.0.0.1:${server.address().port}/fixture`;
-  let stdout;
-  try {
-    ({ stdout } = await execFileAsync(chrome, [
-      "--headless=new",
-      "--disable-gpu",
-      "--no-sandbox",
-      `--user-data-dir=${profile}`,
-      "--virtual-time-budget=12000",
-      "--dump-dom",
-      url,
-    ], { maxBuffer: 5 * 1024 * 1024, timeout: 20_000 }));
-  } catch (error) {
-    if (!String(error?.stdout ?? "").trim()) {
-      t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");
-      return;
+  const result = await runChromeFixture(chrome, async (executable) => {
+    const child = spawn(
+      executable,
+      chromeMaterialArguments({ profile, url }),
+      chromeMaterialSpawnOptions(),
+    );
+    const browser = new CdpPipeBrowser(child);
+    let session;
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    try {
+      await browser.open();
+      const { targetId } = await browser.send("Target.createTarget", { url });
+      session = await browser.connect(targetId);
+      await session.send("Runtime.enable");
+      return await waitForMaterialSnapshot(session);
+    } catch (error) {
+      const diagnostic = stderr.trim() ? `\nChrome stderr:\n${stderr.trim()}` : "";
+      throw new Error(`${error.message}${diagnostic}`, { cause: error });
+    } finally {
+      session?.close();
+      await closeOwnedChrome(browser, child);
     }
-    throw error;
-  }
-  if (!stdout.trim()) {
-    t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");
-    return;
-  }
-
-  const encodedResult = stdout.match(/<output id="result">([^<]+)<\/output>/)?.[1];
-  assert.ok(encodedResult, "fixture did not report an injection result");
-  const result = JSON.parse(Buffer.from(encodedResult, "base64").toString("utf8"));
+  });
   assert.deepEqual(result, {
     panelVisibleBefore: true,
     browserPanelClosed: true,

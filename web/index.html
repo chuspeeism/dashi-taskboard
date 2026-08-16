@@ -10,6 +10,21 @@
       content="A focused issue board for turning plans into finished work with Codex."
     />
     <title>Taskboard</title>
+    <script>
+      (() => {
+        const query = new URLSearchParams(window.location.search);
+        const host = query.get("host");
+        const embedded = host === "codex" || host === "workbuddy";
+        const queryTheme = query.get("theme");
+        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme = !embedded && (queryTheme === "light" || queryTheme === "dark")
+          ? queryTheme
+          : systemDark ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.embedded = String(embedded);
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

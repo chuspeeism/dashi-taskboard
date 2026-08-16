@@ -91,7 +91,7 @@ test("the current project is shown only in navigation, not in issue creation or 
 
 test("the project header exposes project, automation, and create controls", () => {
   assert.match(appSource, /className="header-project-button"[\s\S]*?aria-haspopup="menu"/);
-  assert.match(appSource, /className="header-project-menu" role="menu" aria-label=\{text\("项目", "Projects"\)\}/);
+  assert.match(appSource, /createPortal\([\s\S]*?className="header-project-menu"[\s\S]*?aria-label=\{text\("项目", "Projects"\)\}[\s\S]*?document\.body/);
   assert.match(appSource, /<ProjectAutomationMenu/);
   assert.match(appSource, /className="icon-button header-create-button"/);
   assert.match(styles, /\.header-project-menu \{[\s\S]*?-webkit-app-region: no-drag/);

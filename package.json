@@ -33,20 +33,23 @@
     "taskctl": "node cli/taskctl.mjs",
     "test": "node --test && npm run test:components",
     "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx --environment jsdom",
+    "test:loopback-safe": "node scripts/run-loopback-safe.mjs",
+    "test:e2e": "playwright test",
+    "check:ui": "npm run build:web && playwright test",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
     "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",
     "cloud:deploy:dry-run": "npm run build:web && wrangler deploy --dry-run",
     "cloud:deploy": "npm run build:web && wrangler deploy",
     "cloud:data": "node scripts/migrate-to-cloud.mjs",
-    "check": "npm run typecheck && npm run build && npm test"
+    "check": "npm run typecheck && npm run build && npm run test:loopback-safe"
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "^1.94.0",
     "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
     "dompurify": "^3.4.13",
-    "js-yaml": "4.1.1",
+    "js-yaml": "4.3.1",
     "mdast-util-definitions": "^6.0.0",
     "mermaid": "^11.16.1",
     "micromark-util-decode-string": "^2.0.1",
@@ -59,6 +62,8 @@
     "unified": "^11.0.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "2.11.4",
     "@types/js-yaml": "4.0.9",
     "@types/react": "^19.2.17",

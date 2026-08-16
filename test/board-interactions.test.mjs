@@ -13,6 +13,8 @@ const contextMenuSource = await readFile(new URL("../web/src/components/TaskCont
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
 const filterSource = await readFile(new URL("../web/src/taskFilters.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
+const workflowCatalogSource = await readFile(new URL("../web/src/components/workflowCatalog.ts", import.meta.url), "utf8");
+const projectSummarySource = await readFile(new URL("../server/project-summary.mjs", import.meta.url), "utf8");
 
 function workflowStatuses() {
   const match = typesSource.match(/export const TASK_STATUSES = (\[[\s\S]*?\]) as const/);
@@ -99,12 +101,17 @@ test("the complete Linear-style workflow shares one ordered status source", () =
   assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
   assert.match(boardColumnSource, /in_review: \{ label: "等你确认", tone: "review" \}/);
   assert.match(boardColumnSource, /blocked: \{ label: "遇到阻碍", tone: "blocked" \}/);
-  assert.match(boardColumnSource, /done: \{ label: "完成", tone: "done" \}/);
+  assert.match(boardColumnSource, /done: \{ label: "已完成", tone: "done" \}/);
   assert.match(boardColumnSource, /canceled: \{ label: "取消", tone: "canceled" \}/);
   assert.doesNotMatch(cardSource, /STATUS_ORDER/);
   assert.match(detailSource, /TASK_STATUSES\.map\(\(status\) =>/);
   assert.match(editorSource, /TASK_STATUSES\.map\(\(value\) =>/);
   assert.match(contextMenuSource, /TASK_STATUSES\.map\(\(status, index\) =>/);
+});
+
+test("workflow and project summary use the completed status label consistently", () => {
+  assert.match(workflowCatalogSource, /\{ value: "done", label: "已完成" \}/);
+  assert.match(projectSummarySource, /done: "已完成"/);
 });
 
 test("review, blocked and canceled statuses round-trip through filter URLs", () => {

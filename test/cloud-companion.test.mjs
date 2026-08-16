@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { main } from "../cli/taskctl.mjs";
 import { createTaskboardServer } from "../server/index.mjs";
+import { lanTestOptions } from "./support/safety-policy.mjs";
 
 const temporaryDirectories = [];
 
@@ -34,11 +35,21 @@ function jsonResponse(payload, status = 200) {
 async function runCli(argv, overrides = {}) {
   const stdout = capture();
   const stderr = capture();
+  const explicitEnv = overrides.env ?? {};
+  const hasExplicitConnection = Boolean(
+    explicitEnv.CODEX_TASKBOARD_URL
+    || explicitEnv.CODEX_TASKBOARD_COMPANION_URL
+    || explicitEnv.CODEX_TASKBOARD_RUNTIME_FILE,
+  );
+  const env = {
+    ...(hasExplicitConnection ? {} : { CODEX_TASKBOARD_URL: "http://127.0.0.1:47823" }),
+    ...explicitEnv,
+  };
   const exitCode = await main(argv, {
     stdout: stdout.stream,
     stderr: stderr.stream,
-    env: {},
     ...overrides,
+    env,
   });
   return { exitCode, stdout, stderr };
 }
@@ -650,7 +661,7 @@ test("configured server proxies business APIs without touching local rows and ad
   }
 });
 
-test("cloud mode exposes machine capabilities only to loopback while local mode keeps LAN access", async (t) => {
+test("cloud mode exposes machine capabilities only to loopback while local mode keeps LAN access", lanTestOptions(process.env), async (t) => {
   const lanAddress = firstLanAddress();
   if (!lanAddress) {
     t.skip("No non-loopback IPv4 interface is available");

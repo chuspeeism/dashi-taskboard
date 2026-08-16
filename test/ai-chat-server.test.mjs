@@ -6,6 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { createTaskboardServer } from "../server/index.mjs";
+import { lanTestOptions } from "./support/safety-policy.mjs";
 
 async function createServerFixture(host = "127.0.0.1") {
   const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-server-"));
@@ -320,7 +321,7 @@ test("thread management, interrupt and query contracts stay narrow", async () =>
   }
 });
 
-test("local AI routes reject private-LAN clients while ordinary API routes remain available", async (context) => {
+test("local AI routes reject private-LAN clients while ordinary API routes remain available", lanTestOptions(process.env), async (context) => {
   const address = privateLanAddress();
   if (!address) {
     context.skip("No private LAN interface is available");
