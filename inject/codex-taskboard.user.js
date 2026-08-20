@@ -1143,7 +1143,17 @@
         });
       }
       lastNativeThreadId = startedThreadId;
-      postToFrame({ type: "taskboard:thread-prepared", payload: { taskId, threadId: started.threadId } });
+      postToFrame({
+        type: "taskboard:thread-prepared",
+        payload: {
+          taskId,
+          threadId: started.threadId,
+          codexProjectId: codexProjectKind === "remote" ? requestedProjectId : lastNativeProjectId,
+          codexProjectKind,
+          codexHostId,
+          workspacePath: targetRoot,
+        },
+      });
     } catch (error) {
       postToFrame({
         type: "taskboard:thread-create-error",

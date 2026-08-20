@@ -296,20 +296,35 @@ test("issues start a native Codex conversation in the confirmed project with the
     /requestHost\("start-task-conversation", \{\s*taskId,\s*previousThreadId,\s*codexHostId,\s*targetRoot,\s*instruction,\s*title,\s*\}, TASK_CONVERSATION_REQUEST_TIMEOUT_MS\)/,
   );
   assert.match(source, /lastNativeThreadId = startedThreadId/);
-  assert.match(source, /type: "taskboard:thread-prepared", payload: \{ taskId, threadId: started\.threadId \}/);
+  assert.match(
+    source,
+    /type: "taskboard:thread-prepared",[\s\S]*?threadId: started\.threadId,[\s\S]*?codexProjectId: codexProjectKind === "remote" \? requestedProjectId : lastNativeProjectId,[\s\S]*?workspacePath: targetRoot/,
+  );
   assert.match(webApp, /Promise\.all\(\[getTask\(task\.id\), listComments\(task\.id\)\]\)/);
   assert.match(webApp, /moveTaskRequest\(latestTask, "in_progress", undefined, null\)/);
-  assert.match(webApp, /pendingRemoteThreadClaimsRef\.current\.set/);
+  assert.match(webApp, /pendingThreadClaimsRef\.current\.set/);
   assert.match(webApp, /完整描述[\s\S]*全部评论[\s\S]*开发上下文/);
   assert.match(webApp, /远程 worker 不得运行 taskctl/);
   assert.match(webApp, /title: task\.title,/);
   assert.match(webApp, /type: "taskboard:create-thread"/);
   assert.match(webApp, /codexProjectWorkspacePath: identity\.workspacePath/);
   assert.match(webApp, /workspacePath: identity\.workspacePath/);
-  assert.match(webApp, /const binding: CodexThreadBinding = \{ threadId, \.\.\.pending\.identity \}/);
+  assert.match(webApp, /const binding: CodexThreadBinding = \{ threadId, \.\.\.\(preparedIdentity \?\? pending\.identity\) \}/);
   assert.match(webApp, /moveTaskRequest\([\s\S]*pending\.claimedTask,[\s\S]*"in_progress",[\s\S]*binding/);
   assert.match(webApp, /pending\.previousTask\.status[\s\S]*binding/);
   assert.match(webApp, /type: "taskboard:open-thread",[\s\S]*?payload: binding/);
+  const localOpenStart = webApp.indexOf("async function openLocalTaskInThread");
+  const localOpenSource = webApp.slice(
+    localOpenStart,
+    webApp.indexOf("async function openTaskInThread", localOpenStart),
+  );
+  assert.match(localOpenSource, /const latestTask = await getTask\(task\.id\)/);
+  assert.match(localOpenSource, /latestTask\.status !== "todo"/);
+  assert.match(localOpenSource, /moveTaskRequest\(latestTask, "in_progress", undefined, null\)/);
+  assert.match(localOpenSource, /pendingThreadClaimsRef\.current\.set/);
+  assert.match(webApp, /const taskboardProject = projects\.find\(\(project\) => project\.id === task\.projectId\)/);
+  assert.match(webApp, /taskboardProject\?\.workspacePath[\s\S]*?deviceWorkspacePaths\[task\.projectId\]/);
+  assert.doesNotMatch(webApp, /const workspacePath = worktreePath[\s\S]*?selectedProject\?\.workspacePath/);
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {
