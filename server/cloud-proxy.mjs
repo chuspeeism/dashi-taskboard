@@ -222,6 +222,32 @@ export function createCloudProxy({
   const setProjectWorkspace = configStore?.setProjectWorkspace?.bind(configStore);
 
   return {
+    async webSocketTarget(pathname = "/api/events") {
+      const config = await readConfig();
+      if (!config?.remoteUrl || !config.actorName || !config.sharedKey) {
+        throw new CloudProxyError(
+          409,
+          "CLOUD_NOT_CONFIGURED",
+          "Cloud collaboration is not configured",
+        );
+      }
+      let remoteUrl;
+      try {
+        remoteUrl = normalizeCloudUrl(config.remoteUrl);
+      } catch (error) {
+        throw new CloudProxyError(
+          500,
+          "INVALID_CLOUD_CONFIG",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      const url = new URL(pathname, `${remoteUrl}/`);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return {
+        url: url.href,
+        headers: { authorization: basicAuthorization(config.actorName, config.sharedKey) },
+      };
+    },
     async forward(request) {
       const config = await readConfig();
       if (!config?.remoteUrl || !config.actorName || !config.sharedKey) {
@@ -252,6 +278,7 @@ export function createCloudProxy({
       headers.delete("host");
       headers.delete("connection");
       headers.delete("transfer-encoding");
+      headers.delete("accept-encoding");
       for (const name of [...headers.keys()]) {
         if (name.toLowerCase().startsWith("x-taskboard-user-")) headers.delete(name);
       }

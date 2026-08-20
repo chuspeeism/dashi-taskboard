@@ -625,11 +625,59 @@ test("the global revision is monotonic and lets clients poll only when data chan
   assert.equal(current.body.changed, false);
 });
 
+test("authenticated WebSockets receive a revision only after business data changes", async () => {
+  const unauthorized = await cloud.connectWebSocket();
+  assert.equal(unauthorized.response.status, 401);
+  assert.equal(unauthorized.socket, null);
+
+  const { response, socket } = await cloud.connectWebSocket("/api/events", {
+    actorName: alice,
+  });
+  assert.equal(response.status, 101);
+  assert.ok(socket);
+
+  const message = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for revision push")), 1_000);
+    socket.addEventListener("message", (event) => {
+      clearTimeout(timeout);
+      resolve(JSON.parse(event.data));
+    }, { once: true });
+  });
+  const created = await createTask("alpha", "WebSocket revision mutation", bob);
+  assert.equal(created.response.status, 201);
+  const payload = await message;
+  assert.equal(payload.type, "revision");
+  assert.ok(Number.isSafeInteger(payload.revision));
+  socket.close(1000, "test complete");
+});
+
+test("browser session cookie authenticates API reads and WebSocket reconnects", async () => {
+  const login = await cloud.request("/api/meta", { actorName: alice });
+  assert.equal(login.response.status, 200);
+  const setCookie = login.response.headers.get("set-cookie");
+  assert.match(setCookie, /^__Host-taskboard_session=/);
+  assert.match(setCookie, /; HttpOnly; Secure; SameSite=Strict$/);
+  const cookie = setCookie.split(";", 1)[0];
+
+  const projects = await cloud.request("/api/projects", {
+    headers: { cookie },
+  });
+  assert.equal(projects.response.status, 200);
+
+  const { response, socket } = await cloud.connectWebSocket("/api/events", { cookie });
+  assert.equal(response.status, 101);
+  assert.ok(socket);
+  socket.close(1000, "cookie authentication test complete");
+});
+
 test("cloud-only local capability routes return an explicit companion requirement", async () => {
   const meta = await cloud.request("/api/meta", { actorName: alice });
   assert.equal(meta.response.status, 200);
   assert.equal(meta.body.mode, "cloud");
-  assert.deepEqual(meta.body.realtime, { transport: "poll", intervalMs: 2000 });
+  assert.deepEqual(meta.body.realtime, {
+    transport: "websocket",
+    endpoint: "/api/events",
+  });
   assert.equal(meta.body.localCapabilities.available, false);
 
   for (const pathname of [

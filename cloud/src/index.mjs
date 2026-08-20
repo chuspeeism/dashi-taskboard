@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mjs";
 import { DEFAULT_LABEL_NAMES } from "../../shared/domain.mjs";
 
@@ -24,6 +26,50 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "image/webp",
   "text/plain",
 ]);
+const REALTIME_HUB_NAME = "global";
+const SESSION_COOKIE_NAME = "__Host-taskboard_session";
+const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
+
+export class RealtimeHub extends DurableObject {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/connect") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+        return json(426, {
+          error: { code: "WEBSOCKET_REQUIRED", message: "A WebSocket upgrade is required" },
+        }, { upgrade: "websocket" });
+      }
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    if (url.pathname === "/broadcast" && request.method === "POST") {
+      const payload = await request.json();
+      if (!Number.isSafeInteger(payload?.revision) || payload.revision < 0) {
+        return json(400, {
+          error: { code: "INVALID_REVISION", message: "revision must be non-negative" },
+        });
+      }
+      const message = JSON.stringify({ type: "revision", revision: payload.revision });
+      for (const socket of this.ctx.getWebSockets()) {
+        try {
+          socket.send(message);
+        } catch {
+          // The runtime will deliver the close/error event for stale sockets.
+        }
+      }
+      return empty(204);
+    }
+
+    return json(404, { error: { code: "NOT_FOUND", message: "Resource not found" } });
+  }
+
+  webSocketMessage(socket) {
+    socket.close(1008, "Client messages are not supported");
+  }
+}
 
 class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -382,6 +428,78 @@ function decodeBasicCredentials(header) {
   };
 }
 
+function encodeBase64Url(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function decodeBase64Url(value) {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function sessionSigningKey(sharedSecret, usage) {
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(sharedSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    usage,
+  );
+}
+
+async function createSessionCookie(username, sharedSecret) {
+  const payload = new TextEncoder().encode(JSON.stringify({
+    username,
+    expiresAt: Date.now() + SESSION_MAX_AGE_SECONDS * 1_000,
+  }));
+  const encodedPayload = encodeBase64Url(payload);
+  const key = await sessionSigningKey(sharedSecret, ["sign"]);
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(encodedPayload),
+  );
+  const token = `${encodedPayload}.${encodeBase64Url(new Uint8Array(signature))}`;
+  return `${SESSION_COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; HttpOnly; Secure; SameSite=Strict`;
+}
+
+function readCookie(request, name) {
+  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 1 || part.slice(0, separator).trim() !== name) continue;
+    return part.slice(separator + 1).trim();
+  }
+  return null;
+}
+
+async function decodeSessionUsername(request, sharedSecret) {
+  const token = readCookie(request, SESSION_COOKIE_NAME);
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  try {
+    const key = await sessionSigningKey(sharedSecret, ["verify"]);
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      decodeBase64Url(parts[1]),
+      new TextEncoder().encode(parts[0]),
+    );
+    if (!valid) return null;
+    const payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(
+      decodeBase64Url(parts[0]),
+    ));
+    if (!Number.isSafeInteger(payload?.expiresAt) || payload.expiresAt <= Date.now()) return null;
+    return stringField(payload.username, "session username", { required: true, maxLength: 120 });
+  } catch {
+    return null;
+  }
+}
+
 function unauthorized() {
   return json(
     401,
@@ -399,33 +517,46 @@ async function authenticate(request, env) {
     );
   }
   const credentials = decodeBasicCredentials(request.headers.get("authorization"));
-  if (!credentials) return null;
-  const encoder = new TextEncoder();
-  const [providedSecret, configuredSecret] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(credentials.password)),
-    crypto.subtle.digest("SHA-256", encoder.encode(env.TASKBOARD_SHARED_SECRET)),
-  ]);
-  if (!crypto.subtle.timingSafeEqual(providedSecret, configuredSecret)) return null;
-  const username = stringField(credentials.username, "Basic username", {
-    required: true,
-    maxLength: 120,
-  });
+  let username;
+  let sessionCookie = null;
+  if (credentials) {
+    const encoder = new TextEncoder();
+    const [providedSecret, configuredSecret] = await Promise.all([
+      crypto.subtle.digest("SHA-256", encoder.encode(credentials.password)),
+      crypto.subtle.digest("SHA-256", encoder.encode(env.TASKBOARD_SHARED_SECRET)),
+    ]);
+    if (!crypto.subtle.timingSafeEqual(providedSecret, configuredSecret)) return null;
+    username = stringField(credentials.username, "Basic username", {
+      required: true,
+      maxLength: 120,
+    });
+    sessionCookie = await createSessionCookie(username, env.TASKBOARD_SHARED_SECRET);
+  } else {
+    username = await decodeSessionUsername(request, env.TASKBOARD_SHARED_SECRET);
+    if (!username) return null;
+  }
   const userId = `basic:${encodeURIComponent(username.toLowerCase())}`;
   if (request.headers.get("x-taskboard-client") === "taskctl") {
     return {
-      type: "agent",
-      id: `${userId}:codex-agent`,
-      name: `Codex Agent (${username})`,
-      avatarUrl: null,
-      username,
+      actor: {
+        type: "agent",
+        id: `${userId}:codex-agent`,
+        name: `Codex Agent (${username})`,
+        avatarUrl: null,
+        username,
+      },
+      sessionCookie,
     };
   }
   return {
-    type: "user",
-    id: userId,
-    name: username,
-    avatarUrl: null,
-    username,
+    actor: {
+      type: "user",
+      id: userId,
+      name: username,
+      avatarUrl: null,
+      username,
+    },
+    sessionCookie,
   };
 }
 
@@ -2624,6 +2755,25 @@ function decodePathPart(value, label) {
   return decoded;
 }
 
+async function readGlobalRevision(env) {
+  return env.DB.prepare(`
+    SELECT revision FROM global_revision WHERE singleton = 1
+  `).first("revision");
+}
+
+function realtimeHub(env) {
+  return env.REALTIME_HUB.get(env.REALTIME_HUB.idFromName(REALTIME_HUB_NAME));
+}
+
+async function broadcastRevision(env, revision) {
+  const response = await realtimeHub(env).fetch("https://realtime.internal/broadcast", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ revision }),
+  });
+  if (!response.ok) throw new Error(`Realtime broadcast failed (${response.status})`);
+}
+
 async function attachmentContent(env, id, request, download = false) {
   const attachment = await requireAttachment(env, id);
   const object = await env.ATTACHMENTS.get(attachment.id);
@@ -2664,7 +2814,10 @@ async function routeApi(request, env, actor, url) {
     return json(200, {
       mode: "cloud",
       manageTaskboardSkillPath: null,
-      realtime: { transport: "poll", intervalMs: 2000 },
+      realtime: {
+        transport: "websocket",
+        endpoint: "/api/events",
+      },
       localCapabilities: { available: false },
     });
   }
@@ -2702,9 +2855,7 @@ async function routeApi(request, env, actor, url) {
         "'since' must be a non-negative integer",
       );
     }
-    const revision = await env.DB.prepare(`
-      SELECT revision FROM global_revision WHERE singleton = 1
-    `).first("revision");
+    const revision = await readGlobalRevision(env);
     return json(200, { changed: revision > since, revision });
   }
 
@@ -2723,11 +2874,11 @@ async function routeApi(request, env, actor, url) {
 
   if (pathname === "/api/events") {
     if (request.method !== "GET") methodNotAllowed(["GET"]);
-    throw new ApiError(
-      409,
-      "POLLING_REQUIRED",
-      "Cloud collaboration uses revision polling",
-    );
+    requireNoQuery(url, "GET /api/events");
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      throw new ApiError(426, "WEBSOCKET_REQUIRED", "A WebSocket upgrade is required");
+    }
+    return realtimeHub(env).fetch(new Request("https://realtime.internal/connect", request));
   }
 
   if (pathname === "/api/projects") {
@@ -2999,6 +3150,7 @@ async function routeApi(request, env, actor, url) {
 }
 
 function withSecurityHeaders(response) {
+  if (response.status === 101) return response;
   const secured = new Response(response.body, response);
   secured.headers.set("x-content-type-options", "nosniff");
   secured.headers.set("referrer-policy", "no-referrer");
@@ -3006,7 +3158,7 @@ function withSecurityHeaders(response) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/health") {
@@ -3014,14 +3166,27 @@ export default {
         return withSecurityHeaders(json(200, { status: "ok" }));
       }
 
-      const actor = await authenticate(request, env);
-      if (!actor) return withSecurityHeaders(unauthorized());
+      const authentication = await authenticate(request, env);
+      if (!authentication) return withSecurityHeaders(unauthorized());
 
-      const response = url.pathname.startsWith("/api/")
-        ? await routeApi(request, env, actor, url)
+      let response = url.pathname.startsWith("/api/")
+        ? await routeApi(request, env, authentication.actor, url)
         : env.ASSETS
           ? await env.ASSETS.fetch(request)
           : json(404, { error: { code: "NOT_FOUND", message: "Resource not found" } });
+      if (authentication.sessionCookie && response.status !== 101) {
+        response = new Response(response.body, response);
+        response.headers.append("set-cookie", authentication.sessionCookie);
+      }
+      if (
+        response.ok
+        && env.REALTIME_HUB
+        && url.pathname.startsWith("/api/")
+        && !["GET", "HEAD", "OPTIONS"].includes(request.method)
+      ) {
+        const revision = await readGlobalRevision(env);
+        ctx.waitUntil(broadcastRevision(env, revision).catch((error) => console.error(error)));
+      }
       return withSecurityHeaders(response);
     } catch (error) {
       if (error instanceof ApiError) {

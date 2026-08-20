@@ -40,10 +40,9 @@ export interface TaskboardMetadata {
   manageTaskboardSkillPath?: string;
   capabilities?: TaskboardCapabilities;
   mode?: "local" | "cloud";
-  realtime?: {
-    transport: "poll";
-    intervalMs: number;
-  };
+  realtime?:
+    | { transport: "poll"; intervalMs: number }
+    | { transport: "websocket"; endpoint: string };
   localCapabilities?: {
     available: boolean;
   };

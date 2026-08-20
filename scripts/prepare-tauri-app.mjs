@@ -209,6 +209,12 @@ async function copyApplicationResources() {
       { recursive: true },
     ),
   ]);
+  await mkdir(path.join(appResources, "node_modules"), { recursive: true });
+  await cp(
+    path.join(projectRoot, "node_modules", "ws"),
+    path.join(appResources, "node_modules", "ws"),
+    { recursive: true },
+  );
 
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [

@@ -40,9 +40,13 @@ export async function createCloudWorkerHarness({
     },
     d1Databases: { DB: "taskboard-test" },
     r2Buckets: { ATTACHMENTS: "taskboard-test-attachments" },
+    durableObjects: {
+      REALTIME_HUB: { className: "RealtimeHub", useSQLite: true },
+    },
     defaultPersistRoot: persistenceRoot,
     d1Persist: true,
     r2Persist: true,
+    durableObjectsPersist: true,
   });
 
   try {
@@ -105,9 +109,32 @@ export async function createCloudWorkerHarness({
       return { response, body };
     }
 
+    async function connectWebSocket(pathname = "/api/events", {
+      actorName,
+      password = sharedSecret,
+      cookie,
+    } = {}) {
+      const headers = new Headers({ upgrade: "websocket" });
+      if (actorName !== undefined) {
+        headers.set(
+          "authorization",
+          `Basic ${Buffer.from(`${actorName}:${password}`, "utf8").toString("base64")}`,
+        );
+      }
+      if (cookie !== undefined) headers.set("cookie", cookie);
+      const response = await miniflare.dispatchFetch(
+        new URL(pathname, "https://taskboard.example.test"),
+        { headers },
+      );
+      const socket = response.webSocket;
+      if (socket) socket.accept();
+      return { response, socket };
+    }
+
     return {
       attachments,
       db,
+      connectWebSocket,
       miniflare,
       request,
       sharedSecret,

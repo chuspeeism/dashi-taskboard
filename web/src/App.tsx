@@ -49,6 +49,7 @@ import {
   rebindAiChatComposerReferences,
   removeTaskRelation,
   resolveTaskboardUrl,
+  resolveTaskboardWebSocketUrl,
   restoreTask as restoreTaskRequest,
   setApiText,
   setCurrentUserActor,
@@ -142,7 +143,7 @@ import {
 } from "./workflowStore";
 // The poller stays in ESM JavaScript so its lifecycle can be tested directly with node:test.
 // @ts-expect-error The module's option contract is enforced by its focused node tests.
-import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPolling.mjs";
+import { createRevisionPoller, createRevisionWebSocketClient, getRevisionPollingInterval, getRevisionWebSocketConfig } from "./revisionPolling.mjs";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
@@ -807,6 +808,8 @@ export function App() {
   selectedProjectIdRef.current = selectedProjectId;
 
   const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
+  const revisionWebSocketConfig = getRevisionWebSocketConfig(taskboardMetadata);
+  const revisionWebSocketEndpoint = revisionWebSocketConfig?.endpoint ?? null;
   const textRef = useRef(text);
   textRef.current = text;
   setApiText(text);
@@ -1710,8 +1713,7 @@ export function App() {
       setTaskboardMetadata((current) => (
         current
         && current.mode === metadata.mode
-        && current.realtime?.transport === metadata.realtime?.transport
-        && current.realtime?.intervalMs === metadata.realtime?.intervalMs
+        && JSON.stringify(current.realtime) === JSON.stringify(metadata.realtime)
         && current.manageTaskboardSkillPath === metadata.manageTaskboardSkillPath
         && current.localCapabilities?.available === metadata.localCapabilities?.available
           ? current
@@ -1898,6 +1900,18 @@ export function App() {
     selectedDeviceWorkspacePath,
   ]);
 
+  const invalidateCloudData = useCallback(() => {
+    void refreshProjectList();
+    const projectId = selectedProjectIdRef.current;
+    if (projectId) {
+      void refreshTasks(projectId, { quiet: true });
+      void refreshWorkflowOptions(projectId).catch(() => {});
+    }
+    setWorkflowRevision((current) => current + 1);
+    setCommentsRevision((current) => current + 1);
+    setAttachmentsRevision((current) => current + 1);
+  }, [refreshProjectList, refreshTasks, refreshWorkflowOptions]);
+
   useEffect(() => {
     if (revisionPollingInterval === null) return;
     const controller = new AbortController();
@@ -1914,17 +1928,7 @@ export function App() {
           throw error;
         }
       },
-      onInvalidate: () => {
-        void refreshProjectList();
-        const projectId = selectedProjectIdRef.current;
-        if (projectId) {
-          void refreshTasks(projectId, { quiet: true });
-          void refreshWorkflowOptions(projectId).catch(() => {});
-        }
-        setWorkflowRevision((current) => current + 1);
-        setCommentsRevision((current) => current + 1);
-        setAttachmentsRevision((current) => current + 1);
-      },
+      onInvalidate: invalidateCloudData,
     });
     poller.start();
     return () => {
@@ -1933,9 +1937,26 @@ export function App() {
     };
   }, [
     revisionPollingInterval,
-    refreshProjectList,
-    refreshTasks,
-    refreshWorkflowOptions,
+    invalidateCloudData,
+  ]);
+
+  useEffect(() => {
+    if (revisionWebSocketEndpoint === null) return;
+    const controller = new AbortController();
+    const client = createRevisionWebSocketClient({
+      url: resolveTaskboardWebSocketUrl(revisionWebSocketEndpoint),
+      fetchRevision: (since: number) => getTaskboardRevision(since, controller.signal),
+      onInvalidate: invalidateCloudData,
+      onConnectionChange: setConnection,
+    });
+    client.start();
+    return () => {
+      controller.abort();
+      client.stop();
+    };
+  }, [
+    invalidateCloudData,
+    revisionWebSocketEndpoint,
   ]);
 
   function pushUndo(message: string | null, undo: () => Promise<void>) {

@@ -8,6 +8,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { WebSocket as WebSocketClient, WebSocketServer } from "ws";
 
 import {
   DEFAULT_PROJECT_ID,
@@ -2388,7 +2389,10 @@ export function createTaskboardServer(options = {}) {
           ...(capabilityCloudConfig?.remoteUrl
             ? {
               mode: "cloud",
-              realtime: { transport: "poll", intervalMs: 2000 },
+              realtime: {
+                transport: "websocket",
+                endpoint: "/api/events",
+              },
               localCapabilities: { available: true },
             }
             : {}),
@@ -3272,6 +3276,86 @@ export function createTaskboardServer(options = {}) {
     }
   });
 
+  const cloudRealtimeServer = new WebSocketServer({ noServer: true });
+  const cloudRealtimeSockets = new Set();
+
+  function rejectWebSocketUpgrade(socket, status, message) {
+    const body = `${message}\n`;
+    socket.end([
+      `HTTP/1.1 ${status} ${message}`,
+      "Connection: close",
+      "Content-Type: text/plain; charset=utf-8",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "",
+      body,
+    ].join("\r\n"));
+  }
+
+  function closeOrTerminateWebSocket(webSocket, code, reason) {
+    if (webSocket.readyState !== WebSocketClient.OPEN) {
+      webSocket.terminate();
+      return;
+    }
+    if (code >= 1000 && ![1004, 1005, 1006, 1015].includes(code)) {
+      webSocket.close(code, reason);
+    } else {
+      webSocket.terminate();
+    }
+  }
+
+  server.on("upgrade", async (request, socket, head) => {
+    try {
+      const incomingUrl = new URL(request.url, "http://127.0.0.1");
+      if (resolved.instanceToken) {
+        if (!incomingUrl.pathname.startsWith(`${routePrefix}/`)) {
+          rejectWebSocketUpgrade(socket, 404, "Not Found");
+          return;
+        }
+        request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
+      }
+      assertTrustedNetworkRequest(request, Boolean(resolved.instanceToken));
+      const url = new URL(request.url, "http://127.0.0.1");
+      if (url.pathname !== "/api/events" || [...url.searchParams.keys()].length > 0) {
+        rejectWebSocketUpgrade(socket, 404, "Not Found");
+        return;
+      }
+      assertLoopbackRequest(request);
+      const target = await cloudProxy.webSocketTarget("/api/events");
+      cloudRealtimeServer.handleUpgrade(request, socket, head, (localSocket) => {
+        const remoteSocket = new WebSocketClient(target.url, { headers: target.headers });
+        const pair = { localSocket, remoteSocket };
+        cloudRealtimeSockets.add(pair);
+        const removePair = () => cloudRealtimeSockets.delete(pair);
+
+        localSocket.on("message", () => {
+          localSocket.close(1008, "Client messages are not supported");
+        });
+        localSocket.on("close", (code, reason) => {
+          removePair();
+          closeOrTerminateWebSocket(remoteSocket, code, reason);
+        });
+        localSocket.on("error", () => remoteSocket.terminate());
+
+        remoteSocket.on("message", (data, isBinary) => {
+          if (localSocket.readyState === WebSocketClient.OPEN) {
+            localSocket.send(data, { binary: isBinary });
+          }
+        });
+        remoteSocket.on("close", (code, reason) => {
+          removePair();
+          closeOrTerminateWebSocket(localSocket, code, reason);
+        });
+        remoteSocket.on("error", () => {
+          if (localSocket.readyState === WebSocketClient.OPEN) {
+            localSocket.close(1011, "Cloud realtime connection failed");
+          }
+        });
+      });
+    } catch (error) {
+      rejectWebSocketUpgrade(socket, error?.status ?? 502, "WebSocket connection failed");
+    }
+  });
+
   let listening = false;
   return {
     database,
@@ -3303,6 +3387,12 @@ export function createTaskboardServer(options = {}) {
       return server.address();
     },
     async close() {
+      for (const { localSocket, remoteSocket } of cloudRealtimeSockets) {
+        localSocket.terminate();
+        remoteSocket.terminate();
+      }
+      cloudRealtimeSockets.clear();
+      cloudRealtimeServer.close();
       const serverClosed = listening
         ? new Promise((resolve, reject) => {
             server.close((error) => error ? reject(error) : resolve());

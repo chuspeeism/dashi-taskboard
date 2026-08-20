@@ -1,14 +1,10 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "codex-taskboard",
+  "name": "board",
   "main": "cloud/src/index.mjs",
   "compatibility_date": "2026-07-24",
-  "routes": [
-    {
-      "pattern": "taskboard.dsxzai.com",
-      "custom_domain": true
-    }
-  ],
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist/web",
     "binding": "ASSETS",
@@ -19,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "codex-taskboard-db",
-      "database_id": "6b90b71b-81e0-473a-a70c-470b388b7e99",
+      "database_id": "d711c6fb-2d82-4a50-baf1-289db5d54abf",
       "migrations_dir": "cloud/migrations"
     }
   ],
@@ -27,6 +23,20 @@
     {
       "binding": "ATTACHMENTS",
       "bucket_name": "codex-taskboard-attachments"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME_HUB",
+        "class_name": "RealtimeHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-realtime-hub",
+      "new_sqlite_classes": ["RealtimeHub"]
     }
   ]
 }

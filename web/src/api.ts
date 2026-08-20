@@ -73,6 +73,12 @@ export function resolveTaskboardUrl(path: string): string {
   return new URL(path.replace(/^\//, ""), document.baseURI).href;
 }
 
+export function resolveTaskboardWebSocketUrl(path: string): string {
+  const url = new URL(resolveTaskboardUrl(path));
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.href;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
