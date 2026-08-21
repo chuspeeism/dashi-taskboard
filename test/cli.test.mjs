@@ -98,6 +98,38 @@ test("--runtime-file reads the launcher endpoint without a leading environment a
   assert.equal(requestedUrl.toString(), "http://127.0.0.1:51550/token/api/projects");
 });
 
+test("WSL taskctl discovers the Windows launcher runtime descriptor from APPDATA", async () => {
+  let requestedUrl;
+  const runtimeFile = "/mnt/c/Users/admin/AppData/Roaming/Codex Taskboard/launcher-runtime.json";
+  const readPaths = [];
+  const result = await run(
+    ["project", "list"],
+    async (url) => {
+      requestedUrl = url;
+      return response({ projects: [] });
+    },
+    {
+      env: {
+        WSL_DISTRO_NAME: "Ubuntu",
+        APPDATA: "/mnt/c/Users/admin/AppData/Roaming",
+      },
+      readFile: async (filePath) => {
+        readPaths.push(filePath);
+        if (filePath === runtimeFile) {
+          return JSON.stringify({ version: 1, url: "http://127.0.0.1:51987/instance-token" });
+        }
+        const error = new Error("missing");
+        error.code = "ENOENT";
+        throw error;
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(requestedUrl.toString(), "http://127.0.0.1:51987/instance-token/api/projects");
+  assert.equal(readPaths.at(-1), runtimeFile);
+});
+
 test("project create sends id, name, and an absolute workspace path", async () => {
   let requestBody;
   const result = await run(

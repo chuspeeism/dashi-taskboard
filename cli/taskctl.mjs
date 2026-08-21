@@ -1070,30 +1070,59 @@ function resolveApiUrl(baseUrl, pathname) {
 async function resolveTaskboardBaseUrl(env, overrides) {
   if (env.CODEX_TASKBOARD_URL !== undefined) return env.CODEX_TASKBOARD_URL;
   const configuredDescriptorPath = env.CODEX_TASKBOARD_RUNTIME_FILE;
-  const descriptorPath = configuredDescriptorPath ?? sourceRuntimeFile;
-  let descriptor;
-  try {
-    const read = configuredDescriptorPath === undefined
-      ? readFile
-      : (overrides.readFile ?? readFile);
-    descriptor = JSON.parse(await read(descriptorPath, "utf8"));
-  } catch (error) {
-    if (configuredDescriptorPath === undefined && error?.code === "ENOENT") {
-      return DEFAULT_API_URL;
+  const descriptorCandidates = configuredDescriptorPath === undefined
+    ? [
+      { path: sourceRuntimeFile, read: readFile },
+      ...([resolveWslRuntimeFile(env)]
+        .filter(Boolean)
+        .map((descriptorPath) => ({
+          path: descriptorPath,
+          read: overrides.readFile ?? readFile,
+        }))),
+    ]
+    : [{
+      path: configuredDescriptorPath,
+      read: overrides.readFile ?? readFile,
+    }];
+
+  for (const { path: descriptorPath, read } of descriptorCandidates) {
+    try {
+      const descriptor = JSON.parse(await read(descriptorPath, "utf8"));
+      if (descriptor?.version !== 1 || typeof descriptor.url !== "string") {
+        throw new TaskctlError("The active Taskboard launcher endpoint is invalid", {
+          code: "INVALID_RESPONSE",
+          exitCode: 4,
+        });
+      }
+      return descriptor.url;
+    } catch (error) {
+      if (configuredDescriptorPath === undefined && error?.code === "ENOENT") continue;
+      if (error instanceof TaskctlError) throw error;
+      throw new TaskctlError("Cannot read the active Taskboard launcher endpoint", {
+        code: "SERVICE_UNAVAILABLE",
+        exitCode: 3,
+        details: error instanceof Error ? error.message : String(error),
+      });
     }
-    throw new TaskctlError("Cannot read the active Taskboard launcher endpoint", {
-      code: "SERVICE_UNAVAILABLE",
-      exitCode: 3,
-      details: error instanceof Error ? error.message : String(error),
-    });
   }
-  if (descriptor?.version !== 1 || typeof descriptor.url !== "string") {
-    throw new TaskctlError("The active Taskboard launcher endpoint is invalid", {
-      code: "INVALID_RESPONSE",
-      exitCode: 4,
-    });
+
+  return DEFAULT_API_URL;
+}
+
+function resolveWslRuntimeFile(env) {
+  if (process.platform !== "linux") return undefined;
+  if (env.CODEX_TASKBOARD_WSL_RUNTIME_FILE !== undefined) {
+    return env.CODEX_TASKBOARD_WSL_RUNTIME_FILE;
   }
-  return descriptor.url;
+
+  const appData = env.APPDATA;
+  const hasWindowsAppDataPath = /^\/mnt\/[a-z]\/Users\/[^/]+\/AppData\/Roaming$/i.test(appData ?? "");
+  const isWsl = env.WSL_DISTRO_NAME !== undefined
+    || env.WSL_INTEROP !== undefined
+    || env.WSLENV !== undefined
+    || hasWindowsAppDataPath;
+  if (!isWsl || !hasWindowsAppDataPath) return undefined;
+  return path.join(appData, "Codex Taskboard", "launcher-runtime.json");
 }
 
 async function resolveCompanionUrl(env, overrides) {
