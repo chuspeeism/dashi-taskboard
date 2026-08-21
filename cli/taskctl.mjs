@@ -902,13 +902,13 @@ function recurrenceFromOptions(options) {
 
 function resolveThreadId(options, overrides) {
   const env = overrides.env ?? process.env;
-  const value = options["thread-id"] ?? env.CODEX_THREAD_ID;
+  const value = options["thread-id"] ?? env.TASKBOARD_THREAD_ID ?? env.CODEX_THREAD_ID;
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw usageError("Codex conversation attribution requires --thread-id or CODEX_THREAD_ID");
+    throw usageError("Taskboard conversation attribution requires --thread-id or TASKBOARD_THREAD_ID/CODEX_THREAD_ID");
   }
   const threadId = value.trim();
   if (threadId.length > 256) {
-    throw usageError("--thread-id and CODEX_THREAD_ID cannot exceed 256 characters");
+    throw usageError("--thread-id, TASKBOARD_THREAD_ID, and CODEX_THREAD_ID cannot exceed 256 characters");
   }
   return threadId;
 }
