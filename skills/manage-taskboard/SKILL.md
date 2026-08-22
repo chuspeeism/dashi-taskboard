@@ -37,6 +37,8 @@ When writing Chinese, keep the English word or use **本地 companion** / **本�
 - Keep the project README focused on root overview and conventions; store detailed multi-page documentation in the local repository's `docs/` folder.
 - Preserve existing issue scope when adding requirements or acceptance details.
 - Add only relations that the work requires. Use parent for contained work, blocks or blocked_by for dependencies, and related for close association.
-- Let `taskctl` read `CODEX_THREAD_ID` for writes. Outside Codex, pass the exact conversation ID with `--thread-id`.
+- Let `taskctl` read `CODEX_THREAD_ID` for controller attribution. Outside Codex, pass the exact conversation ID with `--thread-id`. This value alone is not a complete task binding.
+- Any issue that the current conversation claims or continues must store a complete `threadBinding`: `threadId`, `codexProjectId`, `codexProjectKind`, `codexHostId`, and `workspacePath`. For an unbound local issue launched with injected Taskboard context, use the current `CODEX_THREAD_ID`, the injected project id and workspace path, `local` project kind, and `local` host id. Pass all five explicit `--binding-*` options on the claim and every later `issue move` that retains ownership. If any identity field is unavailable, stop before moving the issue to `in_progress`; never create a legacy binding containing only `threadId`.
+- When an issue already has a complete `threadBinding`, preserve its exact five saved values on every status write. Do not rebuild or replace it from the current context, and never take over a binding owned by another conversation.
 - Use the latest returned `version` with `--if-version` for concurrent updates. On conflict, read the issue again and reconcile before retrying.
 - Download and inspect an inline `![alt](api/attachments/<id>/content)` image only when it is needed to understand the requirement.
