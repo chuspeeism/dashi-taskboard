@@ -123,3 +123,145 @@ A requested batch is complete only when:
 - merged worktrees and feature branches are cleaned up;
 - task conversations remain available; and
 - any requested release is published and verified.
+
+# Setup
+
+This repository follows standard agent skill setup:
+
+## Agent Skills
+
+Skills are loaded from `~/.agents/skills/` (base platform) or IDE-specific locations like `~/.claude/skills/`, `~/.devin/skills/`, `~/.opencode/skills/`, etc.
+
+### Skill installation
+
+Copy or symlink `skills/manage-taskboard` to the appropriate IDE skill directory:
+
+```bash
+# Claude Code
+ln -s /path/to/dashi-taskboard/skills/manage-taskboard ~/.claude/skills/manage-taskboard
+
+# OpenCode
+ln -s /path/to/dashi-taskboard/skills/manage-taskboard ~/.opencode/skills/manage-taskboard
+
+# Devin
+ln -s /path/to/dashi-taskboard/skills/manage-taskboard ~/.devin/skills/manage-taskboard
+```
+
+## MCP registration
+
+The repository includes an MCP server in `mcp/` that provides Taskboard access via Model Context Protocol. Install it using the MCP registry or manually in your IDE configuration.
+
+### Configuration examples
+
+**Claude Desktop:**
+```json
+{
+  "mcpServers": {
+    "codex-taskboard": {
+      "command": "node",
+      "args": ["/path/to/dashi-taskboard/mcp/index.mjs"],
+      "cwd": "/path/to/dashi-taskboard/mcp"
+    }
+  }
+}
+```
+
+**OpenCode:**
+```json
+{
+  "mcp": {
+    "servers": {
+      "codex-taskboard": {
+        "command": "npx",
+        "args": ["mcp", "--server", "index.mjs"],
+        "cwd": "/path/to/dashi-taskboard/mcp"
+      }
+    }
+  }
+}
+```
+
+**Cursor:**
+```json
+{
+  "mcpServers": {
+    "codex-taskboard": {
+      "command": "node",
+      "args": ["/path/to/dashi-taskboard/mcp/index.mjs"],
+      "cwd": "/path/to/dashi-taskboard/mcp"
+    }
+  }
+}
+```
+
+## Runtime setup
+
+### Local development
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/afonsoft/dashi-taskboard
+   cd dashi-taskboard
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Build and start the service:
+   ```bash
+   npm run build
+   npm start
+   ```
+
+4. Access the Taskboard UI at <http://127.0.0.1:47823>
+
+5. Use the CLI from the project root or install it globally:
+   ```bash
+   npm link
+   taskctl project create --id my-project --name "My Project" --workspace-path /absolute/path/to/repository
+   ```
+
+### Integration with AI agents
+
+#### Claude Code
+
+Claude Code automatically uses the Taskboard skill if it's installed in `~/.claude/skills/manage-taskboard`. The skill will claim issues from `todo` status and work in the bound issue's branch/worktree.
+
+For manual thread attribution, set the environment variable:
+```bash
+export TASKBOARD_THREAD_ID=<conversation-id>
+```
+
+#### OpenCode
+
+OpenCode follows the same pattern. Install the skill in `~/.opencode/skills/manage-taskboard` and set `TASKBOARD_THREAD_ID` in your agent configuration.
+
+#### Cursor
+
+Cursor reads MCP configurations from `~/.cursor/mcp.json`. The MCP server provides unified access to Taskboard operations across all AI platforms.
+
+#### Gemini
+
+Gemini CLI reads MCP configurations from `~/.gemini/mcp.json` or supports direct MCP server connections.
+
+#### Devin
+
+Devin reads skills from `~/.devin/skills/` and follows the same issue processing workflow.
+
+## Cloud collaboration
+
+Set up cloud mode for shared access:
+
+```bash
+taskctl cloud login --url https://your-cloud-domain.com --actor-name "Team Member"
+```
+
+Configure the project mapping for local workspace:
+
+```bash
+taskctl project map my-project --workspace-path /absolute/path/to/repository
+```
+
+See `server/cloud-config.mjs` for authentication details and `wrangler.jsonc` for Cloudflare deployment configuration.
