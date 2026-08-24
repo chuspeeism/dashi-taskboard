@@ -90,6 +90,23 @@ test("health and the default local project are available", async () => {
   assert.equal(result.body.projects[0].issueCount, 0);
 });
 
+test("an empty named project can be deleted", async () => {
+  const baseUrl = await startServer();
+  const created = await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "named-project", name: "Named project" },
+  });
+  assert.equal(created.response.status, 201);
+
+  const deleted = await request(baseUrl, "/api/projects/named-project", {
+    method: "DELETE",
+  });
+  assert.equal(deleted.response.status, 204);
+
+  const projects = await request(baseUrl, "/api/projects");
+  assert.equal(projects.body.projects.some((project) => project.id === "named-project"), false);
+});
+
 test("launcher mode proves service identity and hides every route behind its instance token", async () => {
   const instanceToken = "7a6f8d37-78ce-46c9-87a8-08e10db88da2";
   const instanceSecret = "2e587946-96d6-47b5-930a-1ba70214fa88";
