@@ -127,6 +127,7 @@ interface TaskDetailProps {
   onOpenThread: (binding: CodexThreadBinding) => void;
   onOpenLegacyLocalThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
+  onOpenInKimi: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
   openingThread: boolean;
   onError: (message: TaskDetailError | null) => void;
@@ -386,6 +387,7 @@ export function TaskDetail({
   onOpenThread,
   onOpenLegacyLocalThread,
   onOpenInThread,
+  onOpenInKimi,
   onCopy,
   openingThread,
   onError,
@@ -1607,7 +1609,15 @@ export function TaskDetail({
                 <NewConversationIcon color="currentColor" />
                 <span>{openingThread
                   ? text("正在打开…", "Opening…")
-                  : text("在新对话打开", "Open in new conversation")}</span>
+                  : text("使用 Codex", "Use Codex")}</span>
+              </button>
+              <button
+                className="detail-open-thread-action is-kimi"
+                type="button"
+                onClick={() => onOpenInKimi(currentTask)}
+              >
+                <ConversationIcon color="currentColor" />
+                <span>{text("使用 Kimi", "Use Kimi")}</span>
               </button>
               {currentTask.externalUrl && (
                 <a

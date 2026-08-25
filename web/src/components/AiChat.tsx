@@ -51,6 +51,7 @@ import {
   serializeComposerDocument,
 } from "../aiChatState";
 import type {
+  AiAgentType,
   AiChatCatalog,
   AiChatEvent,
   AiChatAttachmentInput,
@@ -95,7 +96,18 @@ export type AiChatOpenThreadRequest = {
 } | {
   projectId: string;
   issueId: string | null;
+  agentType?: AiAgentType;
   composerText: string;
+  requestId: number;
+} | {
+  projectId: string;
+  issueId: string | null;
+  agentType?: AiAgentType;
+  composerDraft: {
+    ready: boolean;
+    revision: string;
+    document: ComposerDocument | ComposerPersistedDocument;
+  };
   requestId: number;
 };
 
@@ -165,6 +177,7 @@ type ComposerBeforeInput = {
 type DraftThreadOrigin = {
   projectId: string;
   issueId: string | null;
+  agentType: AiAgentType;
   codexProjectIdentity: CodexProjectIdentity | null;
 };
 type PanelResizeEdge = "top" | "left" | "top-left";
@@ -1576,6 +1589,10 @@ export function AiChat({
   ]);
 
   const selectedThreadSummary = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+  const activeAgentType = snapshot?.thread.agentType
+    ?? selectedThreadSummary?.agentType
+    ?? draftOrigin?.agentType
+    ?? "codex";
   const catalogProjectId = snapshot?.thread.origin.projectId
     ?? selectedThreadSummary?.origin.projectId
     ?? draftOrigin?.projectId
@@ -1748,7 +1765,7 @@ export function AiChat({
   const currentRun = snapshot?.thread.currentRun
     ?? snapshot?.runs.find((run) => run.status === "running")
     ?? null;
-  const visibleError = error ?? catalogError;
+  const visibleError = error ?? (activeAgentType === "codex" ? catalogError : null);
   const composerBlocked = Boolean(
     selectedThreadId && deletingThreadId === selectedThreadId,
   );
@@ -1834,6 +1851,7 @@ export function AiChat({
       setDraftOrigin({
         projectId: openThreadRequest.projectId,
         issueId: openThreadRequest.issueId,
+        agentType: openThreadRequest.agentType ?? "codex",
         codexProjectIdentity: openThreadRequest.projectId === projectId
           ? codexProjectIdentity
           : null,
@@ -1841,6 +1859,7 @@ export function AiChat({
       taskComposerDraftOriginRef.current = {
         projectId: openThreadRequest.projectId,
         issueId: openThreadRequest.issueId,
+        agentType: openThreadRequest.agentType ?? "codex",
         codexProjectIdentity: openThreadRequest.projectId === projectId
           ? codexProjectIdentity
           : null,
@@ -1941,6 +1960,7 @@ export function AiChat({
     setDraftOrigin({
       projectId: input.projectId,
       issueId: input.issueId ?? null,
+      agentType: "codex",
       codexProjectIdentity,
     });
     setSnapshot(null);
@@ -1952,7 +1972,12 @@ export function AiChat({
 
   async function createThreadForDraftOrigin(): Promise<AiChatThread | null> {
     const origin = draftOrigin ?? (
-      projectId ? { projectId, issueId, codexProjectIdentity } : null
+      projectId ? {
+        projectId,
+        issueId,
+        agentType: "codex" as const,
+        codexProjectIdentity,
+      } : null
     );
     const input = buildThreadCreateInput(origin?.projectId ?? "", origin?.issueId ?? null);
     if (!input) {
@@ -1969,26 +1994,30 @@ export function AiChat({
     };
     setLoading(true);
     try {
-      const targetCatalog = catalogLoadedProjectId === input.projectId && activeCatalog
-        ? activeCatalog
-        : await getAiChatCatalog(input.projectId, undefined, origin?.codexProjectIdentity);
-      const normalized = normalizeChatSelection(
-        targetCatalog.models,
-        inheritedSettings.model,
-        inheritedSettings.reasoningEffort,
-      );
-      const sandbox = targetCatalog.sandboxes.includes(inheritedSettings.sandbox)
-        ? inheritedSettings.sandbox
-        : targetCatalog.sandboxes.find(
-          (candidate): candidate is AiChatSandbox => candidate === "workspace-write",
-        ) ?? targetCatalog.sandboxes.find(isAiChatSandbox) ?? inheritedSettings.sandbox;
-      const settings = {
-        model: normalized?.model ?? inheritedSettings.model,
-        reasoningEffort: normalized?.reasoningEffort ?? inheritedSettings.reasoningEffort,
-        sandbox,
-      };
+      let settings = {};
+      if (origin?.agentType !== "kimi") {
+        const targetCatalog = catalogLoadedProjectId === input.projectId && activeCatalog
+          ? activeCatalog
+          : await getAiChatCatalog(input.projectId, undefined, origin?.codexProjectIdentity);
+        const normalized = normalizeChatSelection(
+          targetCatalog.models,
+          inheritedSettings.model,
+          inheritedSettings.reasoningEffort,
+        );
+        const sandbox = targetCatalog.sandboxes.includes(inheritedSettings.sandbox)
+          ? inheritedSettings.sandbox
+          : targetCatalog.sandboxes.find(
+            (candidate): candidate is AiChatSandbox => candidate === "workspace-write",
+          ) ?? targetCatalog.sandboxes.find(isAiChatSandbox) ?? inheritedSettings.sandbox;
+        settings = {
+          model: normalized?.model ?? inheritedSettings.model,
+          reasoningEffort: normalized?.reasoningEffort ?? inheritedSettings.reasoningEffort,
+          sandbox,
+        };
+      }
       const thread = await createAiChatThread({
         ...input,
+        agentType: origin?.agentType ?? "codex",
         ...settings,
         ...(origin?.codexProjectIdentity ?? {}),
       });
@@ -2352,7 +2381,7 @@ export function AiChat({
       || node.type === "unsupportedReference"
     )) ?? false;
     const isTaskOriginPlainTextDraft = Boolean(
-      taskComposerDraftOriginRef.current
+      taskComposerDraftOriginRef.current?.agentType === "codex"
       && currentComposerDocument?.nodes.every((node) => node.type === "text"),
     );
     if (isTaskOriginPlainTextDraft) {
@@ -2379,7 +2408,8 @@ export function AiChat({
         }
       }
     }
-    const useComposerTurn = hasStructuredReference || isTaskOriginPlainTextDraft;
+    const useComposerTurn = activeAgentType === "codex"
+      && (hasStructuredReference || isTaskOriginPlainTextDraft);
     if (useComposerTurn && !hasPersistedReference && !currentComposerRevision) {
       setError(text(
         "补全来源已失效，请重新选择 Skill",
@@ -2765,8 +2795,8 @@ export function AiChat({
           ref={panelRef}
           className={`ai-chat-panel${panelResizeEdge ? ` is-resizing-${panelResizeEdge}` : ""}`}
           style={panelGeometry ?? undefined}
-          aria-label={text("Codex AI 对话", "Codex AI chat")}
-          data-screen-label={text("Codex AI 对话", "Codex AI chat")}
+          aria-label={activeAgentType === "kimi" ? "Kimi Code" : text("Codex AI 对话", "Codex AI chat")}
+          data-screen-label={activeAgentType === "kimi" ? "Kimi Code" : text("Codex AI 对话", "Codex AI chat")}
         >
           <div
             className="ai-chat-resize-handle is-top"
@@ -2786,7 +2816,7 @@ export function AiChat({
           <header className="ai-chat-panel-header">
             <div className="ai-chat-panel-title">
               <strong>{snapshot?.thread.title ?? text("新对话", "New chat")}</strong>
-              <span>{snapshot?.thread.origin.projectName ?? text(
+              <span>{activeAgentType === "kimi" ? "Kimi Code · " : "Codex · "}{snapshot?.thread.origin.projectName ?? text(
                 "选择对话或从当前项目新建",
                 "Select a chat or start one in the current project",
               )}</span>
@@ -2848,7 +2878,7 @@ export function AiChat({
                     <span className={`ai-chat-thread-status is-${thread.status}`} aria-hidden="true" />
                     <span>
                       <strong>{thread.title}</strong>
-                      <small>{thread.origin.projectName} · {dateLabel(thread.updatedAt, locale)}</small>
+                      <small>{thread.agentType === "kimi" ? "Kimi" : "Codex"} · {thread.origin.projectName} · {dateLabel(thread.updatedAt, locale)}</small>
                     </span>
                   </button>
                   <button
@@ -2889,7 +2919,9 @@ export function AiChat({
                 {snapshot.thread.status === "running" && (
                   <div className="ai-chat-running" role="status">
                     <span className="ai-chat-spinner" />
-                    {text("Codex 正在处理", "Codex is working")}
+                    {snapshot.thread.agentType === "kimi"
+                      ? text("Kimi 正在处理", "Kimi is working")
+                      : text("Codex 正在处理", "Codex is working")}
                   </div>
                 )}
                 {retryableUserEvent && (
@@ -2918,10 +2950,15 @@ export function AiChat({
                   ? text("在当前项目中开始对话", "Start a chat in the current project")
                   : text("打开一个历史对话", "Open a chat from history")}</strong>
                 <p>{projectId
-                  ? text(
-                    "Codex 会在新对话创建时记住当前项目。",
-                    "Codex will remember the current project when it creates the new chat.",
-                  )
+                  ? activeAgentType === "kimi"
+                    ? text(
+                        "Kimi 会在议题绑定的项目或 worktree 中执行。",
+                        "Kimi will run in the project or worktree bound to this issue.",
+                      )
+                    : text(
+                        "Codex 会在新对话创建时记住当前项目。",
+                        "Codex will remember the current project when it creates the new chat.",
+                      )
                   : text("进入项目后可以新建对话。", "Open a project to start a new chat.")}</p>
               </div>
             )}
@@ -2985,9 +3022,9 @@ export function AiChat({
                 ref={editorRef}
                 className="ai-chat-composer-editor"
                 contentEditable={!composerBlocked}
-                data-placeholder={text("询问 Codex", "Ask Codex")}
+                data-placeholder={activeAgentType === "kimi" ? text("交给 Kimi", "Ask Kimi") : text("询问 Codex", "Ask Codex")}
                 role="textbox"
-                aria-label={text("发送给 Codex 的消息", "Message to Codex")}
+                aria-label={activeAgentType === "kimi" ? text("发送给 Kimi 的消息", "Message to Kimi") : text("发送给 Codex 的消息", "Message to Codex")}
                 aria-multiline="true"
                 aria-autocomplete="list"
                 aria-controls={composerQueryState ? "ai-chat-composer-candidates" : undefined}
@@ -3143,7 +3180,7 @@ export function AiChat({
               >
                 <PlusIcon color="currentColor" size={15} />
               </button>
-              <div className="ai-chat-menu-wrap ai-chat-permission-menu-wrap">
+              {activeAgentType === "codex" && <div className="ai-chat-menu-wrap ai-chat-permission-menu-wrap">
                 <button
                   className="ai-chat-permission-trigger"
                   type="button"
@@ -3196,10 +3233,10 @@ export function AiChat({
                     ))}
                   </div>
                 )}
-              </div>
+              </div>}
 
               <span className="ai-chat-toolbar-spacer" />
-              <div className="ai-chat-menu-wrap ai-chat-model-menu-wrap">
+              {activeAgentType === "codex" && <div className="ai-chat-menu-wrap ai-chat-model-menu-wrap">
                 <button
                   className="ai-chat-model-trigger"
                   type="button"
@@ -3309,7 +3346,7 @@ export function AiChat({
                     ))}
                   </div>
                 )}
-              </div>
+              </div>}
 
               {primaryAction === "stop" ? (
                 <button
@@ -3331,7 +3368,7 @@ export function AiChat({
                     primaryAction === "disabled"
                     || loading
                     || settingsSaving
-                    || Boolean(catalogError)
+                    || (activeAgentType === "codex" && Boolean(catalogError))
                   }
                   onClick={() => void startMessage(draft, false)}
                 >

@@ -555,6 +555,14 @@ function parseAiSandbox(value) {
   return value;
 }
 
+function parseAiAgentType(value) {
+  if (value === undefined) return undefined;
+  if (value !== "codex" && value !== "kimi") {
+    throw new ApiError(400, "INVALID_AGENT_TYPE", "'agentType' must be codex or kimi");
+  }
+  return value;
+}
+
 function parseAiSetting(value, name, maxLength) {
   const setting = stringField(value, name, { maxLength });
   if (setting === "") {
@@ -606,6 +614,7 @@ function parseAiThreadCreate(body) {
     "projectId",
     "issueId",
     "title",
+    "agentType",
     "model",
     "reasoningEffort",
     "sandbox",
@@ -618,6 +627,7 @@ function parseAiThreadCreate(body) {
     projectId: validateProjectId(body.projectId),
     issueId: parseAiSetting(body.issueId, "issueId", 128),
     title: parseAiSetting(body.title, "title", 160),
+    agentType: parseAiAgentType(body.agentType),
     model: parseAiSetting(body.model, "model", 128),
     reasoningEffort: parseAiSetting(body.reasoningEffort, "reasoningEffort", 64),
     sandbox: parseAiSandbox(body.sandbox),
@@ -1340,6 +1350,9 @@ export function resolveServerOptions(options = {}) {
       ?? environment.CODEX_TASKBOARD_SKILL_PATH
       ?? path.join(PROJECT_ROOT, "skills", "manage-taskboard", "SKILL.md"),
     codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
+    kimiExecutable: options.kimiExecutable
+      ?? environment.KIMI_CODE_EXECUTABLE
+      ?? path.join(os.homedir(), ".kimi-code", "bin", "kimi"),
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
     codexProcessesPath: options.codexProcessesPath
@@ -1589,6 +1602,7 @@ export function createTaskboardServer(options = {}) {
   const aiChat = new AiChatService({
     database,
     codexExecutable: resolved.codexExecutable,
+    kimiExecutable: resolved.kimiExecutable,
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
     processEnv: codexProcessEnvironment,
