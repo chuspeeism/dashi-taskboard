@@ -12,6 +12,7 @@ export interface TaskConversationItem {
   key: string;
   projectId: string;
   kind: "native" | "local-ai";
+  agentType: "codex" | "kimi";
   title: string;
   source: "task" | "comment" | "local-ai";
   nativeThreadId: string | null;
@@ -97,6 +98,7 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
       key,
       projectId: task.projectId,
       kind: "native",
+      agentType: "codex",
       title: ref.title || task.title,
       source: ref.source,
       nativeThreadId: ref.threadId,
@@ -130,6 +132,7 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
       key,
       projectId: task.projectId,
       kind: "local-ai",
+      agentType: thread.agentType,
       title: thread.title || thread.origin.issueIdentifier || task.title,
       source: "local-ai",
       nativeThreadId: current?.nativeThreadId ?? thread.codexThreadId,

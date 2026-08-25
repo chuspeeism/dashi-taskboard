@@ -404,6 +404,8 @@ function aiChatThreadFromRow(row) {
     id: row.id,
     title: row.title,
     status: row.status,
+    agentType: row.agent_type ?? "codex",
+    agentSessionId: row.agent_session_id ?? null,
     origin: {
       projectId: row.origin_project_id,
       projectName: row.origin_project_name,
@@ -596,6 +598,8 @@ export class TaskboardDatabase {
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'failed')),
+        agent_type TEXT NOT NULL DEFAULT 'codex' CHECK (agent_type IN ('codex', 'kimi')),
+        agent_session_id TEXT,
         origin_project_id TEXT NOT NULL,
         origin_project_name TEXT NOT NULL,
         origin_workspace_path TEXT NOT NULL,
@@ -648,6 +652,14 @@ export class TaskboardDatabase {
         ON ai_chat_events(thread_id, created_at, id);
 
     `);
+
+    const aiChatThreadColumns = this.database.prepare("PRAGMA table_info(ai_chat_threads)").all();
+    if (!aiChatThreadColumns.some((column) => column.name === "agent_type")) {
+      this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'codex'");
+    }
+    if (!aiChatThreadColumns.some((column) => column.name === "agent_session_id")) {
+      this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN agent_session_id TEXT");
+    }
 
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
@@ -1617,16 +1629,18 @@ export class TaskboardDatabase {
     const timestamp = input.createdAt ?? now();
     this.database.prepare(`
       INSERT INTO ai_chat_threads (
-        id, title, status,
+        id, title, status, agent_type, agent_session_id,
         origin_project_id, origin_project_name, origin_workspace_path,
         origin_issue_id, origin_issue_identifier,
         codex_thread_id, model, reasoning_effort, sandbox,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.title,
       input.status ?? "idle",
+      input.agentType ?? "codex",
+      input.agentSessionId ?? null,
       input.origin.projectId,
       input.origin.projectName,
       input.origin.workspacePath,
@@ -1650,6 +1664,7 @@ export class TaskboardDatabase {
     const columns = {
       title: "title",
       status: "status",
+      agentSessionId: "agent_session_id",
       codexThreadId: "codex_thread_id",
       model: "model",
       reasoningEffort: "reasoning_effort",

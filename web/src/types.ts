@@ -54,6 +54,7 @@ export interface TaskboardCapabilities {
 }
 
 export type AiChatSandbox = "read-only" | "workspace-write" | "danger-full-access";
+export type AiAgentType = "codex" | "kimi";
 export type AiChatThreadStatus = "idle" | "running" | "failed";
 export type AiChatRunStatus = "running" | "completed" | "failed" | "interrupted";
 
@@ -290,6 +291,8 @@ export interface AiChatThread {
   id: string;
   title: string;
   status: AiChatThreadStatus;
+  agentType: AiAgentType;
+  agentSessionId: string | null;
   origin: AiChatOrigin;
   codexThreadId: string | null;
   model: string;

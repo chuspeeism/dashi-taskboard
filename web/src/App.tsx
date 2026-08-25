@@ -3023,6 +3023,27 @@ export function App() {
     });
   }
 
+  function openTaskInKimi(task: Task) {
+    if (!localAiChatAvailable) {
+      setActionError(text(
+        "Kimi 仅可通过本机 Taskboard 运行。",
+        "Kimi is available only through the local Taskboard runtime.",
+      ));
+      return;
+    }
+    setActionError(null);
+    setAiOpenThreadRequest((current) => ({
+      projectId: task.projectId,
+      issueId: task.id,
+      agentType: "kimi",
+      composerText: text(
+        `处理 Taskboard 议题 ${task.identifier}。请在议题绑定的工作目录中执行，持续报告进度，完成后总结改动、验证结果和剩余限制。`,
+        `Work on Taskboard issue ${task.identifier} in its bound workspace. Report progress as you work, then summarize changes, verification, and remaining limitations.`,
+      ),
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
+  }
+
   function changeProject(projectId: string) {
     closeContextMenu();
     setProjectContextMenu(null);
@@ -3578,6 +3599,7 @@ export function App() {
             onOpenThread={openThread}
             onOpenLegacyLocalThread={openLegacyLocalThread}
             onOpenInThread={openTaskInThread}
+            onOpenInKimi={openTaskInKimi}
             onCopy={(text, message) => void copyText(text, message)}
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
@@ -4049,6 +4071,7 @@ export function App() {
           onCopy={(text, message) => void copyText(text, message)}
           openInThreadDisabled={developmentScanLoading}
           onOpenInThread={openTaskInThread}
+          onOpenInKimi={openTaskInKimi}
           onArchive={(task) => void archiveTask(task)}
         />
       )}

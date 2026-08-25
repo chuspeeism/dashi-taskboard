@@ -2,6 +2,7 @@ import type {
   ActorIdentity,
   AiChatCatalog,
   AiChatAttachmentInput,
+  AiAgentType,
   AiChatRun,
   AiChatSandbox,
   AiChatThread,
@@ -320,6 +321,7 @@ export async function createAiChatThread(input: {
   projectId: string;
   issueId?: string;
   title?: string;
+  agentType?: AiAgentType;
   model?: string;
   reasoningEffort?: string;
   sandbox?: AiChatSandbox;

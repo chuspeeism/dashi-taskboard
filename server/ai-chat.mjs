@@ -14,7 +14,10 @@ import { CodexAppServer } from "./codex-app-server.mjs";
 import {
   buildCodexArgs,
   buildCodexPrompt,
+  buildKimiArgs,
+  buildKimiPrompt,
   normalizeCodexEvent,
+  normalizeKimiEvent,
   spawnCodexTurn,
 } from "./ai-chat-process.mjs";
 
@@ -64,6 +67,13 @@ function appServerThreadSettings(thread, resolved) {
       : { approvalsReviewer: thread.sandbox === "read-only" ? "user" : "auto_review" }),
     sandbox: thread.sandbox,
   };
+}
+
+function resolvedIssueWorkspace(resolved) {
+  const worktreePath = resolved.issue?.developmentContext?.type === "worktree"
+    ? resolved.issue.developmentContext.path
+    : null;
+  return worktreePath ? { ...resolved, workspacePath: worktreePath } : resolved;
 }
 
 function normalizedAppServerItem(item) {
@@ -125,6 +135,7 @@ export class AiChatService {
   constructor(options) {
     this.database = options.database;
     this.codexExecutable = options.codexExecutable;
+    this.kimiExecutable = options.kimiExecutable;
     this.codexStatePath = options.codexStatePath;
     this.manageTaskboardSkillPath = options.manageTaskboardSkillPath;
     this.processEnv = options.processEnv ?? process.env;
@@ -283,6 +294,9 @@ export class AiChatService {
 
   async compactThread(threadId) {
     const thread = this.getThread(threadId);
+    if (thread.agentType === "kimi") {
+      throw new ApiError(400, "KIMI_COMPACTION_UNAVAILABLE", "Kimi conversations cannot be compacted here");
+    }
     if (thread.status === "running") {
       throw new ApiError(409, "AI_CHAT_THREAD_RUNNING", "Cannot compact a running conversation");
     }
@@ -294,25 +308,39 @@ export class AiChatService {
   }
 
   async createThread(input) {
-    const resolved = await this.resolveContext(input.projectId, input.issueId);
-    const catalog = await this.getCatalog(input.projectId, resolved);
-    const model = this.#resolveModel(catalog, input.model);
-    const reasoningEffort = input.reasoningEffort ?? model.defaultReasoningEffort;
-    this.#validateReasoningEffort(model, reasoningEffort);
-    const sandbox = input.sandbox ?? "workspace-write";
-    this.#validateSandbox(sandbox);
+    const resolved = resolvedIssueWorkspace(
+      await this.resolveContext(input.projectId, input.issueId),
+    );
+    const agentType = input.agentType ?? "codex";
+    let model;
+    let reasoningEffort;
+    let sandbox;
+    if (agentType === "kimi") {
+      model = "kimi-default";
+      reasoningEffort = "default";
+      sandbox = "workspace-write";
+    } else {
+      const catalog = await this.getCatalog(input.projectId, resolved);
+      const resolvedModel = this.#resolveModel(catalog, input.model);
+      model = resolvedModel.slug;
+      reasoningEffort = input.reasoningEffort ?? resolvedModel.defaultReasoningEffort;
+      this.#validateReasoningEffort(resolvedModel, reasoningEffort);
+      sandbox = input.sandbox ?? "workspace-write";
+      this.#validateSandbox(sandbox);
+    }
 
     const issue = resolved.issue;
 
     return this.database.createAiChatThread({
       title: input.title ?? issue?.identifier ?? "New conversation",
+      agentType,
       origin: {
         projectId: resolved.project.id,
         projectName: resolved.project.name,
         workspacePath: resolved.workspacePath,
         ...(issue ? { issueId: issue.id, issueIdentifier: issue.identifier } : {}),
       },
-      model: model.slug,
+      model,
       reasoningEffort,
       sandbox,
     });
@@ -323,6 +351,9 @@ export class AiChatService {
     const changesSettings = ["model", "reasoningEffort", "sandbox"].some(
       (key) => Object.hasOwn(changes, key),
     );
+    if (thread.agentType === "kimi" && changesSettings) {
+      throw new ApiError(400, "KIMI_SETTINGS_UNAVAILABLE", "Kimi settings are managed by Kimi Code");
+    }
     const wasActive = changesSettings && this.#threadIsActive(thread);
 
     if (Object.hasOwn(changes, "sandbox")) this.#validateSandbox(changes.sandbox);
@@ -366,6 +397,9 @@ export class AiChatService {
       );
     }
     if (input?.contractVersion === "composer.v1") {
+      if (thread.agentType === "kimi") {
+        throw new ApiError(400, "KIMI_COMPOSER_UNSUPPORTED", "Kimi conversations accept plain text turns");
+      }
       return this.#startComposerTurn(thread, input);
     }
     this.#validateTurnInput(input);
@@ -377,10 +411,13 @@ export class AiChatService {
       );
     }
 
-    const resolved = await this.resolveContext(
+    const resolved = resolvedIssueWorkspace(await this.resolveContext(
       thread.origin.projectId,
       thread.origin.issueId,
-    );
+    ));
+    if (thread.agentType === "kimi") {
+      return this.#startKimiTurn(thread, input, resolved);
+    }
     const catalog = await this.getCatalog(thread.origin.projectId, resolved);
 
     thread = this.getThread(threadId);
@@ -534,6 +571,115 @@ export class AiChatService {
       if (temporaryDirectory) {
         await rm(temporaryDirectory, { recursive: true, force: true });
       }
+      throw error;
+    }
+  }
+
+  async #startKimiTurn(thread, input, resolved) {
+    if (resolved.workspacePath !== thread.origin.workspacePath) {
+      throw new ApiError(
+        409,
+        "PROJECT_WORKSPACE_CHANGED",
+        "The project's device workspace no longer matches this conversation",
+      );
+    }
+    const attachments = input.attachments ?? [];
+    const { temporaryDirectory, attachmentPaths } = await this.#writeTurnAttachments(attachments);
+    const attachmentMessage = attachmentPaths.length > 0
+      ? `${input.message}\n\nAttached files:\n${attachmentPaths.map((item) => `- ${item}`).join("\n")}`
+      : input.message;
+    try {
+      const prompt = buildKimiPrompt(thread, attachmentMessage, resolved.issue);
+      const args = buildKimiArgs(thread, prompt);
+      const run = this.database.createAiChatRun({ threadId: thread.id });
+      this.#emit(thread.id, { type: "ai.run", run });
+      const userEvent = this.database.insertAiChatEvent({
+        threadId: thread.id,
+        runId: run.id,
+        type: "user_message",
+        role: "user",
+        content: input.message,
+        data: attachments.length > 0 ? {
+          attachments: attachments.map(({ filename, contentType, size }) => ({
+            filename,
+            contentType,
+            size,
+          })),
+        } : undefined,
+      });
+      this.#emit(thread.id, { type: "ai.event", event: userEvent });
+
+      const resumingSessionId = thread.agentSessionId;
+      let startedSessionId = null;
+      let terminalOutcome = null;
+      let terminalError = "";
+      const { child, completion } = spawnCodexTurn({
+        executable: this.kimiExecutable,
+        args,
+        prompt: "",
+        env: this.processEnv,
+        cwd: resolved.workspacePath,
+        onRawEvent: (raw) => {
+          const normalized = normalizeKimiEvent(raw);
+          if (!normalized) return;
+          if (normalized.kind === "session.started") {
+            if (
+              (resumingSessionId && normalized.sessionId !== resumingSessionId)
+              || (startedSessionId && normalized.sessionId !== startedSessionId)
+            ) {
+              throw new Error("Kimi returned an unexpected session id");
+            }
+            startedSessionId = normalized.sessionId;
+            this.database.updateAiChatThread(thread.id, { agentSessionId: normalized.sessionId });
+            return;
+          }
+          const event = this.database.insertAiChatEvent({
+            threadId: thread.id,
+            runId: run.id,
+            type: normalized.type,
+            role: normalized.role,
+            content: normalized.content,
+            data: normalized.data,
+          });
+          if (normalized.role === "assistant") terminalOutcome = "completed";
+          if (normalized.role === "error") {
+            terminalOutcome = "failed";
+            terminalError ||= normalized.content;
+          }
+          this.#emit(thread.id, { type: "ai.event", event });
+        },
+      });
+      const active = { child, threadId: thread.id, interrupted: false, temporaryDirectory };
+      this.active.set(run.id, active);
+      const finalization = completion.then(
+        (result) => this.#finishRun({
+          run,
+          active,
+          result,
+          resumingThreadId: resumingSessionId,
+          startedThreadId: () => startedSessionId,
+          terminalOutcome: () => terminalOutcome,
+          terminalError: () => terminalError,
+          pendingError: () => "",
+          agentLabel: "Kimi",
+        }),
+        (error) => this.#finishRun({
+          run,
+          active,
+          error,
+          resumingThreadId: resumingSessionId,
+          startedThreadId: () => startedSessionId,
+          terminalOutcome: () => terminalOutcome,
+          terminalError: () => terminalError,
+          pendingError: () => "",
+          agentLabel: "Kimi",
+        }),
+      );
+      this.completions.set(run.id, finalization);
+      void finalization.finally(() => this.completions.delete(run.id)).catch(() => {});
+      return run;
+    } catch (error) {
+      if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
       throw error;
     }
   }
@@ -986,6 +1132,7 @@ export class AiChatService {
     terminalOutcome,
     terminalError,
     pendingError,
+    agentLabel = "Codex",
   }) {
     let status;
     let publicError = null;
@@ -994,21 +1141,21 @@ export class AiChatService {
       publicError = "Interrupted";
     } else if (error) {
       status = "failed";
-      publicError = cappedError(error) || "Codex turn failed";
+      publicError = cappedError(error) || `${agentLabel} turn failed`;
     } else if (terminalOutcome() === "failed") {
       status = "failed";
-      publicError = terminalError() || "Codex reported a failed turn";
+      publicError = terminalError() || `${agentLabel} reported a failed turn`;
     } else if (result.exitCode !== 0) {
       status = "failed";
       publicError = result.exitCode === null
-        ? `Codex exited due to signal ${result.signal ?? "unknown"}`
-        : `Codex exited with code ${result.exitCode}`;
+        ? `${agentLabel} exited due to signal ${result.signal ?? "unknown"}`
+        : `${agentLabel} exited with code ${result.exitCode}`;
     } else if (terminalOutcome() !== "completed") {
       status = "failed";
-      publicError = pendingError() || "Codex exited without reporting turn completion";
+      publicError = pendingError() || `${agentLabel} exited without reporting turn completion`;
     } else if (!resumingThreadId && !startedThreadId()) {
       status = "failed";
-      publicError = "Codex did not provide a thread id";
+      publicError = `${agentLabel} did not provide a ${agentLabel === "Codex" ? "thread" : "session"} id`;
     } else {
       status = "completed";
     }

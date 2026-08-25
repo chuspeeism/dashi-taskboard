@@ -19,6 +19,7 @@ import { labelPresentation } from "../labels";
 import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { LinearIcon } from "./LinearIcon";
 import {
+  ConversationIcon,
   DeleteIcon,
   EditIcon,
   LabelIcon,
@@ -42,6 +43,7 @@ interface TaskContextMenuProps {
   onCopy: (text: string, announcement: string) => void;
   openInThreadDisabled?: boolean;
   onOpenInThread: (task: Task) => void;
+  onOpenInKimi: (task: Task) => void;
   onArchive: (task: Task) => void;
 }
 
@@ -114,6 +116,7 @@ export function TaskContextMenu({
   onCopy,
   openInThreadDisabled = false,
   onOpenInThread,
+  onOpenInKimi,
   onArchive,
 }: TaskContextMenuProps) {
   const { language, text } = useTaskboardI18n();
@@ -425,11 +428,18 @@ export function TaskContextMenu({
           )}
         </MenuItem>
         <MenuItem
-          label={text("在新对话打开", "Open in new conversation")}
+          label={text("使用 Codex", "Use Codex")}
           icon={<NewConversationIcon color="currentColor" size={16} />}
           disabled={openInThreadDisabled}
           onPointerEnter={closeSubmenu}
           onClick={() => closeThen(() => onOpenInThread(task))}
+        />
+        <MenuItem
+          label={text("使用 Kimi", "Use Kimi")}
+          icon={<ConversationIcon color="currentColor" size={16} />}
+          disabled={openInThreadDisabled}
+          onPointerEnter={closeSubmenu}
+          onClick={() => closeThen(() => onOpenInKimi(task))}
         />
       </div>
 

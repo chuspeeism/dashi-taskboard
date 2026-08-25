@@ -260,6 +260,66 @@ export function buildCodexPrompt(thread, { message, skills, attachmentPaths }, s
   ].join("\n");
 }
 
+export function buildKimiArgs(thread, prompt) {
+  const args = ["--output-format", "stream-json"];
+  if (thread.agentSessionId) args.push("--session", thread.agentSessionId);
+  args.push("--prompt", prompt);
+  return args;
+}
+
+export function buildKimiPrompt(thread, message, issue) {
+  const context = [
+    `project_id: ${thread.origin.projectId}`,
+    `project_name: ${thread.origin.projectName}`,
+    `workspace_path: ${thread.origin.workspacePath}`,
+  ];
+  if (issue) {
+    context.push(
+      `issue_identifier: ${issue.identifier}`,
+      `issue_title: ${issue.title}`,
+      "issue_description:",
+      issue.description || "(empty)",
+    );
+  }
+  return [
+    "<taskboard_context>",
+    ...context,
+    "</taskboard_context>",
+    "",
+    "<user_message>",
+    message,
+    "</user_message>",
+  ].join("\n");
+}
+
+export function normalizeKimiEvent(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  if (raw.role === "meta" && raw.type === "session.resume_hint") {
+    const sessionId = typeof raw.session_id === "string" ? raw.session_id.trim() : "";
+    if (!sessionId || sessionId.length > 256 || sessionId.includes("\0")) return null;
+    return { kind: "session.started", sessionId };
+  }
+  if (raw.role === "assistant" && typeof raw.content === "string") {
+    return {
+      kind: "event",
+      type: "agent_message",
+      role: "assistant",
+      content: cappedText(raw.content),
+      data: { status: "completed", agentType: "kimi" },
+    };
+  }
+  if (raw.role === "error") {
+    return {
+      kind: "event",
+      type: typeof raw.type === "string" ? cappedText(raw.type) : "error",
+      role: "error",
+      content: errorMessage(raw.content ?? raw.message ?? raw.error),
+      data: { status: "failed", agentType: "kimi" },
+    };
+  }
+  return null;
+}
+
 export function normalizeCodexEvent(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
 
@@ -340,10 +400,12 @@ export function spawnCodexTurn({
   args,
   prompt,
   env,
+  cwd,
   onRawEvent,
   maxLineBytes = MAX_CODEX_JSONL_LINE_BYTES,
 }) {
   const child = spawn(process.execPath, [TURN_OWNER_PATH, executable, JSON.stringify(args)], {
+    cwd,
     detached: true,
     env: withoutTaskboardLauncherEnvironment(env),
     stdio: ["pipe", "pipe", "pipe", "pipe"],

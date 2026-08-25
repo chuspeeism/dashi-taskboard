@@ -13,7 +13,8 @@ function conversationSource(
   conversation: TaskConversationItem,
   text: (chinese: string, english: string) => string,
 ) {
-  if (conversation.kind === "local-ai") return text("内置 AI", "Built-in AI");
+  if (conversation.agentType === "kimi") return "Kimi Code";
+  if (conversation.kind === "local-ai") return text("内置 Codex", "Built-in Codex");
   return conversation.source === "comment"
     ? text("评论对话", "Comment conversation")
     : text("任务对话", "Task conversation");
@@ -29,6 +30,7 @@ function conversationStatus(
     }
     return text("正在处理", "Processing");
   }
+  if (conversation.agentType === "kimi") return "Kimi";
   return conversation.kind === "local-ai" ? text("已暂停", "Paused") : "Codex";
 }
 
