@@ -852,7 +852,7 @@ function PersistedImageBlock({
       <button
         type="button"
         disabled={disabled}
-        aria-label={text(`移除 ${segment.alt || "图片"}`, `Remove ${segment.alt || "image"}`)}
+        aria-label={text(`移除 ${segment.alt || "圖片"}`, `Remove ${segment.alt || "image"}`)}
         onClick={onRemove}
       >
         <LinearIcon name="close" />
@@ -886,11 +886,11 @@ function IssueReferenceChip({
       aria-disabled={disabled}
       aria-label={task
         ? text(
-            `${displayIdentifier} ${task.title}，按退格键或删除键移除`,
+            `${displayIdentifier} ${task.title}，按退格鍵或刪除鍵移除`,
             `${displayIdentifier} ${task.title}, press Backspace or Delete to remove`,
           )
         : text(
-            `${displayIdentifier}，按退格键或删除键移除`,
+            `${displayIdentifier}，按退格鍵或刪除鍵移除`,
             `${displayIdentifier}, press Backspace or Delete to remove`,
           )}
       onKeyDown={(event) => {
@@ -928,7 +928,7 @@ function ComposerReferenceChip({
     ? text("Skill", "Skill")
     : segment.type === "agent-reference"
       ? text("Agent", "Agent")
-      : text("不支持的引用", "Unsupported reference");
+      : text("不支援的引用", "Unsupported reference");
 
   return (
     <button
@@ -939,7 +939,7 @@ function ComposerReferenceChip({
       data-taskboard-inline-media-markdown={segment.markdown}
       disabled={disabled}
       aria-label={text(
-        `${kind} ${segment.label}，按退格键或删除键移除`,
+        `${kind} ${segment.label}，按退格鍵或刪除鍵移除`,
         `${kind} ${segment.label}, press Backspace or Delete to remove`,
       )}
       onKeyDown={(event) => {
@@ -1030,7 +1030,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       for (const selection of completionSelections) {
         const candidate = selection.type === "candidate" ? selection.candidate : null;
         const groupId = candidate ? `codex:${candidate.group}` : "taskboard:issues";
-        const groupLabel = candidate?.group ?? text("Taskboard 议题", "Taskboard issues");
+        const groupLabel = candidate?.group ?? text("Taskboard 議題", "Taskboard issues");
         let group = groupsById.get(groupId);
         if (!group) {
           group = { id: groupId, label: groupLabel, options: [] };
@@ -1155,7 +1155,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       }, (error: unknown) => {
         if (controller.signal.aborted || requestSequence.current !== sequence) return;
         setCompletionError(error instanceof Error ? error.message : text(
-          "补全来源暂时不可用",
+          "補全來源暫時不可用",
           "Completion sources are temporarily unavailable.",
         ));
         setCompletionLoading(false);
@@ -1201,7 +1201,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
       if (oversized) {
         onError([
-          `“${oversized.name}” 超过 25 MB，无法上传。`,
+          `“${oversized.name}” 超過 25 MB，無法上傳。`,
           `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
         ]);
         return null;

@@ -13,10 +13,10 @@ function conversationSource(
   conversation: TaskConversationItem,
   text: (chinese: string, english: string) => string,
 ) {
-  if (conversation.kind === "local-ai") return text("内置 AI", "Built-in AI");
+  if (conversation.kind === "local-ai") return text("內建 AI", "Built-in AI");
   return conversation.source === "comment"
-    ? text("评论对话", "Comment conversation")
-    : text("任务对话", "Task conversation");
+    ? text("評論對話", "Comment conversation")
+    : text("任務對話", "Task conversation");
 }
 
 function conversationStatus(
@@ -27,9 +27,9 @@ function conversationStatus(
     if (conversation.latestTodo?.total) {
       return `${conversation.latestTodo.completed}/${conversation.latestTodo.total}`;
     }
-    return text("正在处理", "Processing");
+    return text("正在處理", "Processing");
   }
-  return conversation.kind === "local-ai" ? text("已暂停", "Paused") : "Codex";
+  return conversation.kind === "local-ai" ? text("已暫停", "Paused") : "Codex";
 }
 
 export function TaskConversationMenu({
@@ -108,12 +108,12 @@ export function TaskConversationMenu({
         type="button"
         draggable={false}
         aria-label={multiple
-          ? text(`查看 ${conversations.length} 个对话`, `View ${conversations.length} conversations`)
-          : text(`打开对话 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
+          ? text(`檢視 ${conversations.length} 個對話`, `View ${conversations.length} conversations`)
+          : text(`開啟對話 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
         aria-haspopup={multiple ? "menu" : undefined}
         aria-expanded={multiple ? open : undefined}
         title={multiple
-          ? text(`${conversations.length} 个对话`, `${conversations.length} conversations`)
+          ? text(`${conversations.length} 個對話`, `${conversations.length} conversations`)
           : conversations[0].title}
         onPointerDown={stop}
         onDragStart={(event) => event.preventDefault()}
@@ -131,7 +131,7 @@ export function TaskConversationMenu({
           ref={menuRef}
           className="task-conversation-menu"
           role="menu"
-          aria-label={text("选择对话", "Select conversation")}
+          aria-label={text("選擇對話", "Select conversation")}
           style={{
             left: position.left,
             top: position.top,
@@ -139,7 +139,7 @@ export function TaskConversationMenu({
           }}
           onClick={stop}
         >
-          <div className="task-conversation-menu-heading">{text("关联对话", "Linked conversations")}</div>
+          <div className="task-conversation-menu-heading">{text("關聯對話", "Linked conversations")}</div>
           {conversations.map((conversation) => (
             <button
               key={conversation.key}

@@ -16,14 +16,14 @@ export function normalizeJiraUrl(value) {
   if (typeof value !== "string" || value.includes("?") || value.includes("#")) {
     throw new JiraConfigError(
       "INVALID_JIRA_URL",
-      "Jira 地址必须使用 http 或 https，且不能包含账号、查询参数或片段",
+      "Jira 地址必須使用 http 或 https，且不能包含帳號、查詢參數或片段",
     );
   }
   let url;
   try {
     url = new URL(value);
   } catch {
-    throw new JiraConfigError("INVALID_JIRA_URL", "Jira 地址无效");
+    throw new JiraConfigError("INVALID_JIRA_URL", "Jira 地址無效");
   }
   if (
     (url.protocol !== "http:" && url.protocol !== "https:")
@@ -34,7 +34,7 @@ export function normalizeJiraUrl(value) {
   ) {
     throw new JiraConfigError(
       "INVALID_JIRA_URL",
-      "Jira 地址必须使用 http 或 https，且不能包含账号、查询参数或片段",
+      "Jira 地址必須使用 http 或 https，且不能包含帳號、查詢參數或片段",
     );
   }
   url.pathname = url.pathname.replace(/\/+$/, "");
@@ -50,13 +50,13 @@ function validateCredentials(username, password) {
   ) {
     throw new JiraConfigError(
       "INVALID_JIRA_USERNAME",
-      "Jira 用户名不能为空、不能包含冒号，且不能超过 254 个字符",
+      "Jira 使用者名稱不能為空、不能包含冒號，且不能超過 254 個字元",
     );
   }
   if (typeof password !== "string" || !password || password.length > 4096) {
     throw new JiraConfigError(
       "INVALID_JIRA_PASSWORD",
-      "Jira 密码不能为空且不能超过 4096 个字符",
+      "Jira 密碼不能為空且不能超過 4096 個字元",
     );
   }
   return { username: username.trim(), password };
@@ -65,7 +65,7 @@ function validateCredentials(username, password) {
 function validateProjects(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 20) {
-    throw new JiraConfigError("INVALID_JIRA_PROJECTS", "Jira 项目必须是最多 20 项的数组");
+    throw new JiraConfigError("INVALID_JIRA_PROJECTS", "Jira 專案必須是最多 20 項的陣列");
   }
   const projects = value.map((project) => {
     if (
@@ -76,7 +76,7 @@ function validateProjects(value) {
     ) {
       throw new JiraConfigError(
         "INVALID_JIRA_PROJECTS",
-        "Jira 项目名称或 Key 不能为空、不能包含控制字符，且不能超过 128 个字符",
+        "Jira 專案名稱或 Key 不能為空、不能包含控制字元，且不能超過 128 個字元",
       );
     }
     return project.trim();
@@ -91,7 +91,7 @@ function parseConfig(value) {
     || Array.isArray(value)
     || (value.version !== LEGACY_CONFIG_VERSION && value.version !== CONFIG_VERSION)
   ) {
-    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置文件无效");
+    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 設定檔案無效");
   }
   const allowedKeys = new Set([
     "version",
@@ -104,17 +104,17 @@ function parseConfig(value) {
   ]);
   if (value.version === LEGACY_CONFIG_VERSION) allowedKeys.delete("originId");
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
-    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置文件包含未知字段");
+    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 設定檔案包含未知欄位");
   }
   const credentials = validateCredentials(value.username, value.password);
   if (
     value.version === CONFIG_VERSION
     && (typeof value.originId !== "string" || !/^[a-f0-9]{64}$/.test(value.originId))
   ) {
-    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置缺少稳定实例身份");
+    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 設定缺少穩定執行個體身分");
   }
   if (typeof value.displayName !== "string" || !value.displayName.trim()) {
-    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置缺少用户显示名称");
+    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 設定缺少使用者顯示名稱");
   }
   return {
     version: value.version,

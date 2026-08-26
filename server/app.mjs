@@ -565,7 +565,7 @@ function actorFromRequest(request) {
   const rawName = requestHeader(request, "x-taskboard-user-name");
   const rawAvatarUrl = requestHeader(request, "x-taskboard-user-avatar");
   if (rawId === undefined && rawName === undefined && rawAvatarUrl === undefined) {
-    return { type: "user", id: "local-user", name: "本地用户", avatarUrl: null };
+    return { type: "user", id: "local-user", name: "本機使用者", avatarUrl: null };
   }
   if (rawId === undefined || rawName === undefined) {
     throw new ApiError(400, "INVALID_ACTOR", "User identity requires both an ID and name");
@@ -2205,7 +2205,7 @@ export function createTaskboardServer(options = {}) {
 
       if (pathname === "/api/local/jira-connection") {
         if ([...url.searchParams.keys()].length > 0) {
-          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 连接接口不接受查询参数");
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 連線介面不接受查詢參數");
         }
         if (request.method === "GET") {
           return sendJson(response, 200, { connection: await jira.status() });
@@ -2216,7 +2216,7 @@ export function createTaskboardServer(options = {}) {
             throw new ApiError(
               409,
               "JIRA_LOCAL_MODE_REQUIRED",
-              "Jira 连接当前仅支持本地数据模式，请先退出云端协作模式",
+              "Jira 連線目前僅支援本機資料模式，請先退出雲端協作模式",
             );
           }
           const body = await readJson(request);
@@ -2251,7 +2251,7 @@ export function createTaskboardServer(options = {}) {
       if (pathname === "/api/local/jira-connection/sync") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         if ([...url.searchParams.keys()].length > 0) {
-          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 同步接口不接受查询参数");
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 同步介面不接受查詢參數");
         }
         await assertEmptyRequestBody(request, "POST /api/local/jira-connection/sync");
         const connection = await jira.sync({ force: true });
@@ -2532,7 +2532,7 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(
             409,
             "JIRA_LABEL_CATALOG_DELETE_UNAVAILABLE",
-            "Jira 标签目录由同步管理，不能在 Taskboard 中删除",
+            "Jira 標籤目錄由同步管理，不能在 Taskboard 中刪除",
           );
         }
         const label = parseProjectLabel(await readJson(request));
@@ -2681,7 +2681,7 @@ export function createTaskboardServer(options = {}) {
             throw new ApiError(
               409,
               "JIRA_CREATE_UNAVAILABLE",
-              "请在 Jira 中新建议题，Taskboard 当前只同步已分配给你的任务",
+              "請在 Jira 中新增議題，Taskboard 目前只同步已分配給你的任務",
             );
           }
           const task = database.createTask({
@@ -3072,7 +3072,7 @@ export function createTaskboardServer(options = {}) {
             throw new ApiError(
               409,
               "JIRA_PROJECT_MOVE_UNAVAILABLE",
-              "本地任务不能移入 Jira 同步项目",
+              "本機任務不能移入 Jira 同步專案",
             );
           }
           if (current.source === "jira") {
@@ -3086,10 +3086,10 @@ export function createTaskboardServer(options = {}) {
               throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be updated");
             }
             if (Object.hasOwn(changes, "projectId")) {
-              throw new ApiError(409, "JIRA_PROJECT_MOVE_UNAVAILABLE", "Jira 任务不能移到本地项目");
+              throw new ApiError(409, "JIRA_PROJECT_MOVE_UNAVAILABLE", "Jira 任務不能移到本地專案");
             }
             if (assigneeTarget !== undefined) {
-              throw new ApiError(409, "JIRA_ASSIGNEE_UNAVAILABLE", "请在 Jira 中修改经办人");
+              throw new ApiError(409, "JIRA_ASSIGNEE_UNAVAILABLE", "請在 Jira 中修改經辦人");
             }
             const dueDate = Object.hasOwn(changes, "dueDate") ? changes.dueDate : current.dueDate;
             const recurrence = Object.hasOwn(changes, "recurrence")
@@ -3114,7 +3114,7 @@ export function createTaskboardServer(options = {}) {
                 throw new ApiError(
                   502,
                   "JIRA_RECONCILE_FAILED",
-                  "Jira 已更新，但 Taskboard 重新同步失败，请手动同步",
+                  "Jira 已更新，但 Taskboard 重新同步失敗，請手動同步",
                 );
               }
             }
@@ -3126,7 +3126,7 @@ export function createTaskboardServer(options = {}) {
         if (!action && request.method === "DELETE") {
           const current = database.getTask(id);
           if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_DELETE_UNAVAILABLE", "Jira 任务不能从 Taskboard 永久删除");
+            throw new ApiError(409, "JIRA_DELETE_UNAVAILABLE", "Jira 任務不能從 Taskboard 永久刪除");
           }
           const { version } = parseArchive(await readJson(request));
           const deleted = database.deleteArchivedTask(id, version);
@@ -3171,7 +3171,7 @@ export function createTaskboardServer(options = {}) {
         if (action === "archive" && request.method === "POST") {
           const current = database.getTask(id);
           if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_ARCHIVE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动归档");
+            throw new ApiError(409, "JIRA_ARCHIVE_UNAVAILABLE", "Jira 任務由同步範圍自動管理，不能手動歸檔");
           }
           const { version, threadId, threadBinding } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),
@@ -3189,7 +3189,7 @@ export function createTaskboardServer(options = {}) {
         if (action === "restore" && request.method === "POST") {
           const current = database.getTask(id);
           if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_RESTORE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动恢复");
+            throw new ApiError(409, "JIRA_RESTORE_UNAVAILABLE", "Jira 任務由同步範圍自動管理，不能手動恢復");
           }
           const { version, threadId, threadBinding } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),

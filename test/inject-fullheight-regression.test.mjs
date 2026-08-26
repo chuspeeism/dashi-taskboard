@@ -68,12 +68,12 @@ function fixtureHtml(origin) {
       <nav role="navigation">
         <div data-app-action-sidebar-scroll>
           <div>
-            <button><span>首页</span></button>
-            <button><span>站点</span></button>
-            <button><svg></svg><span class="text-fade-truncate">插件</span></button>
+            <button><span>首頁</span></button>
+            <button><span>站點</span></button>
+            <button><svg></svg><span class="text-fade-truncate">外掛</span></button>
           </div>
           <section data-app-action-sidebar-section>
-            <div data-app-action-sidebar-section-heading="项目">项目</div>
+            <div data-app-action-sidebar-section-heading="專案">專案</div>
           </section>
         </div>
       </nav>

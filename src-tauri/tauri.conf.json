@@ -10,7 +10,7 @@
     "active": true,
     "targets": ["app", "dmg"],
     "category": "Productivity",
-    "shortDescription": "在 Codex 客户端中打开本地任务面板",
+    "shortDescription": "在 Codex 用戶端中開啟本機任務面板",
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/node"],
     "resources": {

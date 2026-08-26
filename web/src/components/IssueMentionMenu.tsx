@@ -61,7 +61,7 @@ export function IssueMentionMenu({
       ref={menuRef}
       className="ai-chat-skill-menu issue-mention-menu"
       role="listbox"
-      aria-label={text("引用议题", "Mention issue")}
+      aria-label={text("引用議題", "Mention issue")}
       style={{ position: "fixed", left: position.left, top: position.top }}
       onPointerDown={(event) => event.preventDefault()}
     >
@@ -83,7 +83,7 @@ export function IssueMentionMenu({
           </span>
         </button>
       )) : (
-        <p className="issue-mention-empty">{text("没有匹配的议题", "No matching issues")}</p>
+        <p className="issue-mention-empty">{text("沒有匹配的議題", "No matching issues")}</p>
       )}
     </div>,
     portalTarget,

@@ -113,13 +113,13 @@ test("local AI API client follows the fixed catalog, thread, turn and interrupt 
     assert.equal(calls.at(-1).init.method, "DELETE");
 
     await startAiChatTurn("thread-1", {
-      message: "公开的用户消息",
+      message: "公開的使用者訊息",
       skillIds: ["real-skill"],
       dangerFullAccessConfirmed: true,
     });
     const turnBody = JSON.parse(calls.at(-1).init.body);
     assert.deepEqual(turnBody, {
-      message: "公开的用户消息",
+      message: "公開的使用者訊息",
       skillIds: ["real-skill"],
       dangerFullAccessConfirmed: true,
     });

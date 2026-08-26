@@ -33,7 +33,7 @@ import type {
 const DEFAULT_USER_ACTOR: ActorIdentity = {
   type: "user",
   id: "local-user",
-  name: "本地用户",
+  name: "本機使用者",
   avatarUrl: null,
 };
 
@@ -62,7 +62,7 @@ export class ApiError extends Error {
   readonly details?: unknown;
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.error?.message ?? apiText(`请求失败（${status}）`, `Request failed (${status})`));
+    super(body.error?.message ?? apiText(`請求失敗（${status}）`, `Request failed (${status})`));
     this.name = "ApiError";
     this.status = status;
     this.code = body.error?.code ?? "REQUEST_FAILED";
@@ -114,11 +114,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
           code: readRequest ? "READ_FAILED" : "SERVICE_UNAVAILABLE",
           message: readRequest
             ? apiText(
-                "暂时无法读取 Taskboard 数据。面板会自动重试，请稍后再试。",
+                "暫時無法讀取 Taskboard 資料。面板會自動重試，請稍後再試。",
                 "Taskboard data is temporarily unavailable. The panel will retry automatically.",
               )
             : apiText(
-                "暂时无法连接 Taskboard 服务，请稍后重试。",
+                "暫時無法連線 Taskboard 服務，請稍後重試。",
                 "The Taskboard service is temporarily unavailable. Try again later.",
               ),
           details: { method, failure },

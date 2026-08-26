@@ -128,7 +128,7 @@ test("a stale automation parser receives an immediate host error instead of timi
   assert.deepEqual(responses, [{
     id: currentAutomationRequest.id,
     ok: false,
-    error: "自动认领配置暂时无法应用，请刷新后重试",
+    error: "自動認領設定暫時無法應用，請重新整理後重試",
     diagnosticCode: "AUTOMATION_SCHEMA_MISMATCH",
   }]);
 });

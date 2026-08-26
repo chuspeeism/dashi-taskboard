@@ -127,7 +127,7 @@ export function ProjectReadmeView({
     } catch (err) {
       if (err instanceof ApiError && err.code === "VERSION_CONFLICT") {
         setSaveError(text(
-          "项目文档已被其他协作者或 Agent 更新，请刷新后重试。",
+          "專案文件已被其他協作者或 Agent 更新，請重新整理後重試。",
           "Project Docs were modified elsewhere. Please refresh and try again.",
         ));
       } else {
@@ -144,7 +144,7 @@ export function ProjectReadmeView({
     return (
       <div className="project-readme-loading">
         <div className="project-readme-spinner" />
-        <p>{text("正在加载项目文档…", "Loading Project Docs…")}</p>
+        <p>{text("正在載入專案文件…", "Loading Project Docs…")}</p>
       </div>
     );
   }
@@ -161,7 +161,7 @@ export function ProjectReadmeView({
             setLoadRequest((current) => current + 1);
           }}
         >
-          {text("重试", "Try again")}
+          {text("重試", "Try again")}
         </button>
       </div>
     );
@@ -191,7 +191,7 @@ export function ProjectReadmeView({
                 setLoadRequest((current) => current + 1);
               }}
             >
-              {text("重试", "Try again")}
+              {text("重試", "Try again")}
             </button>
           </div>
         )}
@@ -213,8 +213,8 @@ export function ProjectReadmeView({
                 projectId: project.id,
                 surface: "issue-description",
               }}
-              placeholder={text("添加说明...", "Add notes...")}
-              ariaLabel={text("项目文档", "Project Docs")}
+              placeholder={text("新增說明...", "Add notes...")}
+              ariaLabel={text("專案文件", "Project Docs")}
               disabled={saving}
               onChange={setSegments}
               onError={(message) => onError?.(message)}
@@ -232,7 +232,7 @@ export function ProjectReadmeView({
             className={`issue-description-read${content ? "" : " empty"}`}
             role="button"
             tabIndex={0}
-            aria-label={text("编辑项目文档", "Edit Project Docs")}
+            aria-label={text("編輯專案文件", "Edit Project Docs")}
             onClick={() => {
               if (window.getSelection()?.isCollapsed === false) return;
               startEditing();
@@ -250,7 +250,7 @@ export function ProjectReadmeView({
                   referenceTasks={referenceTasks}
                   onOpenTask={onOpenTask}
                 />
-              : text("添加说明...", "Add notes...")}
+              : text("新增說明...", "Add notes...")}
           </div>
         )}
       </div>

@@ -104,7 +104,7 @@ describe("InlineMediaComposer completion references", () => {
       "before ",
       "[$Manage Taskboard](taskboard://composer-reference/v1/skill/bWFuYWdlLXRhc2tib2FyZA)",
       " and ",
-      "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
+      "[@任務總管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
       " after",
     ].join("");
     const segments = createInlineMediaSegments(value);
@@ -113,7 +113,7 @@ describe("InlineMediaComposer completion references", () => {
     expect(segments.some((segment) => segment.type === "agent-reference")).toBe(true);
     expect(serializeInlineMedia(segments)).toBe(value);
 
-    for (const legacy of ["$Manage Taskboard", "@任务总管", "[任务总管](subagent://master)"]) {
+    for (const legacy of ["$Manage Taskboard", "@任務總管", "[任務總管](subagent://master)"]) {
       expect(createInlineMediaSegments(legacy).every((segment) => segment.type === "text")).toBe(true);
     }
     const unsupported = createInlineMediaSegments(
@@ -137,7 +137,7 @@ describe("InlineMediaComposer completion references", () => {
       kind: "agent",
       trigger: "@",
       candidateRef: "agent:master",
-      label: "任务总管",
+      label: "任務總管",
       description: "Master agent",
       group: "Agents",
       groupOrder: 1,
@@ -147,7 +147,7 @@ describe("InlineMediaComposer completion references", () => {
         format: "taskboard.composer-reference.v1",
         kind: "agent",
         referenceKey: "bWFzdGVy",
-        markdown: "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
+        markdown: "[@任務總管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
       },
     }]));
     render(<TestComposer initial="@ma" mentionTasks={[issue]} />);
@@ -155,7 +155,7 @@ describe("InlineMediaComposer completion references", () => {
     placeCaretAtEnd(editor);
     fireEvent.keyUp(editor, { key: "a" });
 
-    expect(await screen.findByRole("option", { name: /任务总管/ })).toBeTruthy();
+    expect(await screen.findByRole("option", { name: /任務總管/ })).toBeTruthy();
     expect(screen.getByText("Agents")).toBeTruthy();
     expect(screen.getByText("Taskboard issues")).toBeTruthy();
     expect(screen.getAllByRole("option")).toHaveLength(2);
@@ -163,11 +163,11 @@ describe("InlineMediaComposer completion references", () => {
     expect(screen.getByRole("option", { name: /LOCAL-1/ }).getAttribute("aria-selected")).toBe("true");
 
     fireEvent.keyDown(editor, { key: "ArrowDown" });
-    expect(screen.getByRole("option", { name: /任务总管/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("option", { name: /任務總管/ }).getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(editor, { key: "Tab" });
 
     await waitFor(() => expect(screen.getByTestId("serialized").textContent).toBe(
-      "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy) ",
+      "[@任務總管](taskboard://composer-reference/v1/agent/bWFzdGVy) ",
     ));
   });
 
@@ -176,7 +176,7 @@ describe("InlineMediaComposer completion references", () => {
       kind: "agent",
       trigger: "@",
       candidateRef: "agent:master",
-      label: "任务总管",
+      label: "任務總管",
       description: "Master agent",
       group: "Agents",
       groupOrder: 1,
@@ -186,7 +186,7 @@ describe("InlineMediaComposer completion references", () => {
         format: "taskboard.composer-reference.v1",
         kind: "agent",
         referenceKey: "bWFzdGVy",
-        markdown: "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
+        markdown: "[@任務總管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
       },
     }]));
     render(<TestComposer initial="![proof](api/attachments/attachment-1/content) E2 @ma" />);
@@ -194,7 +194,7 @@ describe("InlineMediaComposer completion references", () => {
     placeCaretAtRootEnd(editor);
     fireEvent.keyUp(editor, { key: "a" });
 
-    expect(await screen.findByRole("option", { name: /任务总管/ })).toBeTruthy();
+    expect(await screen.findByRole("option", { name: /任務總管/ })).toBeTruthy();
     expect(api.getCandidates).toHaveBeenCalledWith(
       expect.objectContaining({ trigger: "@", query: "ma" }),
       expect.any(AbortSignal),
@@ -203,7 +203,7 @@ describe("InlineMediaComposer completion references", () => {
 
     await waitFor(() => expect(screen.getByTestId("serialized").textContent).toBe(
       "![proof](api/attachments/attachment-1/content) E2 "
-      + "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy) ",
+      + "[@任務總管](taskboard://composer-reference/v1/agent/bWFzdGVy) ",
     ));
   });
 

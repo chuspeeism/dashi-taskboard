@@ -66,7 +66,7 @@ function LabelGlyph({ label }: { label: string }) {
 function joinSummary(values: string[], noun: string, language: TaskboardLanguage): string | null {
   if (!values.length) return null;
   if (values.length <= 2) return values.join(language === "zh" ? "、" : ", ");
-  return language === "zh" ? `${values.length} 个${noun}` : `${values.length} ${noun}`;
+  return language === "zh" ? `${values.length} 個${noun}` : `${values.length} ${noun}`;
 }
 
 export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: TaskFilterMenuProps) {
@@ -145,7 +145,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
   const statusOptions = useMemo<FilterOption[]>(() => TASK_STATUSES.map((status) => ({
     id: `status-${status}`,
     label: taskStatusLabel(language, status),
-    category: text("状态", "Status"),
+    category: text("狀態", "Status"),
     keywords: status,
     count: countFor("statuses", (task) => task.status === status),
     selected: filters.statuses.includes(status),
@@ -156,7 +156,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
   const priorityOptions = useMemo<FilterOption[]>(() => TASK_PRIORITIES.map((priority) => ({
     id: `priority-${priority}`,
     label: taskPriorityLabel(language, priority),
-    category: text("优先级", "Priority"),
+    category: text("優先順序", "Priority"),
     keywords: priority,
     count: countFor("priorities", (task) => task.priority === priority),
     selected: filters.priorities.includes(priority),
@@ -167,7 +167,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
   const labelOptions = useMemo<FilterOption[]>(() => labels.map((label) => ({
     id: `label-${label}`,
     label: labelDisplayName(label, language),
-    category: text("标签", "Label"),
+    category: text("標籤", "Label"),
     count: countFor("labels", (task) => task.labels.includes(label)),
     selected: filters.labels.includes(label),
     icon: <LabelGlyph label={label} />,
@@ -183,34 +183,34 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
   const categories = [
     {
       id: "statuses" as const,
-      label: text("状态", "Status"),
+      label: text("狀態", "Status"),
       keywords: "status state",
       icon: <StatusIcon status="todo" color="currentColor" />,
       summary: joinSummary(
         filters.statuses.map((status) => taskStatusLabel(language, status)),
-        text("状态", "statuses"),
+        text("狀態", "statuses"),
         language,
       ),
     },
     {
       id: "priorities" as const,
-      label: text("优先级", "Priority"),
+      label: text("優先順序", "Priority"),
       keywords: "priority urgent high medium low",
       icon: <PriorityIcon color="currentColor" />,
       summary: joinSummary(
         filters.priorities.map((priority) => taskPriorityLabel(language, priority)),
-        text("优先级", "priorities"),
+        text("優先順序", "priorities"),
         language,
       ),
     },
     {
       id: "labels" as const,
-      label: text("标签", "Labels"),
+      label: text("標籤", "Labels"),
       keywords: "label tag",
       icon: <LabelIcon color="currentColor" />,
       summary: joinSummary(
         filters.labels.map((label) => labelDisplayName(label, language)),
-        text("标签", "labels"),
+        text("標籤", "labels"),
         language,
       ),
     },
@@ -402,23 +402,23 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     return (
       <>
         <label className="task-filter-search submenu-filter-search">
-          <span className="sr-only">{text("筛选值", "Filter values")}</span>
+          <span className="sr-only">{text("篩選值", "Filter values")}</span>
           <input
             data-filter-level="submenu"
             value={submenuQuery}
             onChange={(event) => setSubmenuQuery(event.target.value)}
-            placeholder={text("筛选…", "Filter…")}
+            placeholder={text("篩選…", "Filter…")}
           />
         </label>
         <div className="task-filter-scroll" role="menu">
           {matching.map((option) => renderOption(option, "submenu"))}
           {unmatched.length > 0 && (
             <>
-              <div className="task-filter-section-label">{text("当前视图中无匹配", "No matches in this view")}</div>
+              <div className="task-filter-section-label">{text("目前檢視中無匹配", "No matches in this view")}</div>
               <div className="task-filter-unmatched">{unmatched.map((option) => renderOption(option, "submenu"))}</div>
             </>
           )}
-          {visible.length === 0 && <div className="task-filter-no-results">{text("没有匹配的筛选值", "No matching filter values")}</div>}
+          {visible.length === 0 && <div className="task-filter-no-results">{text("沒有匹配的篩選值", "No matching filter values")}</div>}
         </div>
       </>
     );
@@ -434,7 +434,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
       onKeyDown={handleMenuKeyDown}
     >
       <label className="task-filter-search root-filter-search">
-        <span className="sr-only">{text("添加筛选", "Add filter")}</span>
+        <span className="sr-only">{text("新增篩選", "Add filter")}</span>
         <input
           data-filter-level="root"
           value={rootQuery}
@@ -442,7 +442,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
             setRootQuery(event.target.value);
             setSubmenu(null);
           }}
-          placeholder={text("添加筛选…", "Add filter…")}
+          placeholder={text("新增篩選…", "Add filter…")}
         />
         <kbd>F</kbd>
       </label>
@@ -482,13 +482,13 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
 
         {quickOptions.length > 0 && (
           <>
-            {visibleCategories.length > 0 && <div className="task-filter-section-label">{text("筛选值", "Filter values")}</div>}
+            {visibleCategories.length > 0 && <div className="task-filter-section-label">{text("篩選值", "Filter values")}</div>}
             {quickOptions.map((option) => renderOption(option, "root"))}
           </>
         )}
 
         {visibleCategories.length === 0 && quickOptions.length === 0 && (
-          <div className="task-filter-no-results">{text("没有匹配的筛选项", "No matching filters")}</div>
+          <div className="task-filter-no-results">{text("沒有匹配的篩選項", "No matching filters")}</div>
         )}
       </div>
 
@@ -500,7 +500,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
             data-filter-level="root"
             onClick={() => onChange(EMPTY_TASK_FILTERS)}
           >
-            {text("清除所有筛选", "Clear all filters")}
+            {text("清除所有篩選", "Clear all filters")}
             <span>{activeCount}</span>
           </button>
         </div>
@@ -516,13 +516,13 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
         type="button"
         className={`task-filter-trigger${activeCount ? " is-active" : ""}${open ? " is-open" : ""}`}
         aria-label={activeCount
-          ? text(`筛选议题，已启用 ${activeCount} 个条件`, `Filter issues, ${activeCount} active`)
-          : text("筛选议题", "Filter issues")}
+          ? text(`篩選議題，已啟用 ${activeCount} 個條件`, `Filter issues, ${activeCount} active`)
+          : text("篩選議題", "Filter issues")}
         aria-haspopup="menu"
         aria-expanded={open}
         title={activeCount
-          ? text(`已启用 ${activeCount} 个筛选条件 (F)`, `${activeCount} active filters (F)`)
-          : text("筛选议题 (F)", "Filter issues (F)")}
+          ? text(`已啟用 ${activeCount} 個篩選條件 (F)`, `${activeCount} active filters (F)`)
+          : text("篩選議題 (F)", "Filter issues (F)")}
         onClick={() => open ? closeMenu() : openMenu()}
       >
         <TaskboardIcon name="filter" className="filter-icon" />

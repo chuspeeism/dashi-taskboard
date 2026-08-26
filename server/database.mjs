@@ -27,7 +27,7 @@ function commentConversationTitle(body) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean);
-  if (!firstLine) return "评论";
+  if (!firstLine) return "評論";
   const compact = firstLine.replace(/\s+/g, " ");
   return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
 }
@@ -484,11 +484,11 @@ export class TaskboardDatabase {
         thread_workspace_path TEXT,
         creator_type TEXT NOT NULL DEFAULT 'user',
         creator_id TEXT NOT NULL DEFAULT 'local-user',
-        creator_name TEXT NOT NULL DEFAULT '本地用户',
+        creator_name TEXT NOT NULL DEFAULT '本機使用者',
         creator_avatar_url TEXT,
         assignee_type TEXT NOT NULL DEFAULT 'user' CHECK (assignee_type IN ('user', 'agent')),
         assignee_id TEXT NOT NULL DEFAULT 'local-user',
-        assignee_name TEXT NOT NULL DEFAULT '本地用户',
+        assignee_name TEXT NOT NULL DEFAULT '本機使用者',
         assignee_avatar_url TEXT,
         git_branch TEXT,
         worktree_path TEXT,
@@ -712,7 +712,7 @@ export class TaskboardDatabase {
       this.database.exec("ALTER TABLE tasks ADD COLUMN creator_id TEXT NOT NULL DEFAULT 'local-user'");
     }
     if (!migratedTaskColumns.some((column) => column.name === "creator_name")) {
-      this.database.exec("ALTER TABLE tasks ADD COLUMN creator_name TEXT NOT NULL DEFAULT '本地用户'");
+      this.database.exec("ALTER TABLE tasks ADD COLUMN creator_name TEXT NOT NULL DEFAULT '本機使用者'");
     }
     if (!migratedTaskColumns.some((column) => column.name === "creator_avatar_url")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN creator_avatar_url TEXT");
@@ -976,13 +976,13 @@ export class TaskboardDatabase {
     const timestamp = now();
     this.database.prepare(`
       INSERT INTO projects (id, name, workspace_path, next_task_number, created_at, updated_at)
-      VALUES ('local', '全局', NULL, 1, ?, ?)
+      VALUES ('local', '全域', NULL, 1, ?, ?)
       ON CONFLICT(id) DO NOTHING
     `).run(timestamp, timestamp);
     this.database.prepare(`
       UPDATE projects
-      SET name = '全局', workspace_path = NULL, updated_at = ?
-      WHERE id = 'local' AND (name != '全局' OR workspace_path IS NOT NULL)
+      SET name = '全域', workspace_path = NULL, updated_at = ?
+      WHERE id = 'local' AND (name != '全域' OR workspace_path IS NOT NULL)
     `).run(timestamp);
   }
 

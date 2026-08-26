@@ -67,7 +67,7 @@ export function JiraConnectionDialog({
         }}
       >
         <h2 id="jira-connection-title">
-          {connection?.configured ? text("Jira 设置", "Jira settings") : text("连接 Jira", "Connect Jira")}
+          {connection?.configured ? text("Jira 設定", "Jira settings") : text("連線 Jira", "Connect Jira")}
         </h2>
         <label>
           <span>{text("Jira 地址", "Jira URL")}</span>
@@ -84,13 +84,13 @@ export function JiraConnectionDialog({
         {/^http:\/\//i.test(baseUrl.trim()) && (
           <p className="jira-http-warning">
             {text(
-              "HTTP 会在内网中以可读取形式传输账号密码。",
+              "HTTP 會在內網中以可讀取形式傳輸帳號密碼。",
               "HTTP sends the username and password in cleartext over the network.",
             )}
           </p>
         )}
         <label>
-          <span>{text("Jira 项目（名称或 Key，可多选）", "Jira projects (name or key, multiple allowed)")}</span>
+          <span>{text("Jira 專案（名稱或 Key，可多選）", "Jira projects (name or key, multiple allowed)")}</span>
           <input
             maxLength={2600}
             placeholder="DMARTECH, JP"
@@ -99,30 +99,30 @@ export function JiraConnectionDialog({
           />
         </label>
         <label>
-          <span>{text("用户名", "Username")}</span>
+          <span>{text("使用者名稱", "Username")}</span>
           <input
             required={!connection?.configured}
             autoComplete="username"
             maxLength={254}
-            placeholder={connection?.configured ? text("留空则保持不变", "Leave blank to keep unchanged") : ""}
+            placeholder={connection?.configured ? text("留空則保持不變", "Leave blank to keep unchanged") : ""}
             value={username}
             onChange={(event) => setUsername(event.target.value)}
           />
         </label>
         <label>
-          <span>{text("密码", "Password")}</span>
+          <span>{text("密碼", "Password")}</span>
           <input
             required={!connection?.configured}
             type="password"
             autoComplete="current-password"
             maxLength={4096}
-            placeholder={connection?.configured ? text("留空则保持不变", "Leave blank to keep unchanged") : ""}
+            placeholder={connection?.configured ? text("留空則保持不變", "Leave blank to keep unchanged") : ""}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
         {connection?.configured && connection.displayName && (
-          <p>{text("当前账号：", "Current account: ")}{connection.displayName}</p>
+          <p>{text("目前帳號：", "Current account: ")}{connection.displayName}</p>
         )}
         {error && <p className="project-dialog-error" role="alert">{error}</p>}
         <div>
@@ -140,10 +140,10 @@ export function JiraConnectionDialog({
             }
           >
             {saving
-              ? text("连接中…", "Connecting…")
+              ? text("連線中…", "Connecting…")
               : connection?.configured
-                ? text("保存并同步", "Save and sync")
-                : text("连接并同步", "Connect and sync")}
+                ? text("儲存並同步", "Save and sync")
+                : text("連線並同步", "Connect and sync")}
           </button>
         </div>
       </form>

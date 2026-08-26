@@ -93,9 +93,9 @@ export function IssueListView({
                         <span className="issue-list-title-cell">
                           <small>{displayIdentifier}</small>
                           <strong>{task.title}</strong>
-                          {presentations[task.id]?.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
+                          {presentations[task.id]?.unread && <span className="task-unread-dot" aria-label={text("有未讀更新", "Unread updates")} />}
                         </span>
-                        <span className="issue-list-metadata" aria-label={text("议题属性", "Issue properties")}>
+                        <span className="issue-list-metadata" aria-label={text("議題屬性", "Issue properties")}>
                           <span className="issue-list-priority-control" onClick={stopRow} onKeyDown={stopRow}>
                             <TaskPropertyPicker
                               value={task.priority}
@@ -108,7 +108,7 @@ export function IssueListView({
                               open={priorityMenuTaskId === task.id}
                               className="issue-list-property-picker"
                               triggerClassName={`issue-list-priority priority-${task.priority}`}
-                              ariaLabel={text(`${displayIdentifier} 优先级`, `${displayIdentifier} priority`)}
+                              ariaLabel={text(`${displayIdentifier} 優先順序`, `${displayIdentifier} priority`)}
                               onOpenChange={(open) => setPriorityMenuTaskId(open ? task.id : null)}
                               onChange={(priority) => void onUpdate(task, { priority }).catch(() => {})}
                             />
@@ -147,7 +147,7 @@ export function IssueListView({
                           <label className="issue-list-assignee" title={task.assignee.name} onClick={stopRow}>
                             <ActorAvatar actor={task.assignee} />
                             <select
-                              aria-label={text(`${displayIdentifier} 负责人`, `${displayIdentifier} assignee`)}
+                              aria-label={text(`${displayIdentifier} 負責人`, `${displayIdentifier} assignee`)}
                               value={assigneeTarget}
                               disabled={task.source === "jira"}
                               onChange={(event) => void onUpdate(task, { assigneeTarget: event.target.value as "current-user" | "codex-agent" }).catch(() => {})}
@@ -160,7 +160,7 @@ export function IssueListView({
                         <time
                           dateTime={task.createdAt}
                           title={text(
-                            `创建于 ${new Date(task.createdAt).toLocaleString(locale)}`,
+                            `建立於 ${new Date(task.createdAt).toLocaleString(locale)}`,
                             `Created ${new Date(task.createdAt).toLocaleString(locale)}`,
                           )}
                         >
@@ -171,8 +171,8 @@ export function IssueListView({
                   }) : (
                     <div className="issue-list-empty">
                       {hasActiveFilters
-                        ? text("当前筛选下没有匹配议题", "No issues match the current filters")
-                        : text(`没有${statusLabel}议题`, `No ${statusLabel.toLowerCase()} issues`)}
+                        ? text("目前篩選下沒有匹配議題", "No issues match the current filters")
+                        : text(`沒有${statusLabel}議題`, `No ${statusLabel.toLowerCase()} issues`)}
                     </div>
                   )}
                 </div>

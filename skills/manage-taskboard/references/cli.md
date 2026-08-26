@@ -16,8 +16,8 @@ taskctl comment list --help
 
 | English | Prefer in Chinese | Do not use |
 | --- | --- | --- |
-| local companion / loopback companion | 本地 companion、本地配套服务、环回代理 | 伴侣、伴侣 API |
-| Taskboard HTTP API (`/api/tasks`, `/api/comments`, `/api/attachments`, …) | Taskboard HTTP API、本地服务 API、附件上传接口 | companion API、伴侣 API |
+| local companion / loopback companion | 本地 companion、本地配套服務、環回代理 | 伴侶、伴侶 API |
+| Taskboard HTTP API (`/api/tasks`, `/api/comments`, `/api/attachments`, …) | Taskboard HTTP API、本地服務 API、附件上傳介面 | companion API、伴侶 API |
 
 Env and files that refer to this service: `CODEX_TASKBOARD_COMPANION_URL`, `CODEX_TASKBOARD_URL` (loopback origin), `.data/cloud-companion.json`. Error code `LOCAL_COMPANION_REQUIRED` means a capability needs that **local loopback service**, not a different API surface.
 

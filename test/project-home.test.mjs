@@ -14,7 +14,7 @@ const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.
 test("the project switcher merges live Codex projects with persisted Taskboard projects", () => {
   assert.match(appSource, /hostContext\?\.projects \?\? \[\]/);
   assert.match(appSource, /persistedById/);
-  assert.match(appSource, /name: project\.id === GLOBAL_PROJECT_ID\s*\? text\("临时任务", "Temporary tasks"\)\s*: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
+  assert.match(appSource, /name: project\.id === GLOBAL_PROJECT_ID\s*\? text\("臨時任務", "Temporary tasks"\)\s*: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
   assert.match(appSource, /for \(const project of projects\) \{[\s\S]*?inCodex: false,[\s\S]*?persisted: true/);
   assert.match(appSource, /projectMenuChoices\.map\(\(project\) => \(/);
   assert.match(appSource, /createProjectRequest/);
@@ -62,29 +62,29 @@ test("the selected project exposes the current board surfaces", () => {
 
 test("new issues stage attachments in the composer and upload them after creation", () => {
   assert.match(editorSource, /type="file"[\s\S]*?multiple/);
-  assert.match(editorSource, /<PendingAttachments[\s\S]*?uploadLabel=\{text\("保存后上传", "Upload after saving"\)\}/);
+  assert.match(editorSource, /<PendingAttachments[\s\S]*?uploadLabel=\{text\("儲存後上傳", "Upload after saving"\)\}/);
   assert.match(pendingAttachmentsSource, /className="composer-attachment-list"/);
   assert.match(appSource, /Promise\.allSettled/);
   assert.match(appSource, /uploadAttachment\(saved\.id, file, "attachment"\)/);
   assert.match(appSource, /uploadAttachment\(saved\.id, image\.file, "inline"\)/);
-  assert.match(appSource, /zh: `\$\{failedAttachments\} 个附件`[\s\S]*?以下内容写入失败/);
+  assert.match(appSource, /zh: `\$\{failedAttachments\} 個附件`[\s\S]*?以下內容寫入失敗/);
 });
 
 test("the issue composer includes Linear-style labels and scheduling", () => {
-  for (const label of ["缺陷", "特性", "for-claude", "hold", "改进", "phase-1", "phase-6"]) {
+  for (const label of ["缺陷", "特性", "for-claude", "hold", "改進", "phase-1", "phase-6"]) {
     assert.match(labelsSource, new RegExp(label));
   }
   assert.match(editorSource, /<LabelPicker/);
-  assert.match(labelPickerSource, /text\(`创建 “\$\{normalizedSearch\}”`, `Create “\$\{normalizedSearch\}”`\)/);
-  assert.match(editorSource, /设置截止日期/);
-  assert.match(editorSource, /设置重复/);
+  assert.match(labelPickerSource, /text\(`建立 “\$\{normalizedSearch\}”`, `Create “\$\{normalizedSearch\}”`\)/);
+  assert.match(editorSource, /設定截止日期/);
+  assert.match(editorSource, /設定重複/);
   assert.match(editorSource, /最早截止日期/);
   assert.match(editorSource, /developmentScan\.contexts/);
 });
 
 test("issue creation selects a project only from all projects and keeps the current project otherwise", () => {
-  assert.match(editorSource, /\{!task && projectOptions && \([\s\S]*?ariaLabel=\{text\("项目", "Project"\)\}/);
-  assert.doesNotMatch(detailSource, /detail-property-label">项目|project-property-icon|project\.name/);
+  assert.match(editorSource, /\{!task && projectOptions && \([\s\S]*?ariaLabel=\{text\("專案", "Project"\)\}/);
+  assert.doesNotMatch(detailSource, /detail-property-label">專案|project-property-icon|project\.name/);
   assert.match(appSource, /projectOptions=\{!editor\.task && isAllProjects \? createTargetProjects : undefined\}/);
   assert.match(appSource, /const targetProjectId = editorProjectId \?\? selectedProjectId;[\s\S]*?createTaskRequest\(targetProjectId, draft\)/);
   assert.match(appSource, /className="header-project-switcher"/);
@@ -92,18 +92,18 @@ test("issue creation selects a project only from all projects and keeps the curr
 
 test("the project header exposes project, automation, and create controls", () => {
   assert.match(appSource, /className="header-project-button"[\s\S]*?aria-haspopup="menu"/);
-  assert.match(appSource, /className="header-project-menu" role="menu" aria-label=\{text\("项目", "Projects"\)\}/);
+  assert.match(appSource, /className="header-project-menu" role="menu" aria-label=\{text\("專案", "Projects"\)\}/);
   assert.match(appSource, /<ProjectAutomationMenu/);
   assert.match(appSource, /className="icon-button header-create-button"/);
   assert.match(styles, /\.header-project-menu \{[\s\S]*?-webkit-app-region: no-drag/);
 });
 
 test("the project header keeps detail navigation separate from the project switcher", () => {
-  assert.match(appSource, /const headerProjectName = isAllProjects\s*\? text\("所有项目", "All projects"\)\s*: selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("临时任务", "Temporary tasks"\)\s*: selectedProject\?\.name \?\? text\("任务面板", "Taskboard"\)/);
-  assert.match(appSource, /detailTask && \([\s\S]*?aria-label=\{text\("返回议题看板", "Back to issue board"\)\}[\s\S]*?<\/button>/);
+  assert.match(appSource, /const headerProjectName = isAllProjects\s*\? text\("所有專案", "All projects"\)\s*: selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("臨時任務", "Temporary tasks"\)\s*: selectedProject\?\.name \?\? text\("任務面板", "Taskboard"\)/);
+  assert.match(appSource, /detailTask && \([\s\S]*?aria-label=\{text\("返回議題看板", "Back to issue board"\)\}[\s\S]*?<\/button>/);
   assert.match(appSource, /className="header-project-switcher"[\s\S]*?<span className="project-name">\{headerProjectName\}<\/span>/);
   assert.doesNotMatch(appSource, /className="issue-root-button"/);
-  assert.doesNotMatch(appSource, /detailTask\?\.identifier \?\? "议题"/);
+  assert.doesNotMatch(appSource, /detailTask\?\.identifier \?\? "議題"/);
 });
 
 test("the collapsed Codex sidebar can be expanded immediately left of the project switcher", () => {
