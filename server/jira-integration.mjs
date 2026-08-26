@@ -43,21 +43,21 @@ export function taskStatusFromJira(status) {
   const name = status?.name ?? "";
   const category = status?.statusCategory?.key;
   if (category === "done") {
-    return includesAny(name, ["cancel", "reject", "取消", "拒绝"]) ? "canceled" : "done";
+    return includesAny(name, ["cancel", "reject", "取消", "拒絕", "拒绝"]) ? "canceled" : "done";
   }
   if (category === "new") {
-    return includesAny(name, ["backlog", "待立项", "需求池"]) ? "backlog" : "todo";
+    return includesAny(name, ["backlog", "待規劃", "待立項", "待立项", "需求池"]) ? "backlog" : "todo";
   }
-  if (includesAny(name, ["review", "verify", "test", "验收", "评审", "测试"])) {
+  if (includesAny(name, ["review", "verify", "test", "驗收", "验收", "評審", "评审", "測試", "测试"])) {
     return "in_review";
   }
-  if (includesAny(name, ["block", "hold", "阻塞", "挂起"])) return "blocked";
+  if (includesAny(name, ["block", "hold", "阻塞", "掛起", "挂起"])) return "blocked";
   return "in_progress";
 }
 
 export function taskPriorityFromJira(priority) {
   const name = priority?.name ?? "";
-  if (includesAny(name, ["highest", "critical", "blocker", "urgent", "紧急", "最高"])) {
+  if (includesAny(name, ["highest", "critical", "blocker", "urgent", "緊急", "紧急", "最高"])) {
     return "urgent";
   }
   if (includesAny(name, ["high", "major", "高"])) return "high";
@@ -79,7 +79,7 @@ function actorFromJira(user, fallback) {
 function jiraOriginId(manifest) {
   const applicationId = typeof manifest?.id === "string" ? manifest.id.trim() : "";
   if (!applicationId) {
-    throw new ApiError(502, "INVALID_JIRA_ORIGIN", "Jira 未返回稳定的实例身份");
+    throw new ApiError(502, "INVALID_JIRA_ORIGIN", "Jira 未返回穩定的執行個體身分");
   }
   return createHash("sha256").update(applicationId).digest("hex");
 }
@@ -173,7 +173,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         502,
         timedOut ? "JIRA_TIMEOUT" : "JIRA_UNAVAILABLE",
-        timedOut ? "连接 Jira 超时" : "无法连接 Jira，请检查地址和内网连接",
+        timedOut ? "連線 Jira 超時" : "無法連線 Jira，請檢查地址和內網連線",
       );
     } finally {
       clearTimeout(timeout);
@@ -182,24 +182,24 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         401,
         "JIRA_AUTH_FAILED",
-        "Jira 登录失败，请检查用户名、密码、Basic Auth 或 CAPTCHA 状态",
+        "Jira 登入失敗，請檢查使用者名稱、密碼、Basic Auth 或 CAPTCHA 狀態",
       );
     }
     if (response.status >= 300 && response.status < 400) {
-      throw new ApiError(400, "JIRA_REDIRECT", "Jira 地址发生重定向，请填写最终访问地址");
+      throw new ApiError(400, "JIRA_REDIRECT", "Jira 網址發生重新導向，請填寫最終網址");
     }
     if (!response.ok) {
       throw new ApiError(
         response.status >= 500 ? 502 : 409,
         "JIRA_REQUEST_FAILED",
-        `Jira 请求失败（HTTP ${response.status}）`,
+        `Jira 請求失敗（HTTP ${response.status}）`,
       );
     }
     if (response.status === 204) return null;
     try {
       return await response.json();
     } catch {
-      throw new ApiError(502, "INVALID_JIRA_RESPONSE", "Jira 返回了无效的 JSON 数据");
+      throw new ApiError(502, "INVALID_JIRA_RESPONSE", "Jira 返回了無效的 JSON 資料");
     }
   }
 
@@ -233,7 +233,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         409,
         "JIRA_ORIGIN_MISMATCH",
-        "当前 Jira 地址指向了另一个实例，请重新连接后再操作",
+        "目前 Jira 地址指向了另一個執行個體，請重新連線後再操作",
       );
     }
   }
@@ -299,7 +299,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         409,
         "JIRA_TRANSITION_UNAVAILABLE",
-        `Jira 当前工作流不能将 ${issueKey} 移到目标状态`,
+        `Jira 目前工作流程不能將 ${issueKey} 移到目標狀態`,
         { availableStatuses },
       );
     }
@@ -307,7 +307,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         409,
         "JIRA_TRANSITION_AMBIGUOUS",
-        `Jira 有多个工作流操作可将 ${issueKey} 移到目标状态，请在 Jira 中选择`,
+        `Jira 有多個工作流程操作可將 ${issueKey} 移到目標狀態，請在 Jira 中選擇`,
         {
           availableStatuses: availableStatuses.filter(
             (candidate) => candidate.taskboardStatus === targetStatus,
@@ -335,7 +335,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         409,
         "JIRA_PRIORITY_UNAVAILABLE",
-        "Jira 中没有可映射到该优先级的选项",
+        "Jira 中沒有可對應到該優先順序的選項",
       );
     }
     return { id: String(match.id) };
@@ -354,7 +354,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         throw new ApiError(
           409,
           "JIRA_LEGACY_URL_CHANGE_UNAVAILABLE",
-          "请先使用原 Jira 地址完成配置升级，再修改地址",
+          "請先使用原 Jira 地址完成設定升級，再修改地址",
         );
       }
       if (
@@ -368,7 +368,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         throw new ApiError(
           400,
           "JIRA_PASSWORD_REQUIRED",
-          "修改 Jira 地址或用户名时必须重新输入密码",
+          "修改 Jira 地址或使用者名稱時必須重新輸入密碼",
         );
       }
       const { config, issues } = await validateConnection(candidate);
@@ -391,18 +391,18 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     async reconcile() {
       const config = await configStore.read();
       if (!config || config.version !== 2) {
-        throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成稳定身份配置");
+        throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成穩定身分設定");
       }
       return syncWithConfig(config, { archiveMissing: false });
     },
     async updateTask(task, changes) {
       const config = await configStore.read();
-      if (!config) throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未配置");
+      if (!config) throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未設定");
       if (task.externalOrigin !== config.originId || !task.externalKey) {
         throw new ApiError(
           409,
           "JIRA_ORIGIN_MISMATCH",
-          "此任务不属于当前 Jira 连接，请重新同步后再操作",
+          "此任務不屬於目前 Jira 連線，請重新同步後再操作",
         );
       }
       await assertLiveOrigin(config);
@@ -424,7 +424,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         throw new ApiError(
           409,
           "JIRA_MULTI_STEP_UPDATE_UNAVAILABLE",
-          "请分开修改 Jira 状态和其他字段",
+          "請分開修改 Jira 狀態和其他欄位",
         );
       }
       if (priorityChanged) {
@@ -449,12 +449,12 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     async moveTask(task, status) {
       if (status === task.status) return;
       const config = await configStore.read();
-      if (!config) throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未配置");
+      if (!config) throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未設定");
       if (task.externalOrigin !== config.originId || !task.externalKey) {
         throw new ApiError(
           409,
           "JIRA_ORIGIN_MISMATCH",
-          "此任务不属于当前 Jira 连接，请重新同步后再操作",
+          "此任務不屬於目前 Jira 連線，請重新同步後再操作",
         );
       }
       await assertLiveOrigin(config);

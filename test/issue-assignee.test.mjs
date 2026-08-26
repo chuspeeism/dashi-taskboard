@@ -20,7 +20,7 @@ test("issue model and editor preserve a concrete assignee identity", async () =>
   assert.match(typesSource, /export interface TaskDraft \{[\s\S]*?assigneeTarget\?: AssigneeTarget/);
   assert.match(appSource, /assigneeTarget/);
   assert.match(editorSource, /currentUser: ActorIdentity/);
-  assert.match(editorSource, /ariaLabel=\{text\("负责人", "Assignee"\)\}/);
+  assert.match(editorSource, /ariaLabel=\{text\("負責人", "Assignee"\)\}/);
   assert.match(editorSource, /CODEX_AGENT_ACTOR/);
 });
 
@@ -32,7 +32,7 @@ test("issue detail and cards expose the same assignee identity", async () => {
     source("web/src/styles.css"),
   ]);
 
-  assert.match(detailSource, /detail-property-label">\{text\("负责人", "Assignee"\)\}/);
+  assert.match(detailSource, /detail-property-label">\{text\("負責人", "Assignee"\)\}/);
   assert.match(detailSource, /saveTask\(\{ assigneeTarget \}, "assignee"\)/);
   assert.match(cardSource, /value=\{actorKey\(task\.assignee\)\}/);
   assert.match(avatarSource, /codex-agent-logo\.png/);
@@ -48,7 +48,7 @@ test("issue card assignee control uses compact participant avatars", async () =>
 
   assert.match(
     cardSource,
-    /<TaskPropertyPicker[\s\S]*?className="task-participants-control card-property-control"[\s\S]*?triggerClassName="task-assignee-trigger"[\s\S]*?triggerContent=\{<ParticipantAvatars participants=\{participants\} \/>\}[\s\S]*?ariaLabel=\{text\(`\$\{displayIdentifier\} 负责人`, `\$\{displayIdentifier\} assignee`\)\}/,
+    /<TaskPropertyPicker[\s\S]*?className="task-participants-control card-property-control"[\s\S]*?triggerClassName="task-assignee-trigger"[\s\S]*?triggerContent=\{<ParticipantAvatars participants=\{participants\} \/>\}[\s\S]*?ariaLabel=\{text\(`\$\{displayIdentifier\} 負責人`, `\$\{displayIdentifier\} assignee`\)\}/,
   );
   assert.match(
     styles,

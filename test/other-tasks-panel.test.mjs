@@ -30,10 +30,10 @@ test("the issue workspace projects configured statuses into adaptive main and se
   assert.match(appSource, /const mainBoardItems = boardDisplaySettings\.mainStatuses/);
   assert.match(appSource, /mainBoardItems\.map\(\(item\) => item === "archived" \? \([\s\S]*?<BoardColumn/);
   assert.match(appSource, /mainBoardItems\.map\(\(item\) => \([\s\S]*?className="loading-column"/);
-  assert.match(boardColumnSource, /todo: \{ label: "等待认领", tone: "todo" \}/);
-  assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
-  assert.match(boardColumnSource, /blocked: \{ label: "遇到阻碍", tone: "blocked" \}/);
-  assert.match(boardColumnSource, /in_review: \{ label: "等你确认", tone: "review" \}/);
+  assert.match(boardColumnSource, /todo: \{ label: "等待認領", tone: "todo" \}/);
+  assert.match(boardColumnSource, /in_progress: \{ label: "處理中", tone: "progress" \}/);
+  assert.match(boardColumnSource, /blocked: \{ label: "遇到阻礙", tone: "blocked" \}/);
+  assert.match(boardColumnSource, /in_review: \{ label: "等你確認", tone: "review" \}/);
 });
 
 test("other tasks is a closed-by-default non-modal panel with archived issues", () => {
@@ -70,7 +70,7 @@ test("search and filters feed the same status buckets used by the board and pane
   assert.match(appSource, /archivedTasks=\{filteredArchivedTasks\}/);
   assert.match(appSource, /hasActiveFilters=\{hasActiveTaskFilters\}/);
   assert.match(panelSource, /const tasks = archived \? archivedTasks : tasksByStatus\[activeTab\]/);
-  assert.match(panelSource, /hasActiveFilters\s*\? text\("当前筛选下无匹配议题", "No issues match the current filters"\)/);
+  assert.match(panelSource, /hasActiveFilters\s*\? text\("目前篩選下無匹配議題", "No issues match the current filters"\)/);
   assert.match(boardColumnSource, /tasks\.length === 0 && <div className="column-empty">\{emptyMessage\}<\/div>/);
 });
 
@@ -103,7 +103,7 @@ test("global creation defaults to todo while per-column creation keeps the chose
 
 test("legacy empty-column and manual visibility runtime paths are removed", async () => {
   assert.doesNotMatch(appSource, /showEmptyColumns|visibleStatuses|hiddenStatuses|columnVisibility|SHOW_EMPTY_COLUMNS_KEY|COLUMN_VISIBILITY_KEY/);
-  assert.doesNotMatch(boardColumnSource, /ColumnVisibilityMenu|onHide|隐藏列/);
+  assert.doesNotMatch(boardColumnSource, /ColumnVisibilityMenu|onHide|隱藏列/);
   assert.doesNotMatch(styles, /\.hidden-columns|\.hidden-column-|\.column-visibility-|\.column-menu|\.board-settings-trigger|\.board-settings-menu|\.board-filter-empty/);
   assert.match(styles, /\.board-setting-switch \{/);
 

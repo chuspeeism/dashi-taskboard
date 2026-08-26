@@ -689,7 +689,7 @@ test("Wrangler D1 SQL chunks large tables below the remote statement byte limit"
     ...structuredClone(template),
     id: `large-task-${String(index).padStart(3, "0")}`,
     identifier: `LARGE-${index + 1}`,
-    description: `多字节-${index}-`.repeat(160),
+    description: `多位元組-${index}-`.repeat(160),
     sort_order: index + 1,
   }));
 
@@ -1101,7 +1101,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
       `wrangler-large-task-${index}`,
       `LOCAL-${index + 100}`,
       `Wrangler large task ${index}`,
-      `多字节-${index}-`.repeat(160),
+      `多位元組-${index}-`.repeat(160),
       index + 10_000,
     );
   }

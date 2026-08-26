@@ -114,7 +114,7 @@ test("health and the default local project are available", async () => {
   assert.equal(result.response.status, 200);
   assert.equal(result.body.projects.length, 1);
   assert.equal(result.body.projects[0].id, "local");
-  assert.equal(result.body.projects[0].name, "全局");
+  assert.equal(result.body.projects[0].name, "全域");
   assert.equal(result.body.projects[0].workspacePath, null);
   assert.equal(result.body.projects[0].issueCount, 0);
 });
@@ -211,7 +211,7 @@ test("existing task and comment thread attribution remains content-specific", as
         '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
       );
       INSERT INTO comments VALUES (
-        'legacy-comment', 'legacy-task', 'Legacy comment', 'legacy-comment-thread', 'local', '本地用户', 1,
+        'legacy-comment', 'legacy-task', 'Legacy comment', 'legacy-comment-thread', 'local', '本機使用者', 1,
         '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
       );
       INSERT INTO attachments VALUES (
@@ -349,7 +349,7 @@ test("task thread migration excludes comment-only aggregate entries", async () =
       INSERT INTO task_threads VALUES ('aggregate-task', 'thread-subject', '2026-07-20T01:00:00.000Z');
       INSERT INTO task_threads VALUES ('aggregate-task', 'thread-comment-only', '2026-07-20T02:00:00.000Z');
       INSERT INTO comments VALUES (
-        'aggregate-comment', 'aggregate-task', 'Comment', 'thread-comment-only', 'local', '本地用户', 1,
+        'aggregate-comment', 'aggregate-task', 'Comment', 'thread-comment-only', 'local', '本機使用者', 1,
         '2026-07-20T02:00:00.000Z', '2026-07-20T02:00:00.000Z'
       );
     `);
@@ -673,7 +673,7 @@ test("project and task CRUD flow", async () => {
   assert.equal(created.threadId, "thread-123");
   assert.equal(created.creatorType, "user");
   assert.equal(created.creatorId, "local-user");
-  assert.equal(created.creatorName, "本地用户");
+  assert.equal(created.creatorName, "本機使用者");
   assert.equal(created.creatorAvatarUrl, null);
   assert.deepEqual(created.developmentContext, {
     type: "worktree",
@@ -1268,7 +1268,7 @@ test("issue comments can be created, edited, listed, and deleted", async () => {
   assert.deepEqual(comment.attachments, []);
   assert.equal(comment.authorType, "user");
   assert.equal(comment.authorId, "local-user");
-  assert.equal(comment.authorName, "本地用户");
+  assert.equal(comment.authorName, "本機使用者");
   assert.equal(comment.version, 1);
 
   const listResult = await request(baseUrl, `/api/tasks/${task.id}/comments`);
@@ -1455,7 +1455,7 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
     method: "POST",
     headers: {
       "content-type": "text/plain; charset=utf-8",
-      "x-taskboard-filename": encodeURIComponent("设计说明.txt"),
+      "x-taskboard-filename": encodeURIComponent("設計說明.txt"),
       "x-taskboard-attachment-kind": "attachment",
     },
     body: contents,
@@ -1464,7 +1464,7 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
   const attachment = uploadResult.body.attachment;
   assert.equal(attachment.taskId, task.id);
   assert.equal(attachment.commentId, null);
-  assert.equal(attachment.filename, "设计说明.txt");
+  assert.equal(attachment.filename, "設計說明.txt");
   assert.equal(attachment.contentType, "text/plain");
   assert.equal(attachment.size, Buffer.byteLength(contents));
   assert.match(attachment.createdAt, /^\d{4}-\d{2}-\d{2}T/);

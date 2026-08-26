@@ -381,11 +381,11 @@ function MermaidFallback({ source, error }: { source: string; error?: boolean })
   return (
     <div className="markdown-mermaid-fallback" role={error ? "alert" : undefined}>
       {error && <p>{text(
-        "无法渲染 Mermaid 图，下面显示图表源码。",
+        "無法渲染 Mermaid 圖，下面顯示圖表原始碼。",
         "Unable to render Mermaid diagram. Showing its source instead.",
       )}</p>}
       <details open={error}>
-        <summary>{text("Mermaid 源码", "Mermaid source")}</summary>
+        <summary>{text("Mermaid 原始碼", "Mermaid source")}</summary>
         <pre><code className="language-mermaid">{source}</code></pre>
       </details>
     </div>
@@ -490,7 +490,7 @@ export function MermaidDiagram({ source }: { source: string }) {
     <div
       className="markdown-mermaid"
       role="img"
-      aria-label={text("Mermaid 图", "Mermaid diagram")}
+      aria-label={text("Mermaid 圖", "Mermaid diagram")}
       dangerouslySetInnerHTML={{ __html: currentDiagram.svg }}
     />
   );

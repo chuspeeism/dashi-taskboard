@@ -973,7 +973,7 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
       const requestId = ${JSON.stringify(requestId)};
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
-        resolve({ ok: false, error: "当前 Codex 版本没有提供原生自动任务能力" });
+        resolve({ ok: false, error: "目前 Codex 版本沒有提供原生自動任務能力" });
         return;
       }
       let settled = false;
@@ -1000,7 +1000,7 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
         });
       };
       const timeout = window.setTimeout(
-        () => finish({ ok: false, error: "Codex 自动任务接口没有响应" }),
+        () => finish({ ok: false, error: "Codex 自動任務介面沒有回應" }),
         10_000,
       );
       window.addEventListener("message", onMessage);

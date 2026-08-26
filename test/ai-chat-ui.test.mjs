@@ -90,21 +90,21 @@ test("model and effort selections are normalized exclusively against the real ca
 
 test("skill composer fragments keep opaque markers aligned with selected real ids", () => {
   assert.deepEqual(parseAiChatComposerFragment(JSON.stringify({
-    message: `请用 ${AI_CHAT_SKILL_MARKER} 检查`,
+    message: `請用 ${AI_CHAT_SKILL_MARKER} 檢查`,
     skillIds: ["cloudflare"],
   }), ["cloudflare"]), {
-    message: `请用 ${AI_CHAT_SKILL_MARKER} 检查`,
+    message: `請用 ${AI_CHAT_SKILL_MARKER} 檢查`,
     skillIds: ["cloudflare"],
   });
 });
 
 test("turn input contains only serialized composer content, real skill ids and one-time confirmation", () => {
-  assert.deepEqual(buildTurnInput(`检查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`, ["cloudflare"], false), {
-    message: `检查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`,
+  assert.deepEqual(buildTurnInput(`檢查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`, ["cloudflare"], false), {
+    message: `檢查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`,
     skillIds: ["cloudflare"],
   });
-  assert.deepEqual(buildTurnInput("执行", [], true), {
-    message: "执行",
+  assert.deepEqual(buildTurnInput("執行", [], true), {
+    message: "執行",
     dangerFullAccessConfirmed: true,
   });
   assert.equal(JSON.stringify(buildTurnInput("hello", [], false)).includes("workspacePath"), false);
@@ -125,7 +125,7 @@ test("running threads expose stop, danger-full-access requires confirmation, and
 
 test("reasoning and raw JSONL events never enter the visible activity timeline", () => {
   const events = filterVisibleAiEvents([
-    { id: "1", type: "agent_message", role: "assistant", content: "公开回复" },
+    { id: "1", type: "agent_message", role: "assistant", content: "公開回復" },
     { id: "2", type: "reasoning", role: "activity", content: "private chain of thought" },
     { id: "3", type: "raw_jsonl", role: "activity", content: "{\"secret\":true}" },
     { id: "4", type: "command", role: "activity", content: "npm test" },
@@ -170,7 +170,7 @@ test("chat renders Markdown, public thinking steps and never renders host-only f
   assert.match(chatSource, /remarkPlugins=\{\[remarkGfm\]\}/);
   assert.match(chatSource, /ai-chat-thinking-steps/);
   assert.match(chatSource, /aria-label=\{text\("停止生成", "Stop generating"\)\}/);
-  assert.match(chatSource, /aria-label=\{text\("发送消息", "Send message"\)\}/);
+  assert.match(chatSource, /aria-label=\{text\("傳送訊息", "Send message"\)\}/);
   assert.doesNotMatch(chatSource, /origin\.workspacePath/);
   assert.doesNotMatch(chatSource, /codexThreadId/);
   assert.doesNotMatch(chatSource, /manageTaskboardSkillPath/);
@@ -233,7 +233,7 @@ test("SSE hints are coalesced and custom panel resize handles do not clip narrow
 
 test("history exposes deletion of local records without adding rename controls", () => {
   assert.match(chatSource, /deleteAiChatThread\(/);
-  assert.match(chatSource, /aria-label=\{text\(`删除对话 \$\{thread\.title\}`, `Delete chat \$\{thread\.title\}`\)\}/);
-  assert.match(chatSource, /window\.confirm\(text\(\s*`删除本地对话“\$\{thread\.title\}”？`,\s*`Delete local chat “\$\{thread\.title\}”\?`,\s*\)\)/);
-  assert.doesNotMatch(chatSource, /重命名对话|renameAiChatThread/);
+  assert.match(chatSource, /aria-label=\{text\(`刪除對話 \$\{thread\.title\}`, `Delete chat \$\{thread\.title\}`\)\}/);
+  assert.match(chatSource, /window\.confirm\(text\(\s*`刪除本地對話“\$\{thread\.title\}”？`,\s*`Delete local chat “\$\{thread\.title\}”\?`,\s*\)\)/);
+  assert.doesNotMatch(chatSource, /重新命名對話|renameAiChatThread/);
 });

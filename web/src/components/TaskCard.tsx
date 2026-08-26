@@ -91,7 +91,7 @@ function calendarDate(value: string, locale: string) {
 function createdDate(value: string, locale: string, text: (chinese: string, english: string) => string) {
   const formatted = new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
     .format(new Date(value));
-  return text(`${formatted}创建`, `Created ${formatted}`);
+  return text(`${formatted}建立`, `Created ${formatted}`);
 }
 
 function elapsedTime(startedAt: string | null, now: number) {
@@ -178,7 +178,7 @@ function ProcessingProgress({
 
   const total = processing.total!;
   const completed = Math.max(0, Math.min(processing.completed!, total));
-  const label = text(`处理进度 ${completed}/${total}`, `Processing progress ${completed}/${total}`);
+  const label = text(`處理進度 ${completed}/${total}`, `Processing progress ${completed}/${total}`);
 
   return (
     <div className="card-progress-row">
@@ -212,8 +212,8 @@ function ProcessingStatusRow({
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
       <span className="task-processing-label">
         {running
-          ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
-          : text("暂停处理", "Processing paused")}
+          ? (elapsed ? text(`已處理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在處理...", "Processing..."))
+          : text("暫停處理", "Processing paused")}
       </span>
       <span className="task-processing-spacer" aria-hidden="true" />
       {presentation.conversations.length > 0 && (
@@ -233,7 +233,7 @@ function ParticipantAvatars({ participants }: { participants: ActorIdentity[] })
     <span
       className="task-participants"
       aria-label={text(
-        `参与人：${participants.map((participant) => participant.name).join("、")}`,
+        `參與人：${participants.map((participant) => participant.name).join("、")}`,
         `Participants: ${participants.map((participant) => participant.name).join(", ")}`,
       )}
     >
@@ -298,9 +298,9 @@ function PriorityControl({
       disabled={disabled}
       className="card-property-control"
       triggerClassName={`priority-chip priority-chip-${task.priority}`}
-      ariaLabel={text(`${displayIdentifier} 优先级`, `${displayIdentifier} priority`)}
+      ariaLabel={text(`${displayIdentifier} 優先順序`, `${displayIdentifier} priority`)}
       title={text(
-        `优先级：${taskPriorityLabel(language, task.priority)}`,
+        `優先順序：${taskPriorityLabel(language, task.priority)}`,
         `Priority: ${taskPriorityLabel(language, task.priority)}`,
       )}
       onOpenChange={onOpenChange}
@@ -371,8 +371,8 @@ function AssigneeControl({
       className="task-participants-control card-property-control"
       triggerClassName="task-assignee-trigger"
       triggerContent={<ParticipantAvatars participants={participants} />}
-      ariaLabel={text(`${displayIdentifier} 负责人`, `${displayIdentifier} assignee`)}
-      title={text(`负责人：${task.assignee.name}`, `Assignee: ${task.assignee.name}`)}
+      ariaLabel={text(`${displayIdentifier} 負責人`, `${displayIdentifier} assignee`)}
+      title={text(`負責人：${task.assignee.name}`, `Assignee: ${task.assignee.name}`)}
       onOpenChange={onOpenChange}
       onChange={(value) => {
         const selected = options.find((actor) => actorKey(actor) === value);
@@ -467,7 +467,7 @@ export function TaskCard({
       <button
         className="task-card-open"
         type="button"
-        aria-label={text(`打开 ${displayIdentifier}: ${task.title}`, `Open ${displayIdentifier}: ${task.title}`)}
+        aria-label={text(`開啟 ${displayIdentifier}: ${task.title}`, `Open ${displayIdentifier}: ${task.title}`)}
         onClick={() => onEdit(task)}
       />
 
@@ -475,7 +475,7 @@ export function TaskCard({
         <span className="card-reference">
           <span className="task-identifier">ID: {displayIdentifier}</span>
         </span>
-        {presentation.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
+        {presentation.unread && <span className="task-unread-dot" aria-label={text("有未讀更新", "Unread updates")} />}
         {task.status === "in_review" && onComplete && (
           <button
             className="task-card-complete"
@@ -516,7 +516,7 @@ export function TaskCard({
       )}
 
       {showsProperties && (
-        <div className="card-properties" aria-label={text("议题属性", "Issue properties")}>
+        <div className="card-properties" aria-label={text("議題屬性", "Issue properties")}>
           {projectName && (
             <span className="project-chip" title={projectName}>
               <ProjectIcon color="currentColor" />

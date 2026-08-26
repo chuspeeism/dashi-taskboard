@@ -36,7 +36,7 @@ test("embedded page uses the launcher URL inside an opaque sandbox", () => {
 });
 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
-  assert.match(source, /const PLUGIN_LABELS = \["插件", "plugins"\]/);
+  assert.match(source, /const PLUGIN_LABELS = \["外掛", "外掛程式", "插件", "plugins"\]/);
   assert.match(source, /if \(plugin\?\.parentElement\) return plugin;/);
   assert.match(source, /return directButtons\.length >= 3/);
   assert.match(source, /const button = reference\.cloneNode\(true\)/);

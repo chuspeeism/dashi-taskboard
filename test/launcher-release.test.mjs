@@ -60,7 +60,7 @@ test("Windows CI runs the Node suite and the unsigned launcher skips unsupported
   );
   assert.match(
     launcherSource,
-    /cfg!\(target_os = "windows"\)[\s\S]*?Windows 版本暂不支持自动更新/,
+    /cfg!\(target_os = "windows"\)[\s\S]*?Windows 版本暫不支援自動更新/,
   );
 });
 

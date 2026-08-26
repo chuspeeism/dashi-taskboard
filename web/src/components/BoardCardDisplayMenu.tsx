@@ -174,11 +174,11 @@ export function BoardCardDisplayMenu({
       ref={menuRef}
       className="project-automation-menu board-display-menu no-drag"
       role="dialog"
-      aria-label={text("显示设置", "Display settings")}
+      aria-label={text("顯示設定", "Display settings")}
       style={{ left: position.left, top: position.top, visibility: position.ready ? "visible" : "hidden" }}
     >
       <div className="project-automation-menu-heading">
-        <strong>{text("显示设置", "Display settings")}</strong>
+        <strong>{text("顯示設定", "Display settings")}</strong>
       </div>
       <div className="project-automation-switch">
         <span>{text("封面", "Cover")}</span>
@@ -186,7 +186,7 @@ export function BoardCardDisplayMenu({
           type="button"
           className={"board-setting-switch" + (settings.cover ? " is-on" : "")}
           role="switch"
-          aria-label={text("显示封面", "Show cover")}
+          aria-label={text("顯示封面", "Show cover")}
           aria-checked={settings.cover}
           onClick={() => onChange({ ...settings, cover: !settings.cover })}
         >
@@ -199,7 +199,7 @@ export function BoardCardDisplayMenu({
           type="button"
           className={"board-setting-switch" + (settings.body ? " is-on" : "")}
           role="switch"
-          aria-label={text("显示正文", "Show body")}
+          aria-label={text("顯示正文", "Show body")}
           aria-checked={settings.body}
           onClick={() => onChange({ ...settings, body: !settings.body })}
         >
@@ -215,7 +215,7 @@ export function BoardCardDisplayMenu({
           setDialogOpen(true);
         }}
       >
-        <span>{text("更多显示设置", "More display settings")}</span>
+        <span>{text("更多顯示設定", "More display settings")}</span>
         <span aria-hidden="true">›</span>
       </button>
     </div>,
@@ -236,12 +236,12 @@ export function BoardCardDisplayMenu({
         aria-labelledby="display-settings-title"
       >
         <header className="display-settings-header">
-          <h2 id="display-settings-title">{text("更多显示设置", "More display settings")}</h2>
+          <h2 id="display-settings-title">{text("更多顯示設定", "More display settings")}</h2>
           <button
             ref={closeRef}
             className="icon-button display-settings-close"
             type="button"
-            aria-label={text("关闭显示设置", "Close display settings")}
+            aria-label={text("關閉顯示設定", "Close display settings")}
             onClick={closeDialog}
           >
             <LinearIcon name="close" />
@@ -250,9 +250,9 @@ export function BoardCardDisplayMenu({
 
         <div className="display-settings-columns">
           {([
-            ["main", text("正常显示", "Main board")],
-            ["sidebar", text("侧边栏显示", "Sidebar")],
-            ["hidden", text("隐藏", "Hidden")],
+            ["main", text("正常顯示", "Main board")],
+            ["sidebar", text("側邊欄顯示", "Sidebar")],
+            ["hidden", text("隱藏", "Hidden")],
           ] as const).map(([placement, label]) => (
             <section
               className={"display-settings-column" + (
@@ -309,7 +309,7 @@ export function BoardCardDisplayMenu({
                         ? <DeleteIcon color="var(--display-status-color)" size={15} />
                         : <StatusIcon status={status as TaskStatus} color="var(--display-status-color)" size={15} />}
                       <span>{status === "archived"
-                        ? text("已归档", "Archived")
+                        ? text("已歸檔", "Archived")
                         : taskStatusLabel(language, status)}</span>
                     </div>
                   );
@@ -321,7 +321,7 @@ export function BoardCardDisplayMenu({
 
         <footer className="display-settings-footer">
           <button className="button secondary" type="button" onClick={onReset}>
-            {text("重置为默认", "Reset to default")}
+            {text("重置為預設", "Reset to default")}
           </button>
         </footer>
       </div>
@@ -337,10 +337,10 @@ export function BoardCardDisplayMenu({
           menuOpen || dialogOpen ? " is-open" : ""
         )}
         type="button"
-        aria-label={text("显示设置", "Display settings")}
+        aria-label={text("顯示設定", "Display settings")}
         aria-haspopup="dialog"
         aria-expanded={menuOpen}
-        title={text("显示设置", "Display settings")}
+        title={text("顯示設定", "Display settings")}
         onClick={() => {
           if (!menuOpen) setPosition({ left: 0, top: 0, ready: false });
           setMenuOpen((current) => !current);

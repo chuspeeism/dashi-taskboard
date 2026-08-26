@@ -12,21 +12,23 @@
 
   const nativeTabs = [...document.querySelectorAll('[role="tab"]')];
   const template = nativeTabs.find((element) =>
-    (element.getAttribute("aria-label") || element.textContent || "").includes("自动化"),
+    ["自動化", "自动化"].some((label) => (
+      element.getAttribute("aria-label") || element.textContent || ""
+    ).includes(label)),
   );
   const sidebar = template?.closest(".conversation-sidebar");
   const tabs = template?.parentElement;
   const sidebarGridItem = sidebar?.parentElement;
 
   if (!template || !sidebar || !tabs || !sidebarGridItem) {
-    throw new Error("找不到 WorkBuddy 原生侧边栏");
+    throw new Error("找不到 WorkBuddy 原生側邊欄");
   }
 
   const entry = template.cloneNode(true);
   entry.id = ENTRY_ID;
-  entry.setAttribute("aria-label", "任务面板");
+  entry.setAttribute("aria-label", "任務面板");
   entry.setAttribute("aria-selected", "false");
-  entry.setAttribute("title", "任务面板");
+  entry.setAttribute("title", "任務面板");
   entry.classList.remove("active");
   entry.style.order = "60";
   for (const name of [...entry.getAttributeNames()]) {
@@ -42,8 +44,10 @@
   const textWalker = document.createTreeWalker(entry, NodeFilter.SHOW_TEXT);
   let textNode = textWalker.nextNode();
   while (textNode) {
-    if (textNode.nodeValue.includes("自动化")) {
-      textNode.nodeValue = textNode.nodeValue.replace("自动化", "任务面板");
+    if (textNode.nodeValue.includes("自動化") || textNode.nodeValue.includes("自动化")) {
+      textNode.nodeValue = textNode.nodeValue
+        .replace("自動化", "任務面板")
+        .replace("自动化", "任務面板");
     }
     textNode = textWalker.nextNode();
   }
@@ -51,7 +55,7 @@
 
   const panel = document.createElement("section");
   panel.id = PANEL_ID;
-  panel.setAttribute("aria-label", "任务面板");
+  panel.setAttribute("aria-label", "任務面板");
   panel.hidden = true;
   Object.assign(panel.style, {
     position: "fixed",

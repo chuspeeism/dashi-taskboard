@@ -16,7 +16,7 @@ export const DEFAULT_LABEL_NAMES = [
   "特性",
   "for-claude",
   "hold",
-  "改进",
+  "改進",
   "phase-1",
   "phase-2",
   "phase-3",

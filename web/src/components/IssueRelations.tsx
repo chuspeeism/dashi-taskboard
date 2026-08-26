@@ -83,7 +83,7 @@ export function IssuePickerContent({
           aria-expanded="true"
           aria-controls="issue-relation-results"
           aria-activedescendant={results[activeIndex] ? `relation-option-${results[activeIndex].id}` : undefined}
-          placeholder={text("搜索议题…", "Search issues…")}
+          placeholder={text("搜尋議題…", "Search issues…")}
           onChange={(event) => {
             setQuery(event.target.value);
             setActiveIndex(0);
@@ -145,7 +145,7 @@ export function IssuePickerContent({
             </button>
           );
         }) : (
-          <p className="issue-relation-empty">{text("没有匹配的议题", "No matching issues")}</p>
+          <p className="issue-relation-empty">{text("沒有匹配的議題", "No matching issues")}</p>
         )}
       </div>
     </>
@@ -295,7 +295,7 @@ export function IssueParentLink({
     <div className={`issue-parent-link${parent ? " has-parent" : ""}`}>
       {parent && (
         <>
-          <span className="issue-parent-prefix">{text("子议题属于", "Sub-issue of")}</span>
+          <span className="issue-parent-prefix">{text("子議題屬於", "Sub-issue of")}</span>
           <IssueRelationRow
             issue={parent}
             removing={saving}
@@ -311,8 +311,8 @@ export function IssueParentLink({
       )}
       <IssuePicker
         label={parent
-          ? text("更换父议题", "Change parent issue")
-          : text("设置父议题", "Set parent issue")}
+          ? text("更換父議題", "Change parent issue")
+          : text("設定父議題", "Set parent issue")}
         candidates={candidates}
         disabled={saving}
         onSelect={async (candidate) => {
@@ -358,7 +358,7 @@ export function IssueSubIssues({
     <section className="issue-sub-issues" aria-labelledby="sub-issues-heading">
       <header>
         <div>
-          <h2 id="sub-issues-heading">{text("子议题", "Sub-issues")}</h2>
+          <h2 id="sub-issues-heading">{text("子議題", "Sub-issues")}</h2>
           {subIssues.length > 0 && (
             <span className="sub-issue-summary">
               <span
@@ -371,7 +371,7 @@ export function IssueSubIssues({
           )}
         </div>
         <IssuePicker
-          label={text("添加子议题", "Add sub-issue")}
+          label={text("新增子議題", "Add sub-issue")}
           candidates={candidates}
           disabled={savingId !== null}
           onSelect={async (candidate) => {
@@ -412,9 +412,9 @@ export function IssueSubIssues({
 }
 
 const RELATION_GROUPS = [
-  { type: "blocked_by", field: "blockedBy", chineseLabel: "阻塞于", englishLabel: "Blocked by", chineseAddLabel: "添加阻塞议题", englishAddLabel: "Add blocker", tone: "blocked-by" },
-  { type: "blocks", field: "blocks", chineseLabel: "阻塞", englishLabel: "Blocks", chineseAddLabel: "添加被阻塞议题", englishAddLabel: "Add blocked issue", tone: "blocks" },
-  { type: "related", field: "related", chineseLabel: "相关议题", englishLabel: "Related issues", chineseAddLabel: "添加相关议题", englishAddLabel: "Add related issue", tone: "related" },
+  { type: "blocked_by", field: "blockedBy", chineseLabel: "阻塞於", englishLabel: "Blocked by", chineseAddLabel: "新增阻塞議題", englishAddLabel: "Add blocker", tone: "blocked-by" },
+  { type: "blocks", field: "blocks", chineseLabel: "阻塞", englishLabel: "Blocks", chineseAddLabel: "新增被阻塞議題", englishAddLabel: "Add blocked issue", tone: "blocks" },
+  { type: "related", field: "related", chineseLabel: "相關議題", englishLabel: "Related issues", chineseAddLabel: "新增相關議題", englishAddLabel: "Add related issue", tone: "related" },
 ] as const;
 
 export function IssueRelationSidebar({
@@ -429,7 +429,7 @@ export function IssueRelationSidebar({
 
   return (
     <section className="issue-relation-sidebar" aria-labelledby="relations-heading">
-      <h2 id="relations-heading">{text("关系", "Relations")}</h2>
+      <h2 id="relations-heading">{text("關係", "Relations")}</h2>
       {RELATION_GROUPS.map((group) => {
         const label = text(group.chineseLabel, group.englishLabel);
         const issues = task.relations[group.field];

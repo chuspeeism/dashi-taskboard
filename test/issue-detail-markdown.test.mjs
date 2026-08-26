@@ -33,7 +33,7 @@ test("issue detail renders descriptions and comments with GFM markdown", () => {
   );
   assert.match(
     detailSource,
-    /\{description\s*\?\s*<DescriptionDocument\s*value=\{description\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*:\s*text\("添加描述…", "Add description…"\)\}/,
+    /\{description\s*\?\s*<DescriptionDocument\s*value=\{description\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*:\s*text\("新增描述…", "Add description…"\)\}/,
   );
   assert.match(
     detailSource,
@@ -89,16 +89,16 @@ test("issue detail markdown styles cover rich document elements", () => {
 
 test("the configured markdown renderer produces CommonMark and GFM elements", () => {
   const markdown = [
-    "**粗体**和[链接](https://example.com)",
+    "**粗體**和[連結](https://example.com)",
     "",
     "> 引用",
     "",
     "- [x] 已完成",
     "- [ ] 未完成",
     "",
-    "~~删除线~~",
+    "~~刪除線~~",
     "",
-    "| 名称 | 状态 |",
+    "| 名稱 | 狀態 |",
     "| --- | --- |",
     "| Taskboard | Ready |",
     "",

@@ -38,7 +38,7 @@ export function LabelPicker({
   onDeleteLabel,
 }: LabelPickerProps) {
   const { language, text } = useTaskboardI18n();
-  const resolvedPlaceholder = placeholder ?? text("标签", "Labels");
+  const resolvedPlaceholder = placeholder ?? text("標籤", "Labels");
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [search, setSearch] = useState("");
@@ -119,7 +119,7 @@ export function LabelPicker({
         type="button"
         className={triggerClassName}
         disabled={disabled}
-        aria-label={text("选择或创建标签", "Select or create labels")}
+        aria-label={text("選擇或建立標籤", "Select or create labels")}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
@@ -146,15 +146,15 @@ export function LabelPicker({
         </>}
       </button>
       {open && (
-        <div className="composer-popover label-popover" role="dialog" aria-label={text("选择或创建标签", "Select or create labels")}>
+        <div className="composer-popover label-popover" role="dialog" aria-label={text("選擇或建立標籤", "Select or create labels")}>
           <input
             autoFocus
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={text("添加标签…", "Add labels…")}
-            aria-label={text("搜索标签", "Search labels")}
+            placeholder={text("新增標籤…", "Add labels…")}
+            aria-label={text("搜尋標籤", "Search labels")}
           />
-          <div className="label-options" role="listbox" aria-label={text("可用标签", "Available labels")} aria-multiselectable="true">
+          <div className="label-options" role="listbox" aria-label={text("可用標籤", "Available labels")} aria-multiselectable="true">
             {filteredLabels.map((label) => {
               const presentation = labelPresentation(label, language);
               return (
@@ -175,8 +175,8 @@ export function LabelPicker({
                       type="button"
                       className="label-delete-button"
                       disabled={disabled || pendingLabel !== null}
-                      aria-label={text(`删除标签 ${presentation.name}`, `Delete label ${presentation.name}`)}
-                      title={text("删除标签", "Delete label")}
+                      aria-label={text(`刪除標籤 ${presentation.name}`, `Delete label ${presentation.name}`)}
+                      title={text("刪除標籤", "Delete label")}
                       onClick={() => void deleteLabel(label)}
                     >
                       <DeleteIcon color="currentColor" />
@@ -196,7 +196,7 @@ export function LabelPicker({
                     ? labelPresentation(normalizedSearch, language).color
                     : "transparent",
                 }} />
-                <span>{text(`创建 “${normalizedSearch}”`, `Create “${normalizedSearch}”`)}</span>
+                <span>{text(`建立 “${normalizedSearch}”`, `Create “${normalizedSearch}”`)}</span>
               </button>
             )}
           </div>
