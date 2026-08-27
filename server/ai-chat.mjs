@@ -335,7 +335,9 @@ export class AiChatService {
 
     let resolved;
     try {
-      resolved = await this.resolveContext(projectId, thread?.origin.issueId, codexTarget);
+      resolved = resolvedIssueWorkspace(
+        await this.resolveContext(projectId, thread?.origin.issueId, codexTarget),
+      );
     } catch (error) {
       if (error instanceof ApiError && ["PROJECT_NOT_FOUND", "AI_CHAT_ISSUE_NOT_FOUND"].includes(error.code)) {
         throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer project is invalid");
@@ -1063,11 +1065,11 @@ export class AiChatService {
     }
 
     const codexTarget = codexTargetFromOrigin(thread.origin);
-    const resolved = await this.resolveContext(
+    const resolved = resolvedIssueWorkspace(await this.resolveContext(
       thread.origin.projectId,
       thread.origin.issueId,
       codexTarget,
-    );
+    ));
     const runtime = this.#runtimeForTarget(resolved);
     thread = this.getThread(thread.id);
     if (this.#threadIsActive(thread)) {
