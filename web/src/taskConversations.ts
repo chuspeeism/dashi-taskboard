@@ -66,7 +66,7 @@ export function buildPersistedTaskComposerDocument(
       });
     } else if (segment.type === "text") {
       appendText(segment.text);
-    } else if (segment.type === "pending-image") {
+    } else if (segment.type === "pending-image" || segment.type === "pending-attachment") {
       appendText(segment.token);
     } else {
       appendText(segment.markdown);

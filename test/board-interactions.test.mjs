@@ -13,8 +13,9 @@ const contextMenuSource = await readFile(new URL("../web/src/components/TaskCont
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
 const filterSource = await readFile(new URL("../web/src/taskFilters.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
+const composerSource = await readFile(new URL("../web/src/components/InlineMediaComposer.tsx", import.meta.url), "utf8");
 
-function workflowStatuses() {
+function taskStatuses() {
   const match = typesSource.match(/export const TASK_STATUSES = (\[[\s\S]*?\]) as const/);
   assert.ok(match);
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
@@ -54,19 +55,6 @@ test("main issue cards stay compact while sidebar cards show ownership and creat
   assert.match(detailSource, /currentTask\.createdAt/);
 });
 
-test("scrollbars stay proportional while the workflow node library hides its bar", () => {
-  assert.match(styles, /:root \{[\s\S]*?--scrollbar-thumb: rgba\(27, 27, 27, 0\.15\)/);
-  assert.match(styles, /:root\[data-theme="dark"\] \{[\s\S]*?--scrollbar-thumb: rgba\(238, 238, 239, 0\.15\)/);
-  assert.match(styles, /\* \{[\s\S]*?scrollbar-color: var\(--scrollbar-thumb\) transparent[\s\S]*?scrollbar-width: thin/);
-  assert.match(styles, /\*::\-webkit-scrollbar-track,[\s\S]*?\*::\-webkit-scrollbar-track-piece,[\s\S]*?\*::\-webkit-scrollbar-corner \{[\s\S]*?background: transparent/);
-  assert.match(styles, /\*::\-webkit-scrollbar-button \{[\s\S]*?display: none/);
-  assert.match(styles, /\*::\-webkit-scrollbar-thumb \{[\s\S]*?min-height: 30px[\s\S]*?background: var\(--scrollbar-thumb\)[\s\S]*?background-clip: padding-box/);
-  assert.doesNotMatch(styles, /scrollbar-color: var\(--border-strong\) transparent/);
-  assert.doesNotMatch(styles, /\*::\-webkit-scrollbar-thumb:(?:vertical|horizontal)/);
-  assert.match(styles, /\.workflow-node-groups \{[\s\S]*?overflow-y: auto;[\s\S]*?scrollbar-width: none/);
-  assert.match(styles, /\.workflow-node-groups::\-webkit-scrollbar \{[\s\S]*?display: none;[\s\S]*?width: 0;[\s\S]*?height: 0/);
-});
-
 test("native select options remain readable in dark theme", () => {
   assert.match(styles, /:root\[data-theme="dark"\] select \{[\s\S]*?color-scheme: dark/);
   assert.match(styles, /:root\[data-theme="dark"\] select option \{[\s\S]*?background-color: var\(--surface-raised\);[\s\S]*?color: var\(--text-primary\)/);
@@ -85,8 +73,8 @@ test("the issue board has no shared vertical scroll and each status column scrol
   assert.match(styles, /\.column-header \{[\s\S]*?position: sticky;[\s\S]*?top: 0;[\s\S]*?background: var\(--board-column-surface\)/);
 });
 
-test("the complete Linear-style workflow shares one ordered status source", () => {
-  assert.deepEqual(workflowStatuses(), [
+test("the complete issue status set shares one ordered source", () => {
+  assert.deepEqual(taskStatuses(), [
     "backlog",
     "todo",
     "in_progress",
@@ -109,7 +97,7 @@ test("the complete Linear-style workflow shares one ordered status source", () =
 });
 
 test("review, blocked and canceled statuses round-trip through filter URLs", () => {
-  const statuses = workflowStatuses();
+  const statuses = taskStatuses();
   const selected = ["in_review", "blocked", "canceled"];
   const url = new URL("http://taskboard.local/");
   url.searchParams.set("status", selected.join(","));
@@ -150,7 +138,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(detailSource, /currentTask\.threadBinding \|\| currentTask\.legacyLocalThreadId/);
   assert.doesNotMatch(detailSource, /currentTask\.threadIds/);
   assert.match(detailSource, /<strong>\{text\("查看对话", "View conversation"\)\}<\/strong>/);
-  assert.match(detailSource, /className="conversation-thread-id">\{threadId\}/);
+  assert.doesNotMatch(detailSource, /className="conversation-thread-id">\{threadId\}/);
   assert.doesNotMatch(detailSource, /shortThreadId/);
   assert.doesNotMatch(detailSource, /detail-property-label">Codex/);
   assert.match(detailSource, /comment\.threadBinding \|\| comment\.legacyLocalThreadId/);
@@ -158,39 +146,23 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(detailSource, /compact/);
   assert.doesNotMatch(styles, /issue-conversation-link\.compact/);
   assert.match(detailSource, /\.\.\.developmentOptions\.map\(\(context\) => \(\{/);
-  assert.match(detailSource, /context\.type === "branch" \? "branch" : "folder"/);
+  assert.match(detailSource, /context\.type === "branch"[\s\S]*?<BranchIcon[\s\S]*?<LinearIcon name="folder"/);
   assert.match(detailSource, /developmentContext/);
   assert.doesNotMatch(detailSource, /placeholder="绑定分支/);
   assert.doesNotMatch(contextMenuSource, /打开关联 Codex 对话/);
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
-test("issue editing leaves workflow configuration on the project workflow board", () => {
-  assert.match(typesSource, /export interface Task \{[\s\S]*?workflowId: string \| null/);
-  const taskDraftSource = typesSource.slice(
-    typesSource.indexOf("export interface TaskDraft"),
-    typesSource.indexOf("export interface TaskEvent"),
-  );
-  const taskToDraftSource = appSource.slice(
-    appSource.indexOf("function taskToDraft"),
-    appSource.indexOf("function isEditableTarget"),
-  );
-  assert.doesNotMatch(taskDraftSource, /workflowId/);
-  assert.doesNotMatch(taskToDraftSource, /workflowId/);
-  assert.match(appSource, /const \[workflowOptions, setWorkflowOptions\] = useState<WorkflowOption\[\]>/);
-  assert.match(appSource, /workflowOptionsFromWorkspace\(record\.workspace\)/);
-  assert.doesNotMatch(editorSource, /WorkflowOption|workflowId|工作流/);
-  assert.doesNotMatch(detailSource, /detail-property-label">工作流|workflowId: event\.target\.value/);
-});
-
-test("comments stage, upload, render and delete their own attachments", () => {
+test("comments upload and render their own attachments in the content flow", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
-  assert.match(detailSource, /pendingCommentFiles/);
-  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file, "attachment"\)/);
-  assert.match(detailSource, /comment\.attachments\.some\(\(attachment\) => attachment\.kind === "attachment"\)/);
-  assert.match(detailSource, /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => attachment\.kind === "attachment"\)[\s\S]*?\.map\(\(attachment\) =>/);
-  assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
+  assert.match(detailSource, /commentInlineFiles/);
+  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\.file, "attachment"\)/);
+  assert.match(detailSource, /resolveInlineAttachmentMarkdown/);
+  assert.match(detailSource, /createInlineMediaSegments\(comment\.body, referenceTasks, comment\.attachments\)/);
+  assert.match(detailSource, /attachments=\{comment\.attachments\}/);
+  assert.match(detailSource, /onOpenAttachment=\{handleAttachmentDownload\}/);
+  assert.match(composerSource, /className="inline-media-attachment"/);
 });
 
 test("issue creation and detail share one searchable, creatable label picker", () => {

@@ -7,7 +7,6 @@ const LOCAL_COMPANION_ROUTES = new Set([
   "/health",
   "/api/meta",
   "/api/device-workspaces",
-  "/api/workflow-capabilities",
   "/api/local/cloud-session",
 ]);
 
@@ -31,21 +30,6 @@ function basicAuthorization(actorName, sharedKey) {
   return `Basic ${Buffer.from(`${actorName}:${sharedKey}`, "utf8").toString("base64")}`;
 }
 
-function removeGitWorktreePaths(value) {
-  if (Array.isArray(value)) {
-    for (const item of value) removeGitWorktreePaths(item);
-    return;
-  }
-  if (value === null || typeof value !== "object") return;
-  for (const [key, item] of Object.entries(value)) {
-    if (key === "gitWorktreePath") {
-      delete value[key];
-    } else {
-      removeGitWorktreePaths(item);
-    }
-  }
-}
-
 async function prepareRequest(request, {
   assertTaskProjectMoveAllowed,
   resolveThreadBinding,
@@ -62,12 +46,10 @@ async function prepareRequest(request, {
     (request.method === "POST" && url.pathname === "/api/tasks")
     || Boolean(taskPatchMatch)
   );
-  const isWorkflowMutation = request.method === "PUT"
-    && /^\/api\/projects\/[^/]+\/workflow-workspace$/.test(url.pathname);
   const isConversationMutation = request.method !== "GET"
     && (/^\/api\/tasks(?:\/|$)/.test(url.pathname) || /^\/api\/comments\//.test(url.pathname));
 
-  if (isJson && (isProjectCreate || isTaskMutation || isWorkflowMutation || isConversationMutation)) {
+  if (isJson && (isProjectCreate || isTaskMutation || isConversationMutation)) {
     let payload;
     try {
       payload = await request.clone().json();
@@ -123,7 +105,6 @@ async function prepareRequest(request, {
       const threadBinding = resolveThreadBinding(payload.threadId);
       if (threadBinding) payload.threadBinding = threadBinding;
     }
-    if (isWorkflowMutation) removeGitWorktreePaths(payload.workspace);
     body = JSON.stringify(payload);
   }
 
@@ -222,6 +203,32 @@ export function createCloudProxy({
   const setProjectWorkspace = configStore?.setProjectWorkspace?.bind(configStore);
 
   return {
+    async webSocketTarget(pathname = "/api/events") {
+      const config = await readConfig();
+      if (!config?.remoteUrl || !config.actorName || !config.sharedKey) {
+        throw new CloudProxyError(
+          409,
+          "CLOUD_NOT_CONFIGURED",
+          "Cloud collaboration is not configured",
+        );
+      }
+      let remoteUrl;
+      try {
+        remoteUrl = normalizeCloudUrl(config.remoteUrl);
+      } catch (error) {
+        throw new CloudProxyError(
+          500,
+          "INVALID_CLOUD_CONFIG",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      const url = new URL(pathname, `${remoteUrl}/`);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return {
+        url: url.href,
+        headers: { authorization: basicAuthorization(config.actorName, config.sharedKey) },
+      };
+    },
     async forward(request) {
       const config = await readConfig();
       if (!config?.remoteUrl || !config.actorName || !config.sharedKey) {
@@ -252,6 +259,7 @@ export function createCloudProxy({
       headers.delete("host");
       headers.delete("connection");
       headers.delete("transfer-encoding");
+      headers.delete("accept-encoding");
       for (const name of [...headers.keys()]) {
         if (name.toLowerCase().startsWith("x-taskboard-user-")) headers.delete(name);
       }

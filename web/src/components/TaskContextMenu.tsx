@@ -17,8 +17,15 @@ import {
 } from "../types";
 import { labelPresentation } from "../labels";
 import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
-import { STATUS_DETAILS } from "./BoardColumn";
-import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import {
+  DeleteIcon,
+  EditIcon,
+  LabelIcon,
+  NewConversationIcon,
+  PriorityIcon,
+  StatusIcon,
+} from "./SemanticIcons";
 
 type SubmenuName = "status" | "priority" | "labels" | "copy";
 
@@ -33,6 +40,7 @@ interface TaskContextMenuProps {
   onLabelsChange: (task: Task, labels: string[]) => void;
   onDuplicate: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
+  openInThreadDisabled?: boolean;
   onOpenInThread: (task: Task) => void;
   onArchive: (task: Task) => void;
 }
@@ -104,6 +112,7 @@ export function TaskContextMenu({
   onLabelsChange,
   onDuplicate,
   onCopy,
+  openInThreadDisabled = false,
   onOpenInThread,
   onArchive,
 }: TaskContextMenuProps) {
@@ -176,7 +185,8 @@ export function TaskContextMenu({
     function closeFromOutside(event: PointerEvent) {
       if (!menuRef.current?.contains(event.target as Node)) onClose();
     }
-    function closeFromViewportChange() {
+    function closeFromViewportChange(event: Event) {
+      if (event.type === "scroll" && menuRef.current?.contains(event.target as Node)) return;
       onClose();
     }
 
@@ -265,7 +275,7 @@ export function TaskContextMenu({
       <div className="context-menu-group">
         <MenuItem
           label={text("状态", "Status")}
-          icon={<LinearIcon name="status" />}
+          icon={<StatusIcon status={task.status} color="currentColor" />}
           shortcut="S"
           submenu="status"
           submenuOpen={submenu === "status"}
@@ -279,7 +289,7 @@ export function TaskContextMenu({
                 <MenuItem
                   key={status}
                   label={taskStatusLabel(language, status)}
-                  icon={<LinearStatusIcon status={status} className={`status-icon-${STATUS_DETAILS[status].tone}`} />}
+                  icon={<StatusIcon status={status} color="currentColor" />}
                   shortcut={String(index + 1)}
                   checked={task.status === status}
                   onClick={() => closeThen(() => onStatusChange(task, status))}
@@ -291,7 +301,7 @@ export function TaskContextMenu({
 
         <MenuItem
           label={text("优先级", "Priority")}
-          icon={<LinearPriorityIcon priority={task.priority} />}
+          icon={<PriorityIcon priority={task.priority} />}
           shortcut="P"
           submenu="priority"
           submenuOpen={submenu === "priority"}
@@ -305,7 +315,7 @@ export function TaskContextMenu({
                 <MenuItem
                   key={priority}
                   label={taskPriorityLabel(language, priority)}
-                  icon={<LinearPriorityIcon priority={priority} />}
+                  icon={<PriorityIcon priority={priority} />}
                   shortcut={String(index)}
                   checked={task.priority === priority}
                   onClick={() => closeThen(() => onPriorityChange(task, priority))}
@@ -317,7 +327,7 @@ export function TaskContextMenu({
 
         <MenuItem
           label={text("标签", "Labels")}
-          icon={<LinearIcon name="label" />}
+          icon={<LabelIcon color="currentColor" />}
           shortcut="L"
           submenu="labels"
           submenuOpen={submenu === "labels"}
@@ -354,7 +364,7 @@ export function TaskContextMenu({
               <div className="context-menu-divider" role="separator" />
               <MenuItem
                 label={text("在编辑器中管理…", "Manage in editor…")}
-                icon={<LinearIcon name="write" />}
+                icon={<EditIcon color="currentColor" />}
                 onClick={() => closeThen(() => onEdit(task))}
               />
             </div>
@@ -367,7 +377,7 @@ export function TaskContextMenu({
       <div className="context-menu-group">
         <MenuItem
           label={text("编辑议题", "Edit issue")}
-          icon={<LinearIcon name="write" />}
+          icon={<EditIcon color="currentColor" />}
           shortcut="↵"
           onPointerEnter={closeSubmenu}
           onClick={() => closeThen(() => onEdit(task))}
@@ -416,7 +426,8 @@ export function TaskContextMenu({
         </MenuItem>
         <MenuItem
           label={text("在新对话打开", "Open in new conversation")}
-          icon={<LinearIcon name="link" />}
+          icon={<NewConversationIcon color="currentColor" size={16} />}
+          disabled={openInThreadDisabled}
           onPointerEnter={closeSubmenu}
           onClick={() => closeThen(() => onOpenInThread(task))}
         />
@@ -428,7 +439,7 @@ export function TaskContextMenu({
           <div className="context-menu-group">
             <MenuItem
               label={text("归档议题", "Archive issue")}
-              icon={<LinearIcon name="trash" />}
+              icon={<DeleteIcon color="currentColor" />}
               shortcut="⌘⌫"
               danger
               onPointerEnter={closeSubmenu}

@@ -201,7 +201,7 @@ test("submission stays disabled while a snapshot is loading", () => {
 test("new threads normalize inherited settings against the target project catalog", () => {
   assert.match(chatSource, /catalogProjectId/);
   assert.match(chatSource, /catalogLoadedProjectId/);
-  assert.match(chatSource, /const targetCatalog = catalogLoadedProjectId === input\.projectId[\s\S]*?getAiChatCatalog\(input\.projectId\)/);
+  assert.match(chatSource, /const targetCatalog = catalogLoadedProjectId === input\.projectId[\s\S]*?getAiChatCatalog\(input\.projectId, undefined, origin\?\.codexProjectIdentity\)/);
   assert.match(chatSource, /normalizeChatSelection\(\s*targetCatalog\.models,\s*inheritedSettings\.model,\s*inheritedSettings\.reasoningEffort/);
   assert.match(chatSource, /createAiChatThread\(\{[\s\S]*?\.\.\.settings/);
 });

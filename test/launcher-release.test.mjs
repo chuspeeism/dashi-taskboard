@@ -7,13 +7,30 @@ const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.j
 const releaseWorkflow = await readFile(new URL("../.github/workflows/release-macos.yml", import.meta.url), "utf8");
 const checkWorkflow = await readFile(new URL("../.github/workflows/check.yml", import.meta.url), "utf8");
 
-test("the macOS launcher uses one instance, serialized lifecycle changes, and a loopback CDP port", () => {
+test("the launcher keeps CDP random and prefers the Taskboard port with a fallback", () => {
   assert.match(launcherSource, /libc::flock/);
   assert.match(launcherSource, /lifecycle: Mutex/);
   assert.match(launcherSource, /generation: AtomicU64/);
-  assert.match(launcherSource, /TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/);
-  assert.equal(launcherSource.match(/TcpListener::bind/g)?.length, 1);
+  assert.match(
+    launcherSource,
+    /fn loopback_listener\(\)[\s\S]*?TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/,
+  );
+  assert.match(launcherSource, /const TASKBOARD_PREFERRED_PORT: u16 = 47823;/);
+  assert.match(
+    launcherSource,
+    /fn taskboard_loopback_listener\(\)[\s\S]*?TcpListener::bind\(\("127\.0\.0\.1", TASKBOARD_PREFERRED_PORT\)\)[\s\S]*?\.or_else\(\|_\| TcpListener::bind\(\("127\.0\.0\.1", 0\)\)\)/,
+  );
+  assert.equal(
+    launcherSource.match(
+      /fn taskboard_listener\([^)]*\)[\s\S]*?taskboard_loopback_listener\(\)\?/g,
+    )?.length,
+    2,
+  );
   assert.match(launcherSource, /codex_port: Mutex<Option<u16>>/);
+  assert.match(
+    launcherSource,
+    /fn codex_port\([\s\S]*?let listener = loopback_listener\(\)\?;/,
+  );
   assert.match(
     launcherSource,
     /#\[cfg\(target_os = "macos"\)\]\s+command\.args\(\["--launch", "--watch", "--open", "--port", &codex_port\]\);/,

@@ -22,7 +22,7 @@ test("comment floors use Linear-style cards with the author inside the card", ()
 test("comment body renders document formatting at Linear typography", () => {
   assert.match(
     detailSource,
-    /comment\.body && \(\s*<div className="comment-body">\s*<DescriptionDocument\s*value=\{comment\.body\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*<\/div>\s*\)/s,
+    /comment\.body && \(\s*<div className="comment-body">\s*<DescriptionDocument\s*value=\{comment\.body\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*attachments=\{comment\.attachments\}\s*enableImagePreview\s*onOpenAttachment=\{handleAttachmentDownload\}\s*\/>\s*<\/div>\s*\)/s,
   );
   assert.match(styles, /\.comment-body\s*\{[^}]*font-size:\s*15px;[^}]*line-height:\s*24px;/s);
   assert.match(styles, /\.comment-body \.issue-description-document\s*\{/);

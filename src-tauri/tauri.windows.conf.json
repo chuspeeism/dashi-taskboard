@@ -3,7 +3,7 @@
   "bundle": {
     "targets": ["nsis"],
     "createUpdaterArtifacts": false,
-    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "icon": ["../web/public/codex-app-icon.png", "icons/icon.ico"],
     "windows": {
       "nsis": {
         "installMode": "currentUser"

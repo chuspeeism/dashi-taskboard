@@ -5,11 +5,10 @@ import { labelPresentation } from "../labels";
 import type { TaskCardPresentation } from "../taskConversations";
 import { TASK_PRIORITIES, TASK_STATUSES, type ActorIdentity, type Task, type TaskDraft, type TaskStatus } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { StatusIcon } from "./BoardColumn";
-import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import { DueDateIcon, PriorityIcon, StatusIcon } from "./SemanticIcons";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
-import { TaskboardIcon } from "./TaskboardIcon";
 
 const COLLAPSED_BY_DEFAULT = new Set<TaskStatus>(["backlog", "done", "canceled"]);
 
@@ -71,7 +70,7 @@ export function IssueListView({
             <section className={`issue-list-group status-${status}`} key={status}>
               <button className="issue-list-group-header" type="button" onClick={() => toggleStatus(status)} aria-expanded={!isCollapsed}>
                 <LinearIcon name={isCollapsed ? "chevronRight" : "chevronDown"} />
-                <span className="issue-list-status-icon"><StatusIcon status={status} /></span>
+                <span className="issue-list-status-icon"><StatusIcon status={status} color="currentColor" size={14} /></span>
                 <strong>{statusLabel}</strong>
                 <span>{statusTasks.length}</span>
               </button>
@@ -103,7 +102,7 @@ export function IssueListView({
                               options={TASK_PRIORITIES.map((priority) => ({
                                 value: priority,
                                 label: taskPriorityLabel(language, priority),
-                                icon: <LinearPriorityIcon priority={priority} />,
+                                icon: <PriorityIcon priority={priority} size={14} />,
                                 className: `priority-${priority}`,
                               }))}
                               open={priorityMenuTaskId === task.id}
@@ -128,7 +127,7 @@ export function IssueListView({
                           </span>
                           {task.dueDate && (
                             <label className="issue-list-date" onClick={stopRow}>
-                              <TaskboardIcon name="calendar" />
+                              <DueDateIcon color="currentColor" size={12} />
                               <span>{calendarDate(task.dueDate, locale)}</span>
                               <input
                                 type="date"

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { attachmentContentUrl, resolvePersistedAttachmentUrl } from "../api";
+import { resolvePersistedAttachmentUrl } from "../api";
 import {
   TASK_PRIORITIES,
   type ActorIdentity,
@@ -19,11 +19,11 @@ import type {
   TaskConversationItem,
 } from "../taskConversations";
 import { ActorAvatar } from "./ActorAvatar";
-import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import { DueDateIcon, PriorityIcon, ProjectIcon } from "./SemanticIcons";
 import { LabelPicker } from "./LabelPicker";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskConversationMenu } from "./TaskConversationMenu";
-import { TaskboardIcon } from "./TaskboardIcon";
 import completeIcon from "../assets/figma-taskboard/card-complete.svg";
 import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
 
@@ -109,8 +109,7 @@ function firstTaskImage(task: Task) {
     /!\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+["'][^)]*["'])?\)/,
   );
   const source = markdownImage?.[1]
-    ?? markdownImage?.[2]
-    ?? (task.previewImage ? attachmentContentUrl(task.previewImage) : null);
+    ?? markdownImage?.[2];
   return source ? resolvePersistedAttachmentUrl(source) : null;
 }
 
@@ -292,7 +291,7 @@ function PriorityControl({
       options={TASK_PRIORITIES.map((priority) => ({
         value: priority,
         label: taskPriorityLabel(language, priority),
-        icon: <LinearPriorityIcon priority={priority} />,
+        icon: <PriorityIcon priority={priority} size={14} />,
         className: `priority-${priority}`,
       }))}
       open={open}
@@ -324,7 +323,7 @@ function DueDateControl({
   if (!task.dueDate) return null;
   return (
     <label className="due-date-chip card-property-control" title={text(`截止日期 ${task.dueDate}`, `Due date ${task.dueDate}`)}>
-      <TaskboardIcon name="calendar" /> {calendarDate(task.dueDate, locale)}
+      <DueDateIcon color="currentColor" size={12} /> {calendarDate(task.dueDate, locale)}
       <input
         type="date"
         aria-label={text(`${displayIdentifier} 截止日期`, `${displayIdentifier} due date`)}
@@ -520,7 +519,7 @@ export function TaskCard({
         <div className="card-properties" aria-label={text("议题属性", "Issue properties")}>
           {projectName && (
             <span className="project-chip" title={projectName}>
-              <LinearIcon name="project" />
+              <ProjectIcon color="currentColor" />
               <span>{projectName}</span>
             </span>
           )}

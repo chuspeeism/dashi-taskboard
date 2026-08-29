@@ -1,7 +1,7 @@
 [package]
 name = "codex-taskboard-launcher"
-version = "1.1.2"
-description = "Codex Taskboard macOS launcher"
+version = "1.1.11"
+description = "Codex Taskboard launcher"
 edition = "2021"
 rust-version = "1.88"
 
@@ -16,6 +16,7 @@ minisign-verify = "0.2"
 reqwest = { version = "0.13", default-features = false, features = ["stream", "rustls-no-provider"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-dialog = "2.7.2"
@@ -25,5 +26,8 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3.1"
 objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSProgressIndicator", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSProgressIndicator", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_RestartManager", "Win32_System_Threading"] }

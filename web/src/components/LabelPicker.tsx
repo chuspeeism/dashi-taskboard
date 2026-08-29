@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { labelDisplayName, labelPresentation } from "../labels";
 import { useTaskboardI18n } from "../i18n";
 import { LinearIcon } from "./LinearIcon";
+import { DeleteIcon, LabelIcon } from "./SemanticIcons";
 
 interface LabelPickerProps {
   availableLabels: string[];
@@ -124,7 +125,7 @@ export function LabelPicker({
         onClick={() => onOpenChange(!open)}
       >
         {triggerContent ?? <>
-          {showIcon && <LinearIcon name="label" />}
+          {showIcon && <LabelIcon color="currentColor" />}
           {selectedLabels.length > 0 && showSelectedAsChips ? (
             <span className="label-trigger-chips">
               {selectedLabels.map((label) => {
@@ -178,7 +179,7 @@ export function LabelPicker({
                       title={text("删除标签", "Delete label")}
                       onClick={() => void deleteLabel(label)}
                     >
-                      <LinearIcon name="trash" />
+                      <DeleteIcon color="currentColor" />
                     </button>
                   )}
                 </div>

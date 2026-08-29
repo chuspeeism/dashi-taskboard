@@ -56,10 +56,10 @@ npm run taskctl -- issue create \
 
 ```bash
 ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
+  ~/.agents/skills/manage-taskboard
 ```
 
-该 Skill 会指导 Codex 检查议题，将其移到 `in_progress`，使用乐观版本控制，验证工作，然后将其移到 `in_review`；只有在用户明确确认接受或要求将议题标记为完成后，才会将议题移到 `done`。
+桌面 App 会让该目录与内置 Skill 保持同步。该 Skill 会指导 Codex 检查议题，将其移到 `in_progress`，使用乐观版本控制，验证工作，然后将其移到 `in_review`；只有在用户明确确认接受或要求将议题标记为完成后，才会将议题移到 `done`。
 
 ## 嵌入 Codex
 
@@ -114,6 +114,32 @@ npm run app:build
 该 App 包含自己的 Node 运行时、Taskboard 服务、构建后的 Web UI、Skill、CLI 包装器和注入脚本。它会启动服务，复用已打开且有可用 CDP 渲染器的 Codex；普通 Codex 没有 CDP 时，它会在该实例的原生浏览面板中打开 Taskboard；没有打开 Codex 时，它会启动官方 Codex App。有可用 CDP 时，它会等待渲染器并注入侧边栏入口，然后在不显示终端窗口的情况下打开面板。该 App 可以复制到本检出目录之外；目标 Mac 只需安装官方 Codex App，不需要此仓库、系统 Node 安装或单独的 Codex CLI 安装。Taskboard 数据存储在 `~/Library/Application Support/Codex Taskboard`，启动器输出写入 `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`。
 
 本地构建使用 ad-hoc 代码签名进行直接验证。公开的 macOS 下载仍需要 Developer ID 签名和 Apple 公证。
+
+### Linux App：Ubuntu 24.04 x64 软件包
+
+Linux 桌面版第一版仅支持 Ubuntu 24.04 LTS x64。请先安装官方 ChatGPT 桌面版 `.deb`，并确认运行 `chatgpt` 可以打开它。然后从 [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest) 下载 Codex Taskboard `.deb` 或 `.AppImage`。请将以下命令中的 `<file>` 替换为下载的文件名。
+
+安装 `.deb` 软件包：
+
+```bash
+sudo apt install ./<file>.deb
+```
+
+或者运行 AppImage：
+
+```bash
+chmod +x ./<file>.AppImage
+./<file>.AppImage
+```
+
+如需在 Ubuntu 24.04 x64 上构建这两种软件包，请运行：
+
+```bash
+npm ci
+npm run app:build:linux:x64
+```
+
+第一版不支持 ARM64、Fedora、RPM 软件包或其他 Linux 发行版。
 
 ### Windows App：托盘启动器与内置 Taskboard
 

@@ -14,6 +14,85 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-linux:
+    name: Build Ubuntu 24.04 x64 packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust 1.88
+        uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install Ubuntu build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Ubuntu 24.04 x64 packages and updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >-
+          npm run app:build:linux:x64 --
+          --config '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - name: Verify Ubuntu 24.04 x64 package contents
+        run: >-
+          node scripts/verify-linux-packages.mjs
+          src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+          src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+
+      - name: Stage Ubuntu 24.04 x64 release assets
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          LINUX_RELEASE="$RUNNER_TEMP/linux-release"
+          mkdir -p "$LINUX_RELEASE"
+          cp \
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb \
+            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
+          cp \
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb.sig \
+            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig"
+          cp \
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage \
+            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+          cp \
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig \
+            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig"
+
+      - name: Preserve Ubuntu 24.04 x64 release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-release-${{ github.sha }}
+          path: ${{ runner.temp }}/linux-release
+          if-no-files-found: error
+
   release-windows-preview:
     name: Build unsigned Windows x64 Preview
     runs-on: windows-2025
@@ -51,7 +130,9 @@ jobs:
 
   release-macos:
     name: Build signed universal macOS app
-    needs: release-windows-preview
+    needs:
+      - release-linux
+      - release-windows-preview
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -296,6 +377,35 @@ jobs:
           name: windows-preview-${{ github.sha }}
           path: ${{ runner.temp }}/windows-preview
 
+      - name: Restore Ubuntu 24.04 x64 release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-release-${{ github.sha }}
+          path: ${{ runner.temp }}/linux-release
+
+      - name: Add and verify the Linux x64 updater
+        run: |
+          BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
+          LATEST_PATH="$BUNDLE_ROOT/release/latest.json"
+          LINUX_DEB_NAME="Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
+          LINUX_APPIMAGE_NAME="Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+          LINUX_DEB="$RUNNER_TEMP/linux-release/$LINUX_DEB_NAME"
+          LINUX_APPIMAGE="$RUNNER_TEMP/linux-release/$LINUX_APPIMAGE_NAME"
+          jq \
+            --rawfile deb_signature "$LINUX_DEB.sig" \
+            --rawfile appimage_signature "$LINUX_APPIMAGE.sig" \
+            --arg deb_url "https://github.com/chuspeeism/dashi-taskboard/releases/download/$RELEASE_TAG/$LINUX_DEB_NAME" \
+            --arg appimage_url "https://github.com/chuspeeism/dashi-taskboard/releases/download/$RELEASE_TAG/$LINUX_APPIMAGE_NAME" \
+            '.platforms["linux-x86_64-deb"] = {signature: $deb_signature, url: $deb_url}
+             | .platforms["linux-x86_64-appimage"] = {signature: $appimage_signature, url: $appimage_url}' \
+            "$LATEST_PATH" > "$LATEST_PATH.linux"
+          mv "$LATEST_PATH.linux" "$LATEST_PATH"
+          node scripts/verify-linux-updater.mjs \
+            "$LINUX_DEB" \
+            "$LINUX_APPIMAGE" \
+            "$LATEST_PATH" \
+            "$RELEASE_TAG"
+
       - name: Create trusted release asset manifest
         run: |
           set -euo pipefail
@@ -311,15 +421,31 @@ jobs:
           cp "$BUNDLE_ROOT/release/latest.json" "$RELEASE_ASSETS/"
           cp \
             "$RUNNER_TEMP/windows-preview/Codex Taskboard_${PACKAGE_VERSION}_x64-setup.exe" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Windows-x64-unsigned-preview-setup.exe"
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe"
+          cp \
+            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+            "$RELEASE_ASSETS/"
+          cp \
+            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
+            "$RELEASE_ASSETS/"
+          cp \
+            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+            "$RELEASE_ASSETS/"
+          cp \
+            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
+            "$RELEASE_ASSETS/"
           (
             cd "$RELEASE_ASSETS"
             shasum -a 256 \
               "Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
+              "Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe" \
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
-              "latest.json" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Windows-x64-unsigned-preview-setup.exe" > "$MANIFEST_ROOT/release-assets.sha256"
+              "latest.json" > "$MANIFEST_ROOT/release-assets.sha256"
           )
 
       - name: Preserve trusted release asset manifest
@@ -342,11 +468,31 @@ jobs:
             --draft \
             --title "Codex Taskboard $RELEASE_TAG" \
             --generate-notes \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
-            "$RELEASE_ASSETS/latest.json" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Windows-x64-unsigned-preview-setup.exe"
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig"
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            "$RELEASE_ASSETS/latest.json"
 
       - name: Remove temporary signing files
         if: always()
@@ -512,10 +658,23 @@ jobs:
           tar -xzf \
             "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
             -C "$UPDATER_ROOT"
+          MACOS_RELEASE_ROOT="$RUNNER_TEMP/remote-macos-release"
+          mkdir -p "$MACOS_RELEASE_ROOT"
+          cp \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+            "$MACOS_RELEASE_ROOT/"
+          jq 'del(.platforms["linux-x86_64-deb"], .platforms["linux-x86_64-appimage"])' \
+            "$DRAFT_ASSETS/latest.json" > "$MACOS_RELEASE_ROOT/latest.json"
           npm run app:verify-release -- \
             "$UPDATER_ROOT/Codex Taskboard.app" \
             "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
-            "$DRAFT_ASSETS" \
+            "$MACOS_RELEASE_ROOT" \
+            "$RELEASE_TAG"
+          node scripts/verify-linux-updater.mjs \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+            "$DRAFT_ASSETS/latest.json" \
             "$RELEASE_TAG"
 
       - name: Publish verified Release

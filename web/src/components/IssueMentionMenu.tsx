@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useTaskboardI18n } from "../i18n";
-import { LinearIcon } from "./LinearIcon";
+import { ProjectIcon } from "./SemanticIcons";
 
 interface IssueMentionMenuProps {
   anchor: HTMLElement;
@@ -76,7 +76,7 @@ export function IssueMentionMenu({
           onPointerEnter={() => onActiveIndexChange(index)}
           onClick={() => onSelect(task)}
         >
-          <LinearIcon name="project" />
+          <ProjectIcon color="currentColor" />
           <span>
             <strong>{task.externalKey ?? task.identifier}</strong>
             <small>{task.title}</small>

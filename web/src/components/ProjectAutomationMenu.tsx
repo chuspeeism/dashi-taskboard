@@ -1,16 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  AUTOMATION_MODELS,
-  getAutomationModel,
-  withAutomationModel,
-  type AutomationModel,
-  type AutomationReasoningEffort,
-} from "../../../shared/taskboard-automation-options.mjs";
 import { LinearIcon } from "./LinearIcon";
+import { ProjectIcon, RecurrenceIcon } from "./SemanticIcons";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 import { useTaskboardI18n } from "../i18n";
+import type { AiChatModel } from "../types";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
@@ -20,8 +15,8 @@ interface AutomationOptions {
   enabledByUser: boolean;
   quotaAware: boolean;
   intervalMinutes: IntervalMinutes;
-  model: AutomationModel;
-  reasoningEffort: AutomationReasoningEffort;
+  model: string;
+  reasoningEffort: string;
 }
 
 interface AutomationState extends AutomationOptions {
@@ -36,6 +31,7 @@ interface AutomationState extends AutomationOptions {
 
 interface ProjectAutomationMenuProps {
   automation?: Partial<AutomationState>;
+  models: AiChatModel[];
   pending: boolean;
   error: string | null;
   unavailableReason: string | null;
@@ -43,15 +39,7 @@ interface ProjectAutomationMenuProps {
   onChange: (options: AutomationOptions) => void;
 }
 
-const DEFAULT_OPTIONS: AutomationOptions = {
-  enabledByUser: false,
-  quotaAware: false,
-  intervalMinutes: 5,
-  model: "gpt-5.5",
-  reasoningEffort: "high",
-};
-
-const EFFORT_LABELS: Record<AutomationReasoningEffort, readonly [string, string]> = {
+const EFFORT_LABELS: Record<string, readonly [string, string]> = {
   low: ["轻度", "Low"],
   medium: ["中", "Medium"],
   high: ["高", "High"],
@@ -60,8 +48,26 @@ const EFFORT_LABELS: Record<AutomationReasoningEffort, readonly [string, string]
   ultra: ["极高 (ultra)", "Ultra"],
 };
 
+function automationOptions(
+  models: AiChatModel[],
+  automation?: Partial<AutomationState>,
+): AutomationOptions {
+  const model = models.find((candidate) => candidate.slug === automation?.model) ?? models[0];
+  const reasoningEffort = model?.supportedReasoningEfforts.includes(automation?.reasoningEffort ?? "")
+    ? automation?.reasoningEffort
+    : model?.defaultReasoningEffort;
+  return {
+    enabledByUser: automation?.enabledByUser ?? false,
+    quotaAware: automation?.quotaAware ?? false,
+    intervalMinutes: automation?.intervalMinutes ?? 5,
+    model: model?.slug ?? "",
+    reasoningEffort: reasoningEffort ?? "",
+  };
+}
+
 export function ProjectAutomationMenu({
   automation,
+  models,
   pending,
   error,
   unavailableReason,
@@ -75,7 +81,7 @@ export function ProjectAutomationMenu({
   const [open, setOpen] = useState(false);
   const [pickerMenu, setPickerMenu] = useState<"interval" | "model" | "reasoning" | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
-  const [draft, setDraft] = useState<AutomationOptions>(DEFAULT_OPTIONS);
+  const [draft, setDraft] = useState<AutomationOptions>(() => automationOptions(models, automation));
   const status = automation?.status ?? "PAUSED";
   const quota = automation?.quota;
   const stateLabel = !automation?.enabledByUser
@@ -89,12 +95,13 @@ export function ProjectAutomationMenu({
           : status === "ACTIVE"
             ? text("运行中", "Running")
             : text("已暂停", "Paused");
-  const disabled = pending || Boolean(unavailableReason);
+  const selectedModel = models.find((model) => model.slug === draft.model) ?? models[0];
+  const disabled = pending || !selectedModel || Boolean(unavailableReason);
 
   useEffect(() => {
     if (!open) return;
-    setDraft({ ...DEFAULT_OPTIONS, ...automation });
-  }, [open]);
+    setDraft(automationOptions(models, automation));
+  }, [automation, models, open]);
 
   useEffect(() => {
     if (!open) setPickerMenu(null);
@@ -102,7 +109,7 @@ export function ProjectAutomationMenu({
 
   useEffect(() => {
     if (wasPendingRef.current && !pending) {
-      setDraft({ ...DEFAULT_OPTIONS, ...automation });
+      setDraft(automationOptions(models, automation));
     }
     wasPendingRef.current = pending;
   }, [automation, pending]);
@@ -230,7 +237,7 @@ export function ProjectAutomationMenu({
           options={[5, 10, 15, 30, 60].map((minutes) => ({
             value: String(minutes),
             label: text(`${minutes} 分钟`, `${minutes} min`),
-            icon: <LinearIcon name="recurrence" />,
+            icon: <RecurrenceIcon color="currentColor" size={14} />,
           }))}
           open={pickerMenu === "interval"}
           disabled={disabled}
@@ -244,45 +251,59 @@ export function ProjectAutomationMenu({
           })}
         />
       </div>
-      <div className="project-automation-field">
-        <span>{text("模型", "Model")}</span>
-        <TaskPropertyPicker
-          value={draft.model}
-          options={AUTOMATION_MODELS.map((model) => ({
-            value: model.slug,
-            label: model.label,
-            icon: <LinearIcon name="project" />,
-          }))}
-          open={pickerMenu === "model"}
-          disabled={disabled}
-          className="project-automation-picker"
-          triggerClassName="project-automation-picker-trigger"
-          ariaLabel={text("模型", "Model")}
-          onOpenChange={(open) => setPickerMenu(open ? "model" : null)}
-          onChange={(value) => submitChange(withAutomationModel(draft, value as AutomationModel))}
-        />
-      </div>
-      <div className="project-automation-field">
-        <span>{text("推理强度", "Reasoning effort")}</span>
-        <TaskPropertyPicker
-          value={draft.reasoningEffort}
-          options={getAutomationModel(draft.model).efforts.map((effort) => ({
-            value: effort,
-            label: text(...EFFORT_LABELS[effort]),
-            icon: <LinearIcon name="displayOptions" />,
-          }))}
-          open={pickerMenu === "reasoning"}
-          disabled={disabled}
-          className="project-automation-picker"
-          triggerClassName="project-automation-picker-trigger"
-          ariaLabel={text("推理强度", "Reasoning effort")}
-          onOpenChange={(open) => setPickerMenu(open ? "reasoning" : null)}
-          onChange={(value) => submitChange({
-            ...draft,
-            reasoningEffort: value as AutomationReasoningEffort,
-          })}
-        />
-      </div>
+      {selectedModel && (
+        <>
+          <div className="project-automation-field">
+            <span>{text("模型", "Model")}</span>
+            <TaskPropertyPicker
+              value={draft.model}
+              options={models.map((model) => ({
+                value: model.slug,
+                label: model.displayName,
+                icon: <ProjectIcon color="currentColor" size={14} />,
+              }))}
+              open={pickerMenu === "model"}
+              disabled={disabled}
+              className="project-automation-picker"
+              triggerClassName="project-automation-picker-trigger"
+              ariaLabel={text("模型", "Model")}
+              onOpenChange={(open) => setPickerMenu(open ? "model" : null)}
+              onChange={(value) => {
+                const model = models.find((candidate) => candidate.slug === value);
+                if (!model) return;
+                submitChange({
+                  ...draft,
+                  model: value,
+                  reasoningEffort: model.supportedReasoningEfforts.includes(draft.reasoningEffort)
+                    ? draft.reasoningEffort
+                    : model.defaultReasoningEffort,
+                });
+              }}
+            />
+          </div>
+          <div className="project-automation-field">
+            <span>{text("推理强度", "Reasoning effort")}</span>
+            <TaskPropertyPicker
+              value={draft.reasoningEffort}
+              options={selectedModel.supportedReasoningEfforts.map((effort) => ({
+                value: effort,
+                label: EFFORT_LABELS[effort] ? text(...EFFORT_LABELS[effort]) : effort,
+                icon: <LinearIcon name="displayOptions" />,
+              }))}
+              open={pickerMenu === "reasoning"}
+              disabled={disabled}
+              className="project-automation-picker"
+              triggerClassName="project-automation-picker-trigger"
+              ariaLabel={text("推理强度", "Reasoning effort")}
+              onOpenChange={(open) => setPickerMenu(open ? "reasoning" : null)}
+              onChange={(value) => submitChange({
+                ...draft,
+                reasoningEffort: value,
+              })}
+            />
+          </div>
+        </>
+      )}
       {unavailableReason && <p className="project-automation-note">{unavailableReason}</p>}
       {error && error !== unavailableReason && <p className="project-automation-error" role="alert">{error}</p>}
     </div>,

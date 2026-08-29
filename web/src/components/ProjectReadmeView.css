@@ -1,0 +1,58 @@
+.project-readme-container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px 40px 80px;
+  box-sizing: border-box;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.project-readme-content {
+  width: min(781px, 100%);
+  margin: 0 auto;
+  padding: 0 14px 34px;
+  box-sizing: border-box;
+}
+
+.project-readme-loading {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  gap: 12px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.project-readme-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, #5e6ad2);
+  border-radius: 50%;
+  animation: project-readme-spin 0.8s linear infinite;
+}
+
+@keyframes project-readme-spin {
+  to { transform: rotate(360deg); }
+}
+
+.project-readme-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.project-readme-alert.error {
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+}

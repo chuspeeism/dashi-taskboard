@@ -24,7 +24,7 @@ test("task and comment contracts expose persisted user or agent identities", () 
   assert.match(typesSource, /authorAvatarUrl: string \| null/);
 });
 
-test("issue activity renders distinct avatars, IDs, and styles for users and agents", () => {
+test("issue activity renders distinct avatars and styles without duplicate actor IDs", () => {
   assert.match(avatarSource, /function ActorAvatar/);
   assert.match(avatarSource, /actor-avatar-\$\{actor\.type\}/);
   assert.match(avatarSource, /actor\.type === "agent"/);
@@ -39,7 +39,7 @@ test("issue activity renders distinct avatars, IDs, and styles for users and age
   assert.match(detailSource, /comment\.authorAvatarUrl/);
   assert.match(detailSource, /currentUser\.name/);
   assert.match(detailSource, /currentUser\.id/);
-  assert.match(detailSource, /className="actor-id"/);
+  assert.doesNotMatch(detailSource, /className="actor-id"/);
   assert.match(styles, /\.actor-avatar-agent/);
   assert.match(styles, /\.actor-avatar-user/);
   assert.match(styles, /\.actor-avatar-image/);
@@ -49,7 +49,6 @@ test("issue activity renders distinct avatars, IDs, and styles for users and age
   );
   assert.match(styles, /\.actor-avatar-agent-image\s*\{[^}]*object-fit:\s*contain;/s);
   assert.doesNotMatch(styles, /\.comment-entry\.is-agent \.comment-card/);
-  assert.match(styles, /\.actor-id/);
 });
 
 test("agent avatar asset is a transparent PNG logo", async () => {

@@ -1,6 +1,6 @@
-<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="13.3333" height="13.3333" viewBox="0 0 13.3333 13.3333" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g id="Tick Square">
-<path id="Stroke 1" d="M4.2936 6.66667L5.87627 8.24867L9.04027 5.08467" stroke="#5D5D5F" stroke-linecap="round" stroke-linejoin="round"/>
-<path id="Stroke 2" fill-rule="evenodd" clip-rule="evenodd" d="M0.5 6.66667C0.5 11.2913 2.042 12.8333 6.66667 12.8333C11.2913 12.8333 12.8333 11.2913 12.8333 6.66667C12.8333 2.042 11.2913 0.5 6.66667 0.5C2.042 0.5 0.5 2.042 0.5 6.66667Z" stroke="#5D5D5F" stroke-linecap="round" stroke-linejoin="round"/>
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="13.836" height="11.236" viewBox="0 0 13.836 11.236" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Show">
+<path id="Stroke 1" fill-rule="evenodd" clip-rule="evenodd" d="M9.026 5.618C9.026 6.782 8.082 7.726 6.918 7.726C5.754 7.726 4.81 6.782 4.81 5.618C4.81 4.45333 5.754 3.51 6.918 3.51C8.082 3.51 9.026 4.45333 9.026 5.618Z" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="Stroke 3" fill-rule="evenodd" clip-rule="evenodd" d="M0.75 5.618C0.75 7.80467 3.51133 10.486 6.918 10.486C10.324 10.486 13.086 7.80667 13.086 5.618C13.086 3.42933 10.324 0.75 6.918 0.75C3.51133 0.75 0.75 3.43133 0.75 5.618Z" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </svg>

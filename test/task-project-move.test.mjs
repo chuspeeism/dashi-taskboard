@@ -44,7 +44,6 @@ function createTask(database, projectId, title, overrides = {}) {
     threadId: null,
     actor,
     assignee: actor,
-    workflowId: null,
     developmentContext: null,
     startDate: null,
     dueDate: null,

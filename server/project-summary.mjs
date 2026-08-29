@@ -24,7 +24,11 @@ function buildPrompt(project, tasks) {
     STATUS_LABELS[status],
     tasks.filter((task) => task.status === status).length,
   ]));
-  const issues = tasks.map((task) => ({
+  const recentCutoff = Date.now() - 7 * DAY_MS;
+  const issues = tasks.filter((task) => (
+    (task.status !== "done" && task.status !== "canceled")
+    || new Date(task.activityUpdatedAt).getTime() >= recentCutoff
+  )).map((task) => ({
     id: task.identifier,
     title: task.title,
     status: STATUS_LABELS[task.status],
@@ -104,6 +108,7 @@ export class ProjectSummaryService {
           "--json",
           "--color",
           "never",
+          "--skip-git-repo-check",
           "-C",
           this.workspacePath,
           "-s",

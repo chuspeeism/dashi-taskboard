@@ -1,13 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTaskboardI18n } from "../i18n";
-import { LinearIcon, type LinearIconName } from "./LinearIcon";
+import {
+  ConversationIcon,
+  ProjectIcon,
+  WorkspaceWritePermissionIcon,
+} from "./SemanticIcons";
 
 export interface ComposerCompletionOption {
   id: string;
   label: string;
   description: string | null;
-  icon: LinearIconName;
+  icon: "action" | "conversation" | "project";
   selectableIndex: number;
 }
 
@@ -138,7 +142,11 @@ export function ComposerCompletionMenu({
               onPointerEnter={() => onActiveIndexChange(option.selectableIndex)}
               onClick={() => onSelect(option.selectableIndex)}
             >
-              <LinearIcon name={option.icon} />
+              {option.icon === "conversation"
+                ? <ConversationIcon color="currentColor" />
+                : option.icon === "action"
+                  ? <WorkspaceWritePermissionIcon color="currentColor" size={16} />
+                  : <ProjectIcon color="currentColor" />}
               <span>
                 <strong>{option.label}</strong>
                 {option.description && <small>{option.description}</small>}

@@ -1,6 +1,6 @@
 {
   "name": "codex-taskboard",
-  "version": "1.1.2",
+  "version": "1.1.11",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,7 @@
     "app:prepare": "npm run build:web && node scripts/prepare-tauri-app.mjs",
     "app:dev": "npm run app:prepare && tauri dev",
     "app:build": "npm run app:prepare -- --target universal-apple-darwin && CI=true tauri build --target universal-apple-darwin --bundles app,dmg --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
+    "app:build:linux:x64": "npm run app:prepare -- --target x86_64-unknown-linux-gnu && tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage --ci --config src-tauri/tauri.linux.conf.json",
     "app:build:windows": "npm run app:prepare -- --target x86_64-pc-windows-msvc && tauri build --target x86_64-pc-windows-msvc --bundles nsis --no-sign --ci --config src-tauri/tauri.windows.conf.json",
     "app:preflight": "node scripts/preflight-macos-app.mjs",
     "app:verify-packaged-taskctl": "node scripts/verify-packaged-taskctl.mjs",
@@ -42,14 +43,20 @@
     "check": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
-    "@lobehub/icons-static-svg": "^1.94.0",
-    "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
     "dompurify": "^3.4.13",
     "js-yaml": "4.1.1",
     "mdast-util-definitions": "^6.0.0",
+    "markdown-it": "^14.3.0",
     "mermaid": "^11.16.1",
     "micromark-util-decode-string": "^2.0.1",
+    "prosemirror-example-setup": "^1.2.3",
+    "prosemirror-inputrules": "^1.5.1",
+    "prosemirror-markdown": "^1.13.6",
+    "prosemirror-model": "^1.25.11",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.42.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
@@ -57,7 +64,8 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "smol-toml": "^1.8.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

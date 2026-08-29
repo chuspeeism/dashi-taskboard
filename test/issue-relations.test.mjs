@@ -44,7 +44,7 @@ test("issue details mirror Linear parent, sub-issue, dependency, and related sec
   assert.match(relationsSource, /placeholder=\{text\("搜索议题…", "Search issues…"\)\}/);
   assert.match(relationsSource, /role="combobox"/);
   assert.match(relationsSource, /role="listbox"/);
-  assert.match(relationsSource, /<StatusIcon status=\{candidate\.status\} \/>/);
+  assert.match(relationsSource, /<StatusIcon status=\{candidate\.status\} size=\{14\} \/>/);
   assert.match(relationsSource, /onOpenTask/);
   assert.match(relationsSource, /onRemoveRelation/);
   assert.match(styles, /\.issue-relation-picker/);

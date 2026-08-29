@@ -28,7 +28,6 @@ user's `.agents\skills\manage-taskboard` directory.
   user's existing OpenAI account and OpenAI's terms.
 - Cloud collaboration is optional. When a user configures it, Taskboard data is
   sent to the deployment selected by that user.
-- Some workflow catalog icons can be loaded from their published websites.
 
 Codex Taskboard does not include advertising or a project-maintainer analytics
 service.

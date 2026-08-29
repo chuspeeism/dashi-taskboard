@@ -4,10 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComposerCandidatesResponse, Task } from "../types";
 import {
   createInlineMediaSegments,
-  createInlineMediaSegmentsFromHtml,
   InlineMediaComposer,
   serializeInlineMedia,
-  writeInlineMediaClipboard,
   type InlineMediaSegment,
 } from "./InlineMediaComposer";
 
@@ -125,33 +123,6 @@ describe("InlineMediaComposer completion references", () => {
     expect(serializeInlineMedia(unsupported)).toBe(
       "[$Future](taskboard://composer-reference/v2/skill/bWFuYWdlLXRhc2tib2FyZA)",
     );
-  });
-
-  it("preserves issue, image, Skill and Agent atoms in mixed HTML clipboard content", () => {
-    const issue = {
-      id: "task-1",
-      projectId: "project-1",
-      identifier: "LOCAL-1",
-      externalKey: "LOCAL-1",
-      title: "Clipboard issue",
-    } as Task;
-    const value = [
-      "[$Manage Taskboard](taskboard://composer-reference/v1/skill/bWFuYWdlLXRhc2tib2FyZA)",
-      " [@LOCAL-1](?project=project-1&issue=LOCAL-1) ",
-      "![proof](api/attachments/attachment-1/content) ",
-      "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
-    ].join("");
-    const segments = createInlineMediaSegments(value, [issue]);
-    const values = new Map<string, string>();
-    const clipboard = {
-      setData: (type: string, data: string) => values.set(type, data),
-    } as unknown as DataTransfer;
-
-    writeInlineMediaClipboard(clipboard, segments, document);
-    const restored = createInlineMediaSegmentsFromHtml(values.get("text/html") ?? "", [issue]);
-
-    expect(restored).not.toBeNull();
-    expect(serializeInlineMedia(restored!)).toBe(value);
   });
 
   it("keeps service candidates and Taskboard issues in separate groups with one keyboard index", async () => {

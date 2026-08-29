@@ -23,13 +23,13 @@ function cssBlock(selector) {
   return styles.slice(start, end + 2);
 }
 
-test("the issue workspace projects the seven statuses into adaptive main and secondary groups", () => {
+test("the issue workspace projects configured statuses into adaptive main and secondary groups", () => {
   assert.deepEqual(statusList("MAIN_STATUSES"), ["todo", "in_progress", "blocked", "in_review"]);
   assert.deepEqual(statusList("SECONDARY_STATUSES"), ["backlog", "done", "canceled"]);
   assert.match(statusSource, /satisfies readonly TaskStatus\[\]/);
-  assert.match(appSource, /const mainStatuses = hasBlockedTasks[\s\S]*?MAIN_STATUSES\.filter\(\(status\) => status !== "blocked"\)/);
-  assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?<BoardColumn/);
-  assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?className="loading-column"/);
+  assert.match(appSource, /const mainBoardItems = boardDisplaySettings\.mainStatuses/);
+  assert.match(appSource, /mainBoardItems\.map\(\(item\) => item === "archived" \? \([\s\S]*?<BoardColumn/);
+  assert.match(appSource, /mainBoardItems\.map\(\(item\) => \([\s\S]*?className="loading-column"/);
   assert.match(boardColumnSource, /todo: \{ label: "等待认领", tone: "todo" \}/);
   assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
   assert.match(boardColumnSource, /blocked: \{ label: "遇到阻碍", tone: "blocked" \}/);
@@ -39,7 +39,7 @@ test("the issue workspace projects the seven statuses into adaptive main and sec
 test("other tasks is a closed-by-default non-modal panel with archived issues", () => {
   assert.match(appSource, /useState\(false\)/);
   assert.match(appSource, /useState<OtherTaskTab>\("backlog"\)/);
-  assert.match(statusSource, /OTHER_TASK_TABS = \[[\s\S]*?\.\.\.SECONDARY_STATUSES,[\s\S]*?"archived"/);
+  assert.match(appSource, /const otherTaskTabs = boardDisplaySettings\.sidebarStatuses/);
   assert.match(appSource, /className=\{`other-tasks-trigger\$\{otherTasksOpen \? " is-open" : ""\}`\}/);
   assert.match(appSource, /aria-controls="other-tasks-panel"/);
   assert.match(appSource, /aria-expanded=\{otherTasksOpen\}/);
@@ -48,7 +48,7 @@ test("other tasks is a closed-by-default non-modal panel with archived issues", 
   assert.match(panelSource, /<aside[\s\S]*?id="other-tasks-panel"/);
   assert.match(panelSource, /aria-hidden=\{!open\}/);
   assert.match(panelSource, /role="tablist"/);
-  assert.match(panelSource, /OTHER_TASK_TABS\.map\(\(tab\) =>/);
+  assert.match(panelSource, /tabs\.map\(\(tab\) =>/);
   assert.match(panelSource, /aria-selected=\{selected\}/);
   assert.match(panelSource, /tab === "archived" \? archivedTasks\.length : tasksByStatus\[tab\]\.length/);
   assert.match(panelSource, /<ArchivedTaskCard/);
@@ -65,7 +65,7 @@ test("other tasks is a closed-by-default non-modal panel with archived issues", 
 test("search and filters feed the same status buckets used by the board and panel", () => {
   assert.match(appSource, /const filteredTasks = useMemo\([\s\S]*?matchesTaskSearch\(task, search, language\) && matchesTaskFilters\(task, filters\)/);
   assert.match(appSource, /TASK_STATUSES\.map\(\(status\) => \[status, filteredTasks\.filter\(\(task\) => task\.status === status\)\]\)/);
-  assert.match(appSource, /tasks=\{tasksByStatus\[status\]\}/);
+  assert.match(appSource, /tasks=\{tasksByStatus\[item\]\}/);
   assert.match(appSource, /tasksByStatus=\{tasksByStatus\}/);
   assert.match(appSource, /archivedTasks=\{filteredArchivedTasks\}/);
   assert.match(appSource, /hasActiveFilters=\{hasActiveTaskFilters\}/);

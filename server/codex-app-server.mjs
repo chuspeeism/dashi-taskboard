@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
@@ -228,6 +229,125 @@ export class CodexAppServer {
   #handleExit(error) {
     if (this.child && this.child.exitCode !== null) this.child = null;
     this.#rejectPending(error);
+  }
+
+  #rejectPending(error) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
+
+export class CodexHostAppServer {
+  constructor({ hostId, ipc = process, requestTimeoutMs } = {}) {
+    this.hostId = hostId;
+    this.ipc = ipc;
+    this.requestTimeoutMs = requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.pending = new Map();
+    this.listeners = new Set();
+    this.closed = false;
+    this.handleMessage = (message) => this.#handleMessage(message);
+    this.ipc.on?.("message", this.handleMessage);
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  async listSkills(workspacePath, { forceReload = false } = {}) {
+    const result = await this.request("skills/list", {
+      cwds: [workspacePath],
+      forceReload,
+    });
+    return Array.isArray(result?.data) ? result.data : [];
+  }
+
+  startThread(params) {
+    return this.request("thread/start", params);
+  }
+
+  resumeThread(params) {
+    return this.request("thread/resume", params);
+  }
+
+  startTurn(params) {
+    return this.request("turn/start", params);
+  }
+
+  interruptTurn(params) {
+    return this.request("turn/interrupt", params);
+  }
+
+  compactThread(threadId) {
+    return this.request("thread/compact/start", { threadId });
+  }
+
+  request(method, params) {
+    if (this.closed || typeof this.ipc.send !== "function" || this.ipc.connected === false) {
+      return Promise.reject(new CodexAppServerError("Codex host bridge is unavailable"));
+    }
+    const requestId = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new CodexAppServerError(`Codex host request '${method}' timed out`));
+      }, this.requestTimeoutMs);
+      timer.unref();
+      this.pending.set(requestId, { method, resolve, reject, timer });
+      this.ipc.send({
+        type: "taskboard:codex-app-server-request",
+        requestId,
+        hostId: this.hostId,
+        method,
+        params,
+      }, (error) => {
+        if (!error) return;
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(error);
+      });
+    });
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.ipc.off?.("message", this.handleMessage);
+    this.#rejectPending(new CodexAppServerError("Codex host bridge closed"));
+    this.listeners.clear();
+  }
+
+  #handleMessage(message) {
+    if (!message || typeof message !== "object" || message.hostId !== this.hostId) return;
+    if (message.type === "taskboard:codex-app-server-response") {
+      const pending = this.pending.get(message.requestId);
+      if (!pending) return;
+      this.pending.delete(message.requestId);
+      clearTimeout(pending.timer);
+      if (message.error) {
+        pending.reject(new CodexAppServerError(
+          `Codex host rejected '${pending.method}': ${message.error}`,
+        ));
+      } else {
+        pending.resolve(message.result);
+      }
+      return;
+    }
+    if (
+      message.type !== "taskboard:codex-app-server-notification"
+      || typeof message.method !== "string"
+    ) return;
+    const notification = { method: message.method, params: message.params };
+    for (const listener of this.listeners) {
+      try {
+        listener(notification);
+      } catch (error) {
+        console.error("Codex host notification handler failed", error);
+      }
+    }
   }
 
   #rejectPending(error) {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   buildTaskboardAutomationName,
@@ -10,11 +11,6 @@ import {
   reconcileTaskboardAutomation,
   taskboardAutomationPolicyOperation,
 } from "../shared/taskboard-automation.mjs";
-import {
-  AUTOMATION_MODELS,
-  isSupportedModelEffort,
-  withAutomationModel,
-} from "../shared/taskboard-automation-options.mjs";
 
 const baseRequest = {
   id: "host-request-1",
@@ -58,64 +54,7 @@ const remoteRequest = {
   ],
 };
 
-test("the automation model catalog matches Codex and normalizes unsupported efforts", () => {
-  assert.deepEqual(AUTOMATION_MODELS, [
-    {
-      label: "5.6 Sol",
-      slug: "gpt-5.6-sol",
-      defaultEffort: "low",
-      efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    },
-    {
-      label: "5.6 Terra",
-      slug: "gpt-5.6-terra",
-      defaultEffort: "medium",
-      efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    },
-    {
-      label: "5.6 Luna",
-      slug: "gpt-5.6-luna",
-      defaultEffort: "medium",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-    },
-    {
-      label: "5.5",
-      slug: "gpt-5.5",
-      defaultEffort: "medium",
-      efforts: ["low", "medium", "high", "xhigh"],
-    },
-    {
-      label: "5.4",
-      slug: "gpt-5.4",
-      defaultEffort: "medium",
-      efforts: ["low", "medium", "high", "xhigh"],
-    },
-    {
-      label: "5.4 Mini",
-      slug: "gpt-5.4-mini",
-      defaultEffort: "medium",
-      efforts: ["low", "medium", "high", "xhigh"],
-    },
-  ]);
-
-  const current = {
-    status: "ACTIVE",
-    intervalMinutes: 5,
-    model: "gpt-5.6-sol",
-    reasoningEffort: "ultra",
-  };
-  assert.deepEqual(withAutomationModel(current, "gpt-5.6-terra"), {
-    ...current,
-    model: "gpt-5.6-terra",
-  });
-  assert.deepEqual(withAutomationModel(current, "gpt-5.6-luna"), {
-    ...current,
-    model: "gpt-5.6-luna",
-    reasoningEffort: "medium",
-  });
-});
-
-test("the automation host request accepts only whitelisted project automation options", () => {
+test("the automation host request accepts catalog-provided project automation options", () => {
   assert.deepEqual(parseTaskboardAutomationHostRequest(baseRequest), baseRequest);
   assert.equal(
     parseTaskboardAutomationHostRequest({ ...baseRequest, operation: "delete" }),
@@ -145,41 +84,22 @@ test("the automation host request accepts only whitelisted project automation op
     })?.reasoningEffort,
     "ultra",
   );
-  assert.equal(
-    parseTaskboardAutomationHostRequest({ ...baseRequest, model: "gpt-future" }),
-    null,
+  assert.deepEqual(
+    parseTaskboardAutomationHostRequest({
+      ...baseRequest,
+      model: "gemini-3.1-pro-preview",
+      reasoningEffort: "xhigh",
+    }),
+    {
+      ...baseRequest,
+      model: "gemini-3.1-pro-preview",
+      reasoningEffort: "xhigh",
+    },
   );
   assert.equal(
     parseTaskboardAutomationHostRequest({ ...baseRequest, reasoningEffort: "xhigh" })?.reasoningEffort,
     "xhigh",
   );
-  assert.equal(
-    parseTaskboardAutomationHostRequest({
-      ...baseRequest,
-      model: "gpt-5.4",
-      reasoningEffort: "ultra",
-    }),
-    null,
-  );
-  const allEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
-  for (const intervalMinutes of [5, 10, 15, 30, 60]) {
-    for (const model of AUTOMATION_MODELS) {
-      for (const effort of allEfforts) {
-        assert.equal(
-          parseTaskboardAutomationHostRequest({
-            ...baseRequest,
-            intervalMinutes,
-            model: model.slug,
-            reasoningEffort: effort,
-          }) !== null,
-          model.efforts.includes(effort),
-          `${intervalMinutes}m/${model.slug}/${effort}`,
-        );
-      }
-    }
-  }
-  assert.equal(isSupportedModelEffort("gpt-5.6-luna", "max"), true);
-  assert.equal(isSupportedModelEffort("gpt-5.6-luna", "ultra"), false);
   assert.equal(
     parseTaskboardAutomationHostRequest({ ...baseRequest, workspacePath: "relative/path" }),
     null,
@@ -234,6 +154,18 @@ test("the stable name and generated prompt are project-scoped and encode the cla
   assert.match(prompt, /关键改动、验证结果、执行结果和剩余风险/);
   assert.match(prompt, /in_review/);
   assert.match(prompt, /已绑定.*branch.*worktree/);
+  assert.match(prompt, /Codex list_threads/);
+  assert.match(prompt, /list_threads（limit=50）/);
+  assert.match(prompt, /pinnedThreads 与 threads/);
+  assert.match(prompt, /projectId="codex-project-123"/);
+  assert.match(prompt, /hostId="local"/);
+  assert.match(prompt, /cwd="\/Users\/example\/Documents\/ppt-skill"/);
+  assert.match(prompt, /legacy local 原位升级为完整 binding/);
+  assert.match(prompt, /--binding-thread-id "\$CODEX_THREAD_ID"/);
+  assert.match(prompt, /认领后的每一次 issue move.*五个完整 binding 字段/);
+  assert.match(prompt, /不要省略 binding，避免把完整绑定降级为 legacy local/);
+  assert.doesNotMatch(prompt, /automation_update/);
+  assert.match(prompt, /Taskboard 主机侧会暂停当前自动化/);
 });
 
 test("the remote automation prompt keeps taskctl local and delegates work to the SSH project", () => {
@@ -272,15 +204,16 @@ test("the remote automation prompt keeps taskctl local and delegates work to the
   assert.match(prompt, /移动到 in_review/);
 });
 
-test("the generated automation command uses an argv runtime file instead of an env assignment", () => {
+test("the generated automation command uses the packaged CLI and an argv runtime file", () => {
   const previous = process.env.CODEX_TASKBOARD_RUNTIME_FILE;
   process.env.CODEX_TASKBOARD_RUNTIME_FILE = "/Users/example/Library/Application Support/Codex Taskboard/launcher-runtime.json";
   try {
     const prompt = buildTaskboardAutomationPrompt(baseRequest);
-    const cliPath = path.resolve(path.dirname(baseRequest.skillPath), "../..", "cli/taskctl.mjs");
+    const cliPath = fileURLToPath(new URL("../cli/taskctl.mjs", import.meta.url));
     assert.ok(prompt.includes(
       `'${process.execPath}' '${cliPath}' --runtime-file '${process.env.CODEX_TASKBOARD_RUNTIME_FILE}'`,
     ));
+    assert.ok(!prompt.includes(path.resolve(path.dirname(baseRequest.skillPath), "../..", "cli/taskctl.mjs")));
     assert.doesNotMatch(prompt, /CODEX_TASKBOARD_RUNTIME_FILE=/);
   } finally {
     if (previous === undefined) {
@@ -369,6 +302,13 @@ test("passive policy checks resume only after quota recovery", () => {
       { ...passiveAvailable, currentStatus: "ACTIVE" },
     ),
     "ensure-active",
+  );
+  assert.equal(
+    taskboardAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: false },
+      { ...passiveAvailable, currentStatus: "ACTIVE", hasTodo: false },
+    ),
+    "pause",
   );
 });
 
@@ -567,17 +507,25 @@ test("pause never creates and list returns only sanitized matching project autom
     }],
   });
 
-  const invalidPair = {
+  const catalogPair = {
     ...matching,
-    id: "invalid-pair",
-    model: "gpt-5.4",
-    reasoningEffort: "ultra",
+    id: "catalog-pair",
+    model: "gemini-3.1-pro-preview",
+    reasoningEffort: "xhigh",
   };
-  const invalidListed = await reconcileTaskboardAutomation(
+  const catalogListed = await reconcileTaskboardAutomation(
     { ...baseRequest, operation: "list" },
-    async () => ({ items: [invalidPair] }),
+    async () => ({ items: [catalogPair] }),
   );
-  assert.deepEqual(invalidListed, { items: [] });
+  assert.deepEqual(catalogListed, {
+    items: [{
+      id: "catalog-pair",
+      status: "ACTIVE",
+      model: "gemini-3.1-pro-preview",
+      reasoningEffort: "xhigh",
+      rrule: "RRULE:FREQ=MINUTELY;INTERVAL=5",
+    }],
+  });
 });
 
 test("pause is idempotent for an already paused matching automation", async () => {

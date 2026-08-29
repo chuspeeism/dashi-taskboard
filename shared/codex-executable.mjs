@@ -40,6 +40,7 @@ export function codexExecutableInApp(appPath, platform = process.platform) {
   if (platform === "win32") {
     return path.win32.join(path.win32.dirname(appPath), "resources", "codex.exe");
   }
+  if (platform === "linux") return "/usr/lib/chatgpt/resources/codex";
   return path.join(appPath, "Contents", "Resources", "codex");
 }
 

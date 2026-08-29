@@ -6,11 +6,12 @@ import { signalProcessTree } from "../shared/process-tree.mjs";
 import { ApiError } from "./database.mjs";
 import {
   ComposerCatalog,
+  discoverAppServerAiCatalog,
   discoverAiCatalog,
   loadSlashCommands,
   resolveAiWorkspace,
 } from "./ai-chat-catalog.mjs";
-import { CodexAppServer } from "./codex-app-server.mjs";
+import { CodexAppServer, CodexHostAppServer } from "./codex-app-server.mjs";
 import {
   buildCodexArgs,
   buildCodexPrompt,
@@ -21,6 +22,7 @@ import {
 const SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const ERROR_CONTENT_LIMIT = 65_536;
 const AGENT_DISPATCH_PROTOCOL = "taskboard.agent.v1";
+const SKILL_MARKER = "\uFFFC";
 const CODEX_IMAGE_TYPES = new Set([
   "image/gif",
   "image/jpeg",
@@ -63,6 +65,21 @@ function appServerThreadSettings(thread, resolved) {
       ? {}
       : { approvalsReviewer: thread.sandbox === "read-only" ? "user" : "auto_review" }),
     sandbox: thread.sandbox,
+  };
+}
+
+function codexTargetFromOrigin(origin) {
+  if (
+    origin?.codexProjectKind !== "remote"
+    || !origin.codexProjectId
+    || !origin.codexHostId
+    || !origin.workspacePath
+  ) return undefined;
+  return {
+    codexProjectId: origin.codexProjectId,
+    codexProjectKind: "remote",
+    codexHostId: origin.codexHostId,
+    workspacePath: origin.workspacePath,
   };
 }
 
@@ -137,6 +154,9 @@ export class AiChatService {
       appServer: this.appServer,
       issueSlashCommands: () => loadSlashCommands(),
     });
+    this.remoteAppServerFactory = options.remoteAppServerFactory
+      ?? ((hostId) => new CodexHostAppServer({ hostId }));
+    this.remoteRuntimes = new Map();
     this.resolveContext = options.resolveContext ?? (async (projectId, issueId) => {
       const resolved = await resolveAiWorkspace(projectId, this.codexStatePath, this.database);
       let issue;
@@ -156,8 +176,32 @@ export class AiChatService {
     this.listeners = new Map();
     this.completions = new Map();
     this.unsubscribeAppServer = this.appServer.subscribe((notification) => {
-      this.#handleAppServerNotification(notification);
+      this.#handleAppServerNotification(this.appServer, notification);
     });
+  }
+
+  #runtimeForTarget(target) {
+    if (target?.codexProjectKind !== "remote") {
+      return { appServer: this.appServer, composerCatalog: this.composerCatalog };
+    }
+    let runtime = this.remoteRuntimes.get(target.codexHostId);
+    if (runtime) return runtime;
+    const appServer = this.remoteAppServerFactory(target.codexHostId);
+    const composerCatalog = new ComposerCatalog({
+      appServer,
+      issueSlashCommands: () => loadSlashCommands(),
+      configuredAgents: async () => ({ agents: [], available: false }),
+    });
+    const unsubscribe = appServer.subscribe((notification) => {
+      this.#handleAppServerNotification(appServer, notification);
+    });
+    runtime = { appServer, composerCatalog, unsubscribe };
+    this.remoteRuntimes.set(target.codexHostId, runtime);
+    return runtime;
+  }
+
+  #runtimeForThread(thread) {
+    return this.#runtimeForTarget(codexTargetFromOrigin(thread.origin));
   }
 
   listThreads() {
@@ -183,6 +227,10 @@ export class AiChatService {
       events: this.database.listAiChatEvents(threadId),
       runs: this.database.listAiChatRuns(threadId),
     };
+  }
+
+  composerCatalogForThread(thread) {
+    return this.#runtimeForThread(thread).composerCatalog;
   }
 
   getRun(runId) {
@@ -214,13 +262,29 @@ export class AiChatService {
     });
   }
 
-  async getCatalog(projectId, resolvedContext) {
-    const resolved = resolvedContext ?? await this.resolveContext(projectId);
+  async getCatalog(projectId, resolvedContext, codexTarget) {
+    const resolved = resolvedContext ?? await this.resolveContext(projectId, undefined, codexTarget);
+    if (resolved.codexProjectKind === "remote") {
+      const { appServer } = this.#runtimeForTarget(resolved);
+      return discoverAppServerAiCatalog({ appServer, workspacePath: resolved.workspacePath });
+    }
     return this.#catalogForWorkspace(resolved.workspacePath);
   }
 
-  async getComposerCandidates({ projectId, threadId, trigger, query }) {
+  async getComposerCandidates({
+    projectId,
+    threadId,
+    trigger,
+    query,
+    codexProjectId,
+    codexProjectKind,
+    codexHostId,
+    workspacePath,
+  }) {
     let thread;
+    let codexTarget = codexProjectKind === "remote"
+      ? { codexProjectId, codexProjectKind, codexHostId, workspacePath }
+      : undefined;
     if (threadId !== undefined) {
       try {
         thread = this.getThread(threadId);
@@ -242,6 +306,7 @@ export class AiChatService {
         );
       }
       projectId = thread.origin.projectId;
+      codexTarget = codexTargetFromOrigin(thread.origin);
     }
 
     if (projectId === undefined) {
@@ -253,7 +318,7 @@ export class AiChatService {
 
     let resolved;
     try {
-      resolved = await this.resolveContext(projectId, thread?.origin.issueId);
+      resolved = await this.resolveContext(projectId, thread?.origin.issueId, codexTarget);
     } catch (error) {
       if (error instanceof ApiError && ["PROJECT_NOT_FOUND", "AI_CHAT_ISSUE_NOT_FOUND"].includes(error.code)) {
         throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer project is invalid");
@@ -267,7 +332,8 @@ export class AiChatService {
         "Composer thread workspace no longer matches the selected project",
       );
     }
-    const response = await this.composerCatalog.candidates({
+    const { composerCatalog } = this.#runtimeForTarget(resolved);
+    const response = await composerCatalog.candidates({
       workspacePath: resolved.workspacePath,
       trigger,
       query,
@@ -289,13 +355,14 @@ export class AiChatService {
     if (!thread.codexThreadId) {
       throw new ApiError(409, "AI_CHAT_THREAD_NOT_STARTED", "Conversation has not started");
     }
-    await this.appServer.compactThread(thread.codexThreadId);
+    await this.#runtimeForThread(thread).appServer.compactThread(thread.codexThreadId);
     return this.getThread(threadId);
   }
 
   async createThread(input) {
-    const resolved = await this.resolveContext(input.projectId, input.issueId);
-    const catalog = await this.getCatalog(input.projectId, resolved);
+    const codexTarget = input.codexProjectKind === "remote" ? input : undefined;
+    const resolved = await this.resolveContext(input.projectId, input.issueId, codexTarget);
+    const catalog = await this.getCatalog(input.projectId, resolved, codexTarget);
     const model = this.#resolveModel(catalog, input.model);
     const reasoningEffort = input.reasoningEffort ?? model.defaultReasoningEffort;
     this.#validateReasoningEffort(model, reasoningEffort);
@@ -310,6 +377,11 @@ export class AiChatService {
         projectId: resolved.project.id,
         projectName: resolved.project.name,
         workspacePath: resolved.workspacePath,
+        ...(resolved.codexProjectKind === "remote" ? {
+          codexProjectId: resolved.codexProjectId,
+          codexProjectKind: resolved.codexProjectKind,
+          codexHostId: resolved.codexHostId,
+        } : {}),
         ...(issue ? { issueId: issue.id, issueIdentifier: issue.identifier } : {}),
       },
       model: model.slug,
@@ -327,7 +399,11 @@ export class AiChatService {
 
     if (Object.hasOwn(changes, "sandbox")) this.#validateSandbox(changes.sandbox);
     if (Object.hasOwn(changes, "model") || Object.hasOwn(changes, "reasoningEffort")) {
-      const catalog = await this.getCatalog(thread.origin.projectId);
+      const catalog = await this.getCatalog(
+        thread.origin.projectId,
+        undefined,
+        codexTargetFromOrigin(thread.origin),
+      );
       thread = this.getThread(threadId);
       const model = this.#resolveModel(catalog, changes.model ?? thread.model);
       const reasoningEffort = changes.reasoningEffort ?? thread.reasoningEffort;
@@ -377,11 +453,13 @@ export class AiChatService {
       );
     }
 
+    const codexTarget = codexTargetFromOrigin(thread.origin);
     const resolved = await this.resolveContext(
       thread.origin.projectId,
       thread.origin.issueId,
+      codexTarget,
     );
-    const catalog = await this.getCatalog(thread.origin.projectId, resolved);
+    const catalog = await this.getCatalog(thread.origin.projectId, resolved, codexTarget);
 
     thread = this.getThread(threadId);
     if (this.#threadIsActive(thread)) {
@@ -420,6 +498,10 @@ export class AiChatService {
       }
     }
     const selectedSkills = skillIds.map((skillId) => availableSkills.get(skillId));
+
+    if (resolved.codexProjectKind === "remote") {
+      return this.#startRemoteTurn(thread, input, resolved, selectedSkills);
+    }
 
     const attachments = input.attachments ?? [];
     const {
@@ -557,7 +639,7 @@ export class AiChatService {
     if (active.kind === "app-server") {
       if (active.turnId) {
         try {
-          await this.appServer.interruptTurn({
+          await active.appServer.interruptTurn({
             threadId: active.appServerThreadId,
             turnId: active.turnId,
           });
@@ -589,7 +671,7 @@ export class AiChatService {
       active.interrupted = true;
       if (active.kind === "app-server") {
         if (active.turnId) {
-          void this.appServer.interruptTurn({
+          void active.appServer.interruptTurn({
             threadId: active.appServerThreadId,
             turnId: active.turnId,
           }).catch(() => {});
@@ -625,6 +707,12 @@ export class AiChatService {
     this.unsubscribeAppServer();
     this.composerCatalog.close();
     await this.appServer.close();
+    for (const runtime of this.remoteRuntimes.values()) {
+      runtime.unsubscribe();
+      runtime.composerCatalog.close();
+      await runtime.appServer.close();
+    }
+    this.remoteRuntimes.clear();
     this.listeners.clear();
   }
 
@@ -696,6 +784,120 @@ export class AiChatService {
     }
   }
 
+  async #startAppServerRun({
+    thread,
+    resolved,
+    appServer,
+    userInput,
+    userEvent,
+    temporaryDirectory = null,
+  }) {
+    const settings = appServerThreadSettings(thread, resolved);
+    let appServerThreadId = thread.codexThreadId;
+    if (appServerThreadId) {
+      const resumed = await appServer.resumeThread({
+        threadId: appServerThreadId,
+        ...settings,
+      });
+      if (resumed?.thread?.id !== appServerThreadId) {
+        throw new Error("Codex returned an unexpected resumed thread id");
+      }
+    } else {
+      const started = await appServer.startThread(settings);
+      appServerThreadId = started?.thread?.id;
+      if (typeof appServerThreadId !== "string" || !appServerThreadId) {
+        throw new Error("Codex did not provide a thread id");
+      }
+      this.database.updateAiChatThread(thread.id, { codexThreadId: appServerThreadId });
+    }
+
+    const run = this.database.createAiChatRun({ threadId: thread.id });
+    this.#emit(thread.id, { type: "ai.run", run });
+    const storedUserEvent = this.database.insertAiChatEvent({
+      threadId: thread.id,
+      runId: run.id,
+      type: "user_message",
+      role: "user",
+      ...userEvent,
+    });
+    this.#emit(thread.id, { type: "ai.event", event: storedUserEvent });
+
+    let resolveCompletion;
+    const completion = new Promise((resolve) => { resolveCompletion = resolve; });
+    const active = {
+      kind: "app-server",
+      run,
+      threadId: thread.id,
+      appServer,
+      appServerThreadId,
+      turnId: null,
+      interrupted: false,
+      temporaryDirectory,
+      resolveCompletion,
+    };
+    this.active.set(run.id, active);
+    const finalization = completion.finally(() => this.completions.delete(run.id));
+    this.completions.set(run.id, finalization);
+    try {
+      const started = await appServer.startTurn({
+        threadId: appServerThreadId,
+        input: userInput,
+        effort: thread.reasoningEffort,
+      });
+      const turnId = started?.turn?.id;
+      if (typeof turnId !== "string" || !turnId) {
+        throw new Error("Codex did not provide a turn id");
+      }
+      active.turnId = turnId;
+    } catch (error) {
+      await this.#finishAppServerRun(active, "failed", error);
+      throw error;
+    }
+    return run;
+  }
+
+  #remoteAttachmentInput(attachment) {
+    const url = `data:${attachment.contentType};base64,${attachment.data.toString("base64")}`;
+    if (CODEX_IMAGE_TYPES.has(attachment.contentType)) return { type: "image", url };
+    if (attachment.contentType.startsWith("audio/")) return { type: "audio", url };
+    return {
+      type: "text",
+      text: `\n\nAttached file ${attachment.filename}: ${url}`,
+    };
+  }
+
+  async #startRemoteTurn(thread, input, resolved, selectedSkills) {
+    const userInput = [];
+    const messageParts = input.message.split(SKILL_MARKER);
+    for (const [index, text] of messageParts.entries()) {
+      if (text) userInput.push({ type: "text", text });
+      const skill = selectedSkills[index];
+      if (skill) userInput.push({ type: "skill", name: skill.id, path: skill.path });
+    }
+    for (const attachment of input.attachments ?? []) {
+      userInput.push(this.#remoteAttachmentInput(attachment));
+    }
+    const userEventData = {};
+    if (selectedSkills.length > 0) userEventData.skillIds = selectedSkills.map((skill) => skill.id);
+    if ((input.attachments ?? []).length > 0) {
+      userEventData.attachments = input.attachments.map(({ filename, contentType, size }) => ({
+        filename,
+        contentType,
+        size,
+      }));
+    }
+    return this.#startAppServerRun({
+      thread,
+      resolved,
+      appServer: this.#runtimeForTarget(resolved).appServer,
+      userInput,
+      userEvent: {
+        content: input.message,
+        data: Object.keys(userEventData).length > 0 ? userEventData : undefined,
+      },
+    });
+  }
+
   async #startComposerTurn(thread, input) {
     if (thread.sandbox === "danger-full-access" && input.dangerFullAccessConfirmed !== true) {
       throw new ApiError(
@@ -705,10 +907,13 @@ export class AiChatService {
       );
     }
 
+    const codexTarget = codexTargetFromOrigin(thread.origin);
     const resolved = await this.resolveContext(
       thread.origin.projectId,
       thread.origin.issueId,
+      codexTarget,
     );
+    const runtime = this.#runtimeForTarget(resolved);
     thread = this.getThread(thread.id);
     if (this.#threadIsActive(thread)) {
       throw new ApiError(409, "THREAD_BUSY", `AI chat thread '${thread.id}' has a running turn`);
@@ -732,7 +937,7 @@ export class AiChatService {
       );
     }
     const resolvedReferences = nodes.some((node) => node.type === "skill" || node.type === "agent")
-      ? await this.composerCatalog.resolveReferences({
+      ? await runtime.composerCatalog.resolveReferences({
           workspacePath: resolved.workspacePath,
           revision: input.revision,
           nodes,
@@ -751,27 +956,10 @@ export class AiChatService {
       );
     }
 
-    const { temporaryDirectory, attachmentPaths } = await this.#writeTurnAttachments(attachments);
+    const { temporaryDirectory, attachmentPaths } = resolved.codexProjectKind === "remote"
+      ? { temporaryDirectory: null, attachmentPaths: [] }
+      : await this.#writeTurnAttachments(attachments);
     try {
-      const settings = appServerThreadSettings(thread, resolved);
-      let appServerThreadId = thread.codexThreadId;
-      if (appServerThreadId) {
-        const resumed = await this.appServer.resumeThread({
-          threadId: appServerThreadId,
-          ...settings,
-        });
-        if (resumed?.thread?.id !== appServerThreadId) {
-          throw new Error("Codex returned an unexpected resumed thread id");
-        }
-      } else {
-        const started = await this.appServer.startThread(settings);
-        appServerThreadId = started?.thread?.id;
-        if (typeof appServerThreadId !== "string" || !appServerThreadId) {
-          throw new Error("Codex did not provide a thread id");
-        }
-        this.database.updateAiChatThread(thread.id, { codexThreadId: appServerThreadId });
-      }
-
       const userInput = nodes.flatMap((node, nodeIndex) => {
         if (node.type === "text") return { type: "text", text: node.text };
         const reference = resolvedReferences[nodeIndex];
@@ -784,6 +972,10 @@ export class AiChatService {
         return { type: "text", text: agentDispatchText(reference) };
       });
       for (const [index, attachment] of attachments.entries()) {
+        if (resolved.codexProjectKind === "remote") {
+          userInput.push(this.#remoteAttachmentInput(attachment));
+          continue;
+        }
         const attachmentPath = attachmentPaths[index];
         if (CODEX_IMAGE_TYPES.has(attachment.contentType)) {
           userInput.push({ type: "localImage", path: attachmentPath });
@@ -792,18 +984,18 @@ export class AiChatService {
         }
       }
 
-      const run = this.database.createAiChatRun({ threadId: thread.id });
-      this.#emit(thread.id, { type: "ai.run", run });
       const agentDispatches = nodes.flatMap((node, nodeIndex) => {
         if (node.type !== "agent") return [];
         const reference = resolvedReferences[nodeIndex];
         return [{ nodeIndex, id: reference.id, name: reference.name }];
       });
-      const userEvent = this.database.insertAiChatEvent({
-        threadId: thread.id,
-        runId: run.id,
-        type: "user_message",
-        role: "user",
+      const run = await this.#startAppServerRun({
+        thread,
+        resolved,
+        appServer: runtime.appServer,
+        userInput,
+        temporaryDirectory,
+        userEvent: {
         content: nodes.map((node) => (
           node.type === "text" ? node.text : `@${node.label}`
         )).join(""),
@@ -826,40 +1018,9 @@ export class AiChatService {
                 })),
               }
             : {}),
+          },
         },
       });
-      this.#emit(thread.id, { type: "ai.event", event: userEvent });
-
-      let resolveCompletion;
-      const completion = new Promise((resolve) => { resolveCompletion = resolve; });
-      const active = {
-        kind: "app-server",
-        run,
-        threadId: thread.id,
-        appServerThreadId,
-        turnId: null,
-        interrupted: false,
-        temporaryDirectory,
-        resolveCompletion,
-      };
-      this.active.set(run.id, active);
-      const finalization = completion.finally(() => this.completions.delete(run.id));
-      this.completions.set(run.id, finalization);
-      try {
-        const started = await this.appServer.startTurn({
-          threadId: appServerThreadId,
-          input: userInput,
-          effort: thread.reasoningEffort,
-        });
-        const turnId = started?.turn?.id;
-        if (typeof turnId !== "string" || !turnId) {
-          throw new Error("Codex did not provide a turn id");
-        }
-        active.turnId = turnId;
-      } catch (error) {
-        await this.#finishAppServerRun(active, "failed", error);
-        throw error;
-      }
       return run;
     } catch (error) {
       if (temporaryDirectory && ![...this.active.values()].some(
@@ -871,11 +1032,12 @@ export class AiChatService {
     }
   }
 
-  #handleAppServerNotification(notification) {
+  #handleAppServerNotification(appServer, notification) {
     const params = notification?.params;
     if (!params || typeof params !== "object") return;
     const active = [...this.active.values()].find((candidate) => (
       candidate.kind === "app-server"
+      && candidate.appServer === appServer
       && candidate.appServerThreadId === params.threadId
       && (!candidate.turnId || !params.turnId || candidate.turnId === params.turnId)
     ));

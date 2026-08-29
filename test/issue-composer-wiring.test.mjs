@@ -22,14 +22,14 @@ const editorSource = await readFile(
 test("all four issue composers request candidates with the owning project and surface", () => {
   assert.match(
     editorSource,
-    /completionContext=\{\{ projectId, surface: "issue-description" \}\}/,
+    /completionContext=\{projectId \? \{ projectId, surface: "issue-description" \} : undefined\}/,
   );
   assert.equal(
     detailSource.match(/surface: "issue-description"/g)?.length,
     1,
   );
   assert.equal(detailSource.match(/surface: "comment"/g)?.length, 2);
-  assert.match(appSource, /projectId=\{selectedProjectId\}/);
+  assert.match(appSource, /projectId=\{editorProjectId\}/);
 });
 
 test("task composer document converts only durable references and keeps slash and legacy syntax as text", () => {

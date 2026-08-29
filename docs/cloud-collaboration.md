@@ -5,22 +5,24 @@ Codex Taskboard can run as a small shared Cloudflare deployment for two trusted 
 - one Worker serves the built UI and the JSON API;
 - D1 is the authoritative business database;
 - a private R2 bucket stores attachments;
+- one SQLite-backed Durable Object broadcasts revision changes over hibernating WebSockets;
 - UI, API, and attachment routes use HTTPS Basic Authentication; `/health` is public;
-- open boards poll a global revision every two seconds and refresh after a change.
+- open boards refresh when a revision event arrives; reconnects perform one revision check and never poll periodically.
 
 The production resource names are:
 
 | Resource | Name |
 | --- | --- |
-| Worker | `codex-taskboard` |
+| Worker | `board` |
 | D1 database | `codex-taskboard-db` |
 | R2 bucket | `codex-taskboard-attachments` |
+| Durable Object class | `RealtimeHub` |
 
 This is intentionally a shared-password trust model. The Basic username is only the actor name displayed in task and comment attribution, not a verified identity. Anyone who knows the shared password has full read and write access and can choose any actor name. Use it only with the other trusted collaborator.
 
 ## What stays local
 
-The cloud stores project, issue, comment, relation, workflow, and attachment data. It does not store a device's absolute project or worktree paths.
+The cloud stores project, issue, comment, relation, and attachment data. It does not store a device's absolute project or worktree paths.
 
 Each collaborator runs the **local companion**: a **device-local loopback service** (not a chat persona) for Codex, Git/worktree scanning, installed Skill/MCP discovery, and project path mapping. The companion keeps the cloud URL, actor name, shared password, and device-specific project mappings in `.data/cloud-companion.json` with mode `0600`. Ordinary Taskboard HTTP routes (tasks, comments, attachments) are the shared API; they are not a separate “companion API”.
 
@@ -85,6 +87,7 @@ Give the other collaborator the deployed Worker HTTPS origin and shared password
 Current Cloudflare references:
 
 - [Workers Static Assets binding](https://developers.cloudflare.com/workers/static-assets/binding/)
+- [Durable Objects with WebSocket Hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
 - [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/)
 - [Create an R2 bucket](https://developers.cloudflare.com/r2/buckets/create-buckets/)
 - [Workers secrets](https://developers.cloudflare.com/workers/configuration/secrets/)

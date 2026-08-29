@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
+import { WebSocket, WebSocketServer } from "ws";
 
-import { createTaskboardServer } from "../server/index.mjs";
+import { createTaskboardServer, resolveServerOptions } from "../server/index.mjs";
 
 const runningApps = [];
 
@@ -47,10 +48,10 @@ async function request(baseUrl, pathname, options = {}) {
   };
 }
 
-async function requestWithHost(baseUrl, host) {
+async function requestWithHost(baseUrl, host, headers = {}) {
   const target = new URL("/health", baseUrl);
   return new Promise((resolve, reject) => {
-    const outgoing = httpRequest(target, { headers: { host } }, (response) => {
+    const outgoing = httpRequest(target, { headers: { host, ...headers } }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({
@@ -60,6 +61,34 @@ async function requestWithHost(baseUrl, host) {
     });
     outgoing.on("error", reject);
     outgoing.end();
+  });
+}
+
+async function openEventStream(baseUrl, headers) {
+  const target = new URL("/api/events", baseUrl);
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest(target, { headers }, (response) => {
+      resolve({ status: response.statusCode });
+      response.resume();
+      response.destroy();
+    });
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+}
+
+async function openWebSocket(url, headers) {
+  return new Promise((resolve, reject) => {
+    const client = new WebSocket(url, { headers });
+    client.once("open", () => {
+      client.terminate();
+      resolve(101);
+    });
+    client.once("unexpected-response", (_request, response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    client.once("error", reject);
   });
 }
 
@@ -119,702 +148,6 @@ test("launcher mode proves service identity and hides every route behind its ins
   });
   assert.equal(launcherApi.response.status, 200);
   assert.equal(launcherApi.response.headers.get("access-control-allow-origin"), "null");
-});
-
-test("workflow workspaces persist centrally with optimistic concurrency", async () => {
-  const baseUrl = await startServer();
-  const initial = await request(baseUrl, "/api/projects/local/workflow-workspace");
-  assert.deepEqual(initial.body.workflow, {
-    projectId: "local",
-    workspace: null,
-    version: 0,
-    updatedAt: null,
-  });
-
-  const workspace = {
-    version: 1,
-    tabs: [{ id: "issue-delivery", name: "议题处理与交付" }],
-    activeWorkflowId: "issue-delivery",
-    snapshots: {
-      "issue-delivery": {
-        nodes: [{ id: "issue-trigger", position: { x: 100, y: 80 }, data: { kind: "issue-trigger" } }],
-        flow: {
-          version: 2,
-          root: { items: [{ type: "step", nodeId: "issue-trigger" }] },
-        },
-        selectedNodeId: "issue-trigger",
-      },
-    },
-  };
-  const created = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: { version: 0, workspace },
-  });
-  assert.equal(created.response.status, 200);
-  assert.equal(created.body.workflow.version, 1);
-  assert.deepEqual(created.body.workflow.workspace, workspace);
-
-  const fromAnotherClient = await request(baseUrl, "/api/projects/local/workflow-workspace");
-  assert.equal(fromAnotherClient.body.workflow.version, 1);
-  assert.deepEqual(fromAnotherClient.body.workflow.workspace, workspace);
-
-  const renamedWorkspace = {
-    ...workspace,
-    tabs: [{ id: "issue-delivery", name: "统一交付流程" }],
-  };
-  const updated = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: { version: 1, workspace: renamedWorkspace },
-  });
-  assert.equal(updated.response.status, 200);
-  assert.equal(updated.body.workflow.version, 2);
-
-  const stale = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: { version: 1, workspace },
-  });
-  assert.equal(stale.response.status, 409);
-  assert.equal(stale.body.error.code, "VERSION_CONFLICT");
-  assert.deepEqual(stale.body.error.details, {
-    expectedVersion: 1,
-    actualVersion: 2,
-  });
-});
-
-test("Twitter post content survives the shared workflow workspace round trip", async () => {
-  const baseUrl = await startServer();
-  const workspace = {
-    version: 1,
-    tabs: [{ id: "twitter-publishing", name: "Twitter 发布" }],
-    activeWorkflowId: "twitter-publishing",
-    snapshots: {
-      "twitter-publishing": {
-        nodes: [
-          {
-            id: "issue-trigger",
-            position: { x: 0, y: 0 },
-            data: { kind: "issue-trigger" },
-          },
-          {
-            id: "twitter-post",
-            position: { x: 0, y: 220 },
-            data: {
-              kind: "twitter-post",
-              twitterPostContent: "发布产品更新",
-            },
-          },
-        ],
-        flow: {
-          version: 2,
-          root: {
-            items: [
-              { type: "step", nodeId: "issue-trigger" },
-              { type: "step", nodeId: "twitter-post" },
-            ],
-          },
-        },
-        selectedNodeId: "twitter-post",
-      },
-    },
-  };
-
-  const saved = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: { version: 0, workspace },
-  });
-  assert.equal(saved.response.status, 200);
-  assert.equal(
-    saved.body.workflow.workspace.snapshots["twitter-publishing"].nodes[1].data.twitterPostContent,
-    "发布产品更新",
-  );
-
-  const restored = await request(baseUrl, "/api/projects/local/workflow-workspace");
-  assert.equal(restored.response.status, 200);
-  assert.equal(
-    restored.body.workflow.workspace.snapshots["twitter-publishing"].nodes[1].data.twitterPostContent,
-    "发布产品更新",
-  );
-});
-
-test("workflow service accepts legacy edge snapshots and persists them as V2 control flow", async () => {
-  const baseUrl = await startServer();
-  const workspace = {
-    version: 1,
-    tabs: [{ id: "legacy", name: "Legacy" }],
-    activeWorkflowId: "legacy",
-    snapshots: {
-      legacy: {
-        nodes: [
-          { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-          { id: "condition", position: { x: 0, y: 100 }, data: { kind: "condition" } },
-          { id: "yes", position: { x: -180, y: 280 }, data: { kind: "skill" } },
-          { id: "no", position: { x: 180, y: 280 }, data: { kind: "mcp" } },
-        ],
-        edges: [
-          { id: "root", source: "trigger", target: "condition" },
-          {
-            id: "yes-edge",
-            source: "condition",
-            target: "yes",
-            data: { conditionId: "condition", conditionOutcome: "true" },
-          },
-          {
-            id: "no-edge",
-            source: "condition",
-            target: "no",
-            data: { conditionId: "condition", conditionOutcome: "false" },
-          },
-        ],
-        selectedNodeId: null,
-      },
-    },
-  };
-
-  const saved = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: { version: 0, workspace },
-  });
-
-  assert.equal(saved.response.status, 200);
-  const snapshot = saved.body.workflow.workspace.snapshots.legacy;
-  assert.equal("edges" in snapshot, false);
-  assert.deepEqual(snapshot.flow, {
-    version: 2,
-    root: {
-      items: [
-        { type: "step", nodeId: "trigger" },
-        {
-          type: "condition",
-          nodeId: "condition",
-          branches: {
-            true: { items: [{ type: "step", nodeId: "yes" }] },
-            false: { items: [{ type: "step", nodeId: "no" }] },
-          },
-        },
-      ],
-    },
-  });
-});
-
-test("workflow service recursively migrates V1 linear conditions and persists V2 control flow", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "legacy", name: "Legacy" }],
-        activeWorkflowId: "legacy",
-        snapshots: {
-          legacy: {
-            nodes: [
-              { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-              { id: "first", position: { x: 0, y: 100 }, data: { kind: "condition" } },
-              { id: "action", position: { x: 0, y: 200 }, data: { kind: "skill" } },
-              { id: "second", position: { x: 0, y: 300 }, data: { kind: "condition" } },
-              { id: "tail", position: { x: 0, y: 400 }, data: { kind: "mcp" } },
-            ],
-            edges: [
-              { id: "a", source: "trigger", target: "first" },
-              { id: "b", source: "first", target: "action" },
-              { id: "c", source: "action", target: "second" },
-              { id: "d", source: "second", target: "tail" },
-            ],
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 200);
-  const snapshot = result.body.workflow.workspace.snapshots.legacy;
-  assert.equal("edges" in snapshot, false);
-  assert.deepEqual(snapshot.flow.root.items, [
-    { type: "step", nodeId: "trigger" },
-    {
-      type: "condition",
-      nodeId: "first",
-      branches: {
-        true: {
-          items: [
-            { type: "step", nodeId: "action" },
-            {
-              type: "condition",
-              nodeId: "second",
-              branches: {
-                true: { items: [{ type: "step", nodeId: "tail" }] },
-                false: { items: [] },
-              },
-            },
-          ],
-        },
-        false: { items: [] },
-      },
-    },
-  ]);
-});
-
-test("workflow service rejects snapshots with unknown flow versions", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-            ],
-            flow: {
-              version: 3,
-              root: { items: [{ type: "step", nodeId: "trigger" }] },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /version 2/i);
-});
-
-test("workflow service rejects malformed V2 snapshots with repeated triggers", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              { id: "first", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-              { id: "second", position: { x: 0, y: 100 }, data: { kind: "git-trigger" } },
-            ],
-            flow: {
-              version: 2,
-              root: {
-                items: [
-                  { type: "step", nodeId: "first" },
-                  { type: "step", nodeId: "second" },
-                ],
-              },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /trigger/i);
-});
-
-test("workflow service rejects V2 item types that do not match node kinds", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-              { id: "condition", position: { x: 0, y: 100 }, data: { kind: "condition" } },
-            ],
-            flow: {
-              version: 2,
-              root: {
-                items: [
-                  { type: "step", nodeId: "trigger" },
-                  { type: "step", nodeId: "condition" },
-                ],
-              },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /condition/i);
-});
-
-test("workflow service rejects V2 snapshots with duplicate node records", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-              { id: "trigger", position: { x: 0, y: 100 }, data: { kind: "issue-trigger" } },
-            ],
-            flow: {
-              version: 2,
-              root: {
-                items: [{ type: "step", nodeId: "trigger" }],
-              },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /node ids must be unique/i);
-});
-
-test("workflow service rejects V2 flow items that reference parented plan children", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-              { id: "plan", position: { x: 0, y: 100 }, data: { kind: "planning" } },
-              {
-                id: "plan-child",
-                parentId: "plan",
-                position: { x: 0, y: 0 },
-                data: { kind: "skill" },
-              },
-            ],
-            flow: {
-              version: 2,
-              root: {
-                items: [
-                  { type: "step", nodeId: "trigger" },
-                  { type: "step", nodeId: "plan" },
-                  { type: "step", nodeId: "plan-child" },
-                ],
-              },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /root node/i);
-});
-
-test("workflow service rejects malformed parented workflow nodes", async () => {
-  const cases = [
-    {
-      name: "missing parent",
-      nodes: [
-        { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-        {
-          id: "orphan",
-          parentId: "missing-plan",
-          position: { x: 0, y: 0 },
-          data: { kind: "skill" },
-        },
-      ],
-      items: [{ type: "step", nodeId: "trigger" }],
-      message: /missing parent/i,
-    },
-    {
-      name: "nested parent",
-      nodes: [
-        { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-        {
-          id: "root-plan",
-          position: { x: 0, y: 100 },
-          data: { kind: "basic-planning", acceptsChildren: true },
-        },
-        {
-          id: "nested-plan",
-          parentId: "root-plan",
-          position: { x: 0, y: 0 },
-          data: { kind: "basic-planning", acceptsChildren: true },
-        },
-        {
-          id: "nested-child",
-          parentId: "nested-plan",
-          position: { x: 0, y: 0 },
-          data: { kind: "skill" },
-        },
-      ],
-      items: [
-        { type: "step", nodeId: "trigger" },
-        { type: "step", nodeId: "root-plan" },
-      ],
-      message: /root parent/i,
-    },
-    {
-      name: "parent cannot accept children",
-      nodes: [
-        { id: "trigger", position: { x: 0, y: 0 }, data: { kind: "issue-trigger" } },
-        { id: "plain-step", position: { x: 0, y: 100 }, data: { kind: "skill" } },
-        {
-          id: "invalid-child",
-          parentId: "plain-step",
-          position: { x: 0, y: 0 },
-          data: { kind: "mcp" },
-        },
-      ],
-      items: [
-        { type: "step", nodeId: "trigger" },
-        { type: "step", nodeId: "plain-step" },
-      ],
-      message: /acceptsChildren/i,
-    },
-  ];
-
-  for (const invalidCase of cases) {
-    const baseUrl = await startServer();
-    const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-      method: "PUT",
-      body: {
-        version: 0,
-        workspace: {
-          version: 1,
-          tabs: [{ id: "invalid", name: "Invalid" }],
-          activeWorkflowId: "invalid",
-          snapshots: {
-            invalid: {
-              nodes: invalidCase.nodes,
-              flow: {
-                version: 2,
-                root: { items: invalidCase.items },
-              },
-              selectedNodeId: null,
-            },
-          },
-        },
-      },
-    });
-
-    assert.equal(result.response.status, 400, invalidCase.name);
-    assert.equal(result.body.error.code, "INVALID_FIELD", invalidCase.name);
-    assert.match(result.body.error.message, invalidCase.message, invalidCase.name);
-  }
-});
-
-test("workflow service rejects non-empty V2 snapshots without a trigger", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              { id: "step", position: { x: 0, y: 0 }, data: { kind: "skill" } },
-            ],
-            flow: {
-              version: 2,
-              root: {
-                items: [{ type: "step", nodeId: "step" }],
-              },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /trigger/i);
-});
-
-test("workflow service rejects unknown node kinds that only look like triggers", async () => {
-  const baseUrl = await startServer();
-  const result = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: {
-      version: 0,
-      workspace: {
-        version: 1,
-        tabs: [{ id: "invalid", name: "Invalid" }],
-        activeWorkflowId: "invalid",
-        snapshots: {
-          invalid: {
-            nodes: [
-              {
-                id: "unknown-trigger",
-                position: { x: 0, y: 0 },
-                data: { kind: "made-up-trigger" },
-              },
-            ],
-            flow: {
-              version: 2,
-              root: {
-                items: [{ type: "step", nodeId: "unknown-trigger" }],
-              },
-            },
-            selectedNodeId: null,
-          },
-        },
-      },
-    },
-  });
-
-  assert.equal(result.response.status, 400);
-  assert.equal(result.body.error.code, "INVALID_FIELD");
-  assert.match(result.body.error.message, /trigger kind/i);
-});
-
-test("workflow workspace changes are broadcast to other open clients", async () => {
-  const baseUrl = await startServer();
-  const eventResponse = await fetch(`${baseUrl}/api/events`);
-  const reader = eventResponse.body.getReader();
-  const decoder = new TextDecoder();
-  await reader.read();
-
-  const workspace = {
-    version: 1,
-    tabs: [{ id: "issue-delivery", name: "议题处理与交付" }],
-    activeWorkflowId: "issue-delivery",
-    snapshots: {
-      "issue-delivery": { nodes: [], edges: [], selectedNodeId: null },
-    },
-  };
-  const saved = await request(baseUrl, "/api/projects/local/workflow-workspace", {
-    method: "PUT",
-    body: { version: 0, workspace },
-  });
-  assert.equal(saved.response.status, 200);
-
-  let message = "";
-  while (!message.includes("\n\n")) {
-    const chunk = await reader.read();
-    assert.equal(chunk.done, false);
-    message += decoder.decode(chunk.value, { stream: true });
-  }
-  assert.match(message, /event: workflow\.updated/);
-  const dataLine = message.split("\n").find((line) => line.startsWith("data: "));
-  const event = JSON.parse(dataLine.slice(6));
-  assert.equal(event.type, "workflow.updated");
-  assert.equal(event.projectId, "local");
-  assert.equal(event.workflowVersion, 1);
-  await reader.cancel();
-});
-
-test("workflow capabilities come from the live Codex skill and MCP catalogs", async () => {
-  let workspacePath;
-  const baseUrl = await startServer(async (directory) => {
-    workspacePath = directory;
-    const codexExecutable = path.join(directory, "fake-codex.mjs");
-    await writeFile(codexExecutable, `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "mcp") {
-  process.stdout.write('[{"name":"context7","enabled":true,"transport":{"type":"streamable_http"}},{"name":"disabled-server","enabled":false,"transport":{"type":"stdio"}}]\\n');
-  process.exit(0);
-}
-process.stdin.setEncoding("utf8");
-let buffer = "";
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let newlineIndex = buffer.indexOf("\\n");
-  while (newlineIndex >= 0) {
-    const line = buffer.slice(0, newlineIndex);
-    buffer = buffer.slice(newlineIndex + 1);
-    const message = JSON.parse(line);
-    if (message.id === 1) process.stdout.write('{"id":1,"result":{"platformFamily":"unix"}}\\n');
-    if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","description":"User skill","path":"/user/skills/user-skill/SKILL.md","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","description":"Repository skill","path":"/workspace/.agents/skills/repo-skill/SKILL.md","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}\\n');
-    newlineIndex = buffer.indexOf("\\n");
-  }
-});
-`);
-    await chmod(codexExecutable, 0o755);
-    return { codexExecutable };
-  });
-
-  const result = await request(
-    baseUrl,
-    `/api/workflow-capabilities?workspacePath=${encodeURIComponent(workspacePath)}`,
-  );
-  assert.equal(result.response.status, 200);
-  assert.deepEqual(result.body, {
-    skills: [
-      {
-        id: "repo-skill",
-        label: "Repository Skill",
-        description: "Repository skill",
-        path: "/workspace/.agents/skills/repo-skill/SKILL.md",
-        scope: "repo",
-      },
-      {
-        id: "user-skill",
-        label: "user-skill",
-        description: "User skill",
-        path: "/user/skills/user-skill/SKILL.md",
-        scope: "user",
-      },
-    ],
-    mcpServers: [
-      { id: "context7", label: "context7", transport: "streamable_http" },
-    ],
-  });
-
-  const invalidPath = await request(baseUrl, "/api/workflow-capabilities?workspacePath=relative");
-  assert.equal(invalidPath.response.status, 400);
-  assert.equal(invalidPath.body.error.code, "INVALID_FIELD");
-
-  const unknownQuery = await request(baseUrl, "/api/workflow-capabilities?extra=true");
-  assert.equal(unknownQuery.response.status, 400);
-  assert.equal(unknownQuery.body.error.code, "UNKNOWN_QUERY_PARAMETER");
-
-  const wrongMethod = await request(baseUrl, "/api/workflow-capabilities", { method: "POST" });
-  assert.equal(wrongMethod.response.status, 405);
-});
-
-test("workflow capability discovery fails instead of inventing fallback options", async () => {
-  const baseUrl = await startServer(async (directory) => ({
-    codexExecutable: path.join(directory, "missing-codex"),
-  }));
-  const result = await request(baseUrl, "/api/workflow-capabilities");
-  assert.equal(result.response.status, 500);
-  assert.equal(result.body.error.code, "INTERNAL_ERROR");
 });
 
 test("existing task and comment thread attribution remains content-specific", async () => {
@@ -914,13 +247,11 @@ test("existing task and comment thread attribution remains content-specific", as
   assert.equal(Object.hasOwn(result.body.task, "linkedThreadId"), false);
   const columns = runningApps.at(-1).app.database.database.prepare("PRAGMA table_info(tasks)").all();
   assert.equal(columns.some((column) => column.name === "thread_id"), true);
-  assert.equal(columns.some((column) => column.name === "workflow_id"), true);
   assert.equal(columns.some((column) => column.name === "assignee_type"), true);
   assert.equal(columns.some((column) => column.name === "assignee_id"), true);
   assert.equal(columns.some((column) => column.name === "assignee_name"), true);
   assert.equal(columns.some((column) => column.name === "assignee_avatar_url"), true);
   assert.equal(columns.some((column) => column.name === "linked_thread_id"), false);
-  assert.equal(result.body.task.workflowId, null);
   const taskThreads = runningApps.at(-1).app.database.database.prepare(`
     SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'task_threads'
   `).get();
@@ -1119,6 +450,189 @@ test("accepts private LAN requests and rejects public Host and Origin headers", 
   assert.equal(originResult.body.error.code, "INVALID_ORIGIN");
 });
 
+test("trusted HTTPS origins allow a loopback reverse tunnel for HTTP and SSE only", async () => {
+  const trustedOrigin = "https://board.example.test";
+  const baseUrl = await startServer(() => ({
+    processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+  }));
+  const host = "127.0.0.1";
+
+  for (const [origin, expectedStatus] of [
+    [trustedOrigin, 200],
+    ["https://other.example.test", 403],
+    [undefined, 200],
+  ]) {
+    const headers = origin ? { origin } : {};
+    const health = await requestWithHost(baseUrl, host, headers);
+    assert.equal(health.status, expectedStatus);
+
+    const events = await openEventStream(baseUrl, { host, ...headers });
+    assert.equal(events.status, expectedStatus);
+  }
+
+  const publicHost = await requestWithHost(baseUrl, "board.example.test", {
+    origin: trustedOrigin,
+  });
+  assert.equal(publicHost.status, 403);
+  assert.equal(publicHost.body.error.code, "INVALID_HOST");
+
+  const forwardedHost = await requestWithHost(baseUrl, "untrusted.example.test", {
+    origin: trustedOrigin,
+    "x-forwarded-host": host,
+    "x-forwarded-proto": "https",
+  });
+  assert.equal(forwardedHost.status, 403);
+  assert.equal(forwardedHost.body.error.code, "INVALID_HOST");
+});
+
+test("trusted HTTPS origins do not inherit device-local capabilities from tunnel loopback", async () => {
+  const trustedOrigin = "https://board.example.test";
+  let skillPath;
+  const baseUrl = await startServer(async (directory) => {
+    skillPath = path.join(directory, "skills", "manage-taskboard", "SKILL.md");
+    return {
+      skillPath,
+      processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+      cloudConfigStore: {
+        async read() {
+          return {
+            remoteUrl: "https://tasks.example.test",
+            actorName: "Test actor",
+            sharedKey: "test-shared-key",
+            projectMappings: {},
+          };
+        },
+      },
+      remoteFetch: async () => new Response(JSON.stringify({ projects: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    };
+  });
+  const trustedRequest = { headers: { origin: trustedOrigin } };
+
+  const projects = await request(baseUrl, "/api/projects", trustedRequest);
+  assert.equal(projects.response.status, 200);
+  assert.deepEqual(projects.body, { projects: [] });
+
+  const metadata = await request(baseUrl, "/api/meta", trustedRequest);
+  assert.equal(metadata.response.status, 200);
+  assert.deepEqual(metadata.body, {
+    capabilities: { localAiChat: false },
+    mode: "cloud",
+    realtime: {
+      transport: "websocket",
+      endpoint: "/api/events",
+    },
+    localCapabilities: { available: false },
+  });
+  assert.equal(Object.hasOwn(metadata.body, "manageTaskboardSkillPath"), false);
+
+  for (const pathname of [
+    "/api/local/host-runtime",
+    "/api/local/jira-connection",
+    "/api/local/ai/catalog?projectId=local",
+    "/api/device-workspaces",
+    "/api/projects/local/development-contexts",
+  ]) {
+    const result = await request(baseUrl, pathname, trustedRequest);
+    assert.equal(result.response.status, 409, pathname);
+    assert.equal(result.body.error.code, "LOCAL_COMPANION_REQUIRED", pathname);
+  }
+
+  const localMetadata = await request(baseUrl, "/api/meta");
+  assert.equal(localMetadata.response.status, 200);
+  assert.deepEqual(localMetadata.body, {
+    manageTaskboardSkillPath: skillPath,
+    capabilities: { localAiChat: true },
+    mode: "cloud",
+    realtime: {
+      transport: "websocket",
+      endpoint: "/api/events",
+    },
+    localCapabilities: { available: true },
+  });
+  assert.equal((await request(baseUrl, "/api/local/host-runtime")).response.status, 200);
+  assert.equal((await request(baseUrl, "/api/device-workspaces")).response.status, 200);
+});
+
+test("trusted HTTPS origins apply to cloud WebSocket upgrades without widening loopback routes", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-trusted-origins-"));
+  const trustedOrigin = "https://board.example.test";
+  const upstreamServer = createServer();
+  const upstreamWebSockets = new WebSocketServer({ noServer: true });
+  upstreamServer.on("upgrade", (request, socket, head) => {
+    upstreamWebSockets.handleUpgrade(request, socket, head, () => {});
+  });
+  await new Promise((resolve) => upstreamServer.listen(0, "127.0.0.1", resolve));
+  const upstreamAddress = upstreamServer.address();
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+    cloudConfigStore: {
+      async read() {
+        return {
+          remoteUrl: `http://127.0.0.1:${upstreamAddress.port}`,
+          actorName: "Test actor",
+          sharedKey: "test-shared-key",
+        };
+      },
+    },
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    const url = `ws://127.0.0.1:${address.port}/api/events`;
+    for (const [origin, expectedStatus] of [
+      [trustedOrigin, 101],
+      ["https://other.example.test", 403],
+      [undefined, 101],
+    ]) {
+      const headers = { host: "127.0.0.1", ...(origin ? { origin } : {}) };
+      assert.equal(await openWebSocket(url, headers), expectedStatus);
+    }
+  } finally {
+    await app.close();
+    upstreamWebSockets.close();
+    await new Promise((resolve) => upstreamServer.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("trusted origin configuration rejects non-origin URLs", () => {
+  const valid = resolveServerOptions({
+    processEnv: {
+      ...process.env,
+      CODEX_TASKBOARD_TRUSTED_ORIGINS: "https://board.example.test, https://second.example.test/",
+    },
+  });
+  assert.deepEqual(valid.trustedOrigins, new Set([
+    "https://board.example.test",
+    "https://second.example.test",
+  ]));
+
+  for (const value of [
+    "",
+    " \t ",
+    "http://board.example.test",
+    "https://board.example.test/path",
+    "https://board.example.test?query=value",
+    "https://user@board.example.test",
+    "https://*.example.test",
+    "https://board.example.test,,https://second.example.test",
+    "https://board.example.test,https://board.example.test",
+    "https://board.example.test,https://board.example.test/",
+    "https://board.example.test,https://board.example.test:443",
+  ]) {
+    assert.throws(
+      () => resolveServerOptions({
+        processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: value },
+      }),
+      /CODEX_TASKBOARD_TRUSTED_ORIGINS/,
+    );
+  }
+});
+
 test("project and task CRUD flow", async () => {
   const baseUrl = await startServer();
 
@@ -1282,6 +796,16 @@ test("remote task bindings keep their own identity and can be cleared independen
   assert.deepEqual(created.threadBinding, binding);
   assert.deepEqual(created.conversationRefs.map((ref) => ref.codexHostId), ["ssh-a"]);
 
+  const continued = (await request(baseUrl, `/api/tasks/${created.id}/move`, {
+    method: "POST",
+    body: {
+      version: created.version,
+      status: "in_progress",
+      threadId: binding.threadId,
+    },
+  })).body.task;
+  assert.deepEqual(continued.threadBinding, binding);
+
   const controllerComment = (await request(baseUrl, `/api/tasks/${created.id}/comments`, {
     method: "POST",
     body: { body: "Controller note", threadId: "controller-thread" },
@@ -1292,7 +816,7 @@ test("remote task bindings keep their own identity and can be cleared independen
   const blocked = (await request(baseUrl, `/api/tasks/${created.id}/move`, {
     method: "POST",
     body: {
-      version: created.version,
+      version: continued.version,
       status: "blocked",
       threadId: "controller-thread",
       threadBinding: binding,
@@ -1348,49 +872,6 @@ test("the active local Codex conversation supplies its exact task binding identi
     codexHostId: "local",
     workspacePath: "/work/local-project",
   });
-});
-
-test("tasks can bind, change, and unbind one project workflow", async () => {
-  const baseUrl = await startServer();
-  const createResult = await request(baseUrl, "/api/tasks", {
-    method: "POST",
-    body: {
-      title: "Bind workflow",
-      workflowId: "issue-delivery",
-    },
-  });
-  assert.equal(createResult.response.status, 201);
-  assert.equal(createResult.body.task.workflowId, "issue-delivery");
-
-  const changedResult = await request(baseUrl, `/api/tasks/${createResult.body.task.id}`, {
-    method: "PATCH",
-    body: {
-      version: createResult.body.task.version,
-      workflowId: "workflow-123",
-    },
-  });
-  assert.equal(changedResult.response.status, 200);
-  assert.equal(changedResult.body.task.workflowId, "workflow-123");
-
-  const unboundResult = await request(baseUrl, `/api/tasks/${createResult.body.task.id}`, {
-    method: "PATCH",
-    body: {
-      version: changedResult.body.task.version,
-      workflowId: null,
-    },
-  });
-  assert.equal(unboundResult.response.status, 200);
-  assert.equal(unboundResult.body.task.workflowId, null);
-
-  const invalidResult = await request(baseUrl, `/api/tasks/${createResult.body.task.id}`, {
-    method: "PATCH",
-    body: {
-      version: unboundResult.body.task.version,
-      workflowId: " ",
-    },
-  });
-  assert.equal(invalidResult.response.status, 400);
-  assert.equal(invalidResult.body.error.code, "INVALID_FIELD");
 });
 
 test("issues support parent, sub-issue, blocking, and related issue relationships", async () => {
@@ -1503,6 +984,138 @@ test("issues support parent, sub-issue, blocking, and related issue relationship
   );
   assert.equal(crossProjectRelation.response.status, 400);
   assert.equal(crossProjectRelation.body.error.code, "CROSS_PROJECT_RELATION");
+});
+
+test("issue tree returns deterministic direct and nested parent paths without changing relation APIs", async () => {
+  const baseUrl = await startServer();
+  const createIssue = async (title, projectId = "local") => {
+    const result = await request(baseUrl, "/api/tasks", {
+      method: "POST",
+      body: { projectId, title },
+    });
+    assert.equal(result.response.status, 201);
+    return result.body.task;
+  };
+  const latest = async (id) => (await request(baseUrl, `/api/tasks/${id}`)).body.task;
+  const addParent = async (child, parent) => request(
+    baseUrl,
+    `/api/tasks/${child.id}/relations/parent/${parent.id}`,
+    { method: "POST", body: { version: child.version } },
+  );
+
+  const root = await createIssue("Tree root");
+  const first = await createIssue("Tree first");
+  const second = await createIssue("Tree second");
+  const grandchild = await createIssue("Tree grandchild");
+  const greatGrandchild = await createIssue("Tree great-grandchild");
+  for (const [child, parent] of [
+    [first, root],
+    [second, root],
+    [grandchild, first],
+    [greatGrandchild, grandchild],
+  ]) {
+    assert.equal((await addParent(child, parent)).response.status, 200);
+  }
+
+  const direct = await request(
+    baseUrl,
+    `/api/tasks/${root.id}/tree?direction=descendants&depth=1`,
+  );
+  assert.equal(direct.response.status, 200);
+  assert.equal(direct.body.tree.nodeCount, 3);
+  const directChildIds = direct.body.tree.nodes.slice(1).map((node) => node.id);
+  assert.deepEqual([...directChildIds].sort(), [first.id, second.id].sort());
+  assert.ok(direct.body.tree.nodes.every((node) => (
+    node.depth === 0 ? node.parentId === null : node.parentId === root.id
+  )));
+  const directRepeat = await request(
+    baseUrl,
+    `/api/tasks/${root.id}/tree?direction=descendants&depth=1`,
+  );
+  assert.deepEqual(directRepeat.body.tree.nodes, direct.body.tree.nodes);
+
+  const descendants = await request(
+    baseUrl,
+    `/api/tasks/${root.id}/tree?direction=descendants&depth=3`,
+  );
+  assert.equal(descendants.response.status, 200);
+  assert.deepEqual(descendants.body.tree.nodes.map((node) => node.id), [
+    root.id,
+    ...directChildIds,
+    grandchild.id,
+    greatGrandchild.id,
+  ]);
+  assert.deepEqual(descendants.body.tree.nodes.slice(-2).map((node) => [node.parentId, node.depth]), [
+    [first.id, 2],
+    [grandchild.id, 3],
+  ]);
+  assert.deepEqual(descendants.body.tree.nodes.at(-1).path, [
+    root.id,
+    first.id,
+    grandchild.id,
+    greatGrandchild.id,
+  ]);
+  assert.deepEqual(descendants.body.tree.nodes.at(-1).summary, {
+    identifier: greatGrandchild.identifier,
+    title: "Tree great-grandchild",
+    status: "backlog",
+    priority: "none",
+    archivedAt: null,
+  });
+
+  const ancestors = await request(
+    baseUrl,
+    `/api/tasks/${greatGrandchild.id}/tree?direction=ancestors&depth=3`,
+  );
+  assert.equal(ancestors.response.status, 200);
+  assert.deepEqual(ancestors.body.tree.nodes.map((node) => [node.id, node.parentId, node.depth]), [
+    [greatGrandchild.id, null, 0],
+    [grandchild.id, greatGrandchild.id, 1],
+    [first.id, grandchild.id, 2],
+    [root.id, first.id, 3],
+  ]);
+
+  const reparented = await addParent(await latest(grandchild.id), await latest(second.id));
+  assert.equal(reparented.response.status, 200);
+  const afterReparent = await request(
+    baseUrl,
+    `/api/tasks/${root.id}/tree?direction=descendants&depth=3`,
+  );
+  assert.deepEqual(afterReparent.body.tree.nodes.map((node) => node.id), [
+    root.id,
+    ...directChildIds,
+    grandchild.id,
+    greatGrandchild.id,
+  ]);
+  assert.deepEqual(afterReparent.body.tree.nodes.find((node) => node.id === grandchild.id).path, [
+    root.id,
+    second.id,
+    grandchild.id,
+  ]);
+
+  const invalidDepth = await request(
+    baseUrl,
+    `/api/tasks/${root.id}/tree?direction=descendants&depth=26`,
+  );
+  assert.equal(invalidDepth.response.status, 400);
+  assert.equal(invalidDepth.body.error.code, "INVALID_TREE_QUERY");
+
+  const database = runningApps.at(-1).app.database.database;
+  assert.throws(() => database.prepare(`
+    INSERT INTO task_relations (relation_type, source_task_id, target_task_id, origin, created_at)
+    VALUES ('parent', ?, ?, 'manual', ?)
+  `).run(greatGrandchild.id, root.id, new Date().toISOString()), /RELATION_CYCLE/);
+
+  const otherProject = await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "tree-other", name: "Tree other" },
+  });
+  assert.equal(otherProject.response.status, 201);
+  const external = await createIssue("Tree external", "tree-other");
+  assert.throws(() => database.prepare(`
+    INSERT INTO task_relations (relation_type, source_task_id, target_task_id, origin, created_at)
+    VALUES ('blocks', ?, ?, 'manual', ?)
+  `).run(root.id, external.id, new Date().toISOString()), /CROSS_PROJECT_RELATION/);
 });
 
 test("issue relationship changes are broadcast in realtime", async () => {

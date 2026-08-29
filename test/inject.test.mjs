@@ -255,10 +255,10 @@ test("only a loopback Taskboard iframe can request native automation", () => {
   );
 });
 
-test("issues start a native Codex conversation in the confirmed project with the task title", () => {
+test("issues open an unsent native Codex composer in the confirmed project", () => {
   const createThreadSource = source.slice(
     source.indexOf("async function createThreadForTask"),
-    source.indexOf("async function handleAutomationRequest"),
+    source.indexOf("function buildAutomationHostPayload"),
   );
   assert.match(source, /async function createThreadForTask\(payload\)/);
   assert.match(source, /async function nativeProjectContext\(\)/);
@@ -281,34 +281,17 @@ test("issues start a native Codex conversation in the confirmed project with the
   assert.match(source, /await waitForNativeProject\(targetRoot\)/);
   assert.match(
     createThreadSource,
-    /if \(codexProjectKind === "remote"\) \{[\s\S]*?codexHostId = typeof payload\?\.codexHostId[\s\S]*?codexProjectWorkspacePath[\s\S]*?await waitForRemoteProject\(requestedProjectId, codexHostId, codexProjectWorkspacePath\);\s*targetRoot = codexProjectWorkspacePath;/,
+    /if \(!projectless && codexProjectKind === "remote"\) \{[\s\S]*?codexHostId = typeof payload\?\.codexHostId[\s\S]*?codexProjectWorkspacePath[\s\S]*?await waitForRemoteProject\(requestedProjectId, codexHostId, codexProjectWorkspacePath\);/,
   );
-  assert.match(source, /const previousThreadId = normalizeThreadId/);
   assert.match(source, /const focusComposerNonce = crypto\.randomUUID\(\)/);
-  assert.match(source, /state: \{\s*focusComposerNonce,\s*prefillPrompt: instruction,/);
-  assert.match(source, /const HOST_REQUEST_TIMEOUT_MS = 12_000/);
-  assert.match(source, /const TASK_CONVERSATION_REQUEST_TIMEOUT_MS = 75_000/);
-  assert.match(source, /function requestHost\(action, payload = \{\}, timeoutMs = HOST_REQUEST_TIMEOUT_MS\)/);
-  assert.match(source, /requestHostTaskConversationStart\(\{\s*taskId,\s*previousThreadId,\s*codexHostId,\s*projectless,\s*targetRoot,\s*instruction,\s*title,/);
-  assert.match(
-    source,
-    /requestHost\("start-task-conversation", \{\s*taskId,\s*previousThreadId,\s*codexHostId,\s*projectless,\s*targetRoot,\s*instruction,\s*title,\s*\}, TASK_CONVERSATION_REQUEST_TIMEOUT_MS\)/,
-  );
-  assert.match(source, /lastNativeThreadId = startedThreadId/);
-  assert.match(source, /type: "taskboard:thread-prepared", payload: \{ taskId, threadId: started\.threadId \}/);
-  assert.match(webApp, /Promise\.all\(\[getTask\(task\.id\), listComments\(task\.id\)\]\)/);
-  assert.match(webApp, /moveTaskRequest\(latestTask, "in_progress", undefined, null\)/);
-  assert.match(webApp, /pendingRemoteThreadClaimsRef\.current\.set/);
-  assert.match(webApp, /完整描述[\s\S]*全部评论[\s\S]*开发上下文/);
-  assert.match(webApp, /远程 worker 不得运行 taskctl/);
+  assert.match(createThreadSource, /type: "navigate-to-route",\s*path: "\/",\s*state: \{\s*focusComposerNonce,\s*prefillPrompt: instruction,/);
+  assert.match(createThreadSource, /type: "taskboard:thread-prepared", payload: \{ taskId \}/);
+  assert.doesNotMatch(createThreadSource, /start-task-conversation|previousThreadId|threadId:/);
   assert.match(webApp, /title: task\.title,/);
+  assert.match(webApp, /instruction: embeddedInstruction,/);
   assert.match(webApp, /type: "taskboard:create-thread"/);
-  assert.match(webApp, /codexProjectWorkspacePath: identity\.workspacePath/);
-  assert.match(webApp, /workspacePath: identity\.workspacePath/);
-  assert.match(webApp, /const binding: CodexThreadBinding = \{ threadId, \.\.\.pending\.identity \}/);
-  assert.match(webApp, /moveTaskRequest\([\s\S]*pending\.claimedTask,[\s\S]*"in_progress",[\s\S]*binding/);
-  assert.match(webApp, /pending\.previousTask\.status[\s\S]*binding/);
-  assert.match(webApp, /type: "taskboard:open-thread",[\s\S]*?payload: binding/);
+  assert.match(webApp, /codexProjectWorkspacePath: codexProjectContext\?\.workspacePath/);
+  assert.match(webApp, /workspacePath,/);
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {
@@ -366,16 +349,12 @@ test("host navigation follows Codex's renderer message bus", () => {
   assert.doesNotMatch(source, /new CustomEvent\("codex-message-from-view"/);
 });
 
-test("the standalone web page reports that new Codex conversations require the embedded Taskboard", () => {
-  assert.match(
-    webApp,
-    /setActionError\(\[\s*"在新对话打开仅可在 Codex 内嵌任务面板中使用。请从 Codex 侧栏打开任务面板后重试。",/,
-  );
-  assert.match(
-    webApp,
-    /"Open in new conversation is available only in the embedded Codex Taskboard\. Open Taskboard from the Codex sidebar and try again\.",/,
-  );
-  assert.doesNotMatch(webApp, /codex:\/\/new/);
+test("the standalone web page always opens a project-scoped Codex composer", () => {
+  assert.doesNotMatch(webApp, /standalone && task\.threadBinding[\s\S]*?openThread\(task\.threadBinding\)/);
+  assert.doesNotMatch(webApp, /standalone && task\.legacyLocalThreadId[\s\S]*?openLegacyLocalThread\(task\.legacyLocalThreadId\)/);
+  assert.match(webApp, /new URL\("codex:\/\/threads\/new"\)/);
+  assert.match(webApp, /deepLink\.searchParams\.set\("path", workspacePath\)/);
+  assert.match(webApp, /deepLink\.searchParams\.set\("prompt", embeddedInstruction\)/);
 });
 
 test("host context captures all Codex projects even when the sidebar section is collapsed", () => {
@@ -442,6 +421,7 @@ test("Codex bootstrap metadata resolves local roots and SSH remote roots asynchr
         projectKind: "remote",
         workspacePath: "/srv/example/project",
         hostId: "remote-ssh-discovered:example",
+        name: "remote-project",
       }],
     ],
   );

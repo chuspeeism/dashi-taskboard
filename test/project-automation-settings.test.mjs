@@ -30,7 +30,9 @@ test("project automation state is device-local and scoped by taskboard project",
   assert.match(appSource, /codexHostId: string/);
   assert.match(appSource, /workspacePath: string/);
   assert.match(appSource, /type AutomationIntervalMinutes = 5 \| 10 \| 15 \| 30 \| 60/);
-  assert.match(appSource, /DEFAULT_AUTOMATION_OPTIONS[\s\S]*?model: "gpt-5\.5"[\s\S]*?reasoningEffort: "high"/);
+  assert.match(appSource, /getAiChatCatalog\(\s*selectedProject\.id,\s*controller\.signal,\s*selectedCodexProjectIdentity,\s*\)/);
+  assert.match(appSource, /defaultModel\.slug/);
+  assert.match(appSource, /defaultModel\.defaultReasoningEffort/);
   assert.match(appSource, /taskboardStorage\.getItem\(PROJECT_AUTOMATIONS_KEY\)/);
   assert.match(appSource, /taskboardStorage\.setItem\(PROJECT_AUTOMATIONS_KEY, JSON\.stringify\(next\)\)/);
   assert.match(appSource, /projectAutomations\[selectedProjectId\]/);
@@ -106,7 +108,7 @@ test("the project navigation automation menu owns the icon, fields, and accessib
   assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
   assert.match(menuSource, /自动认领开关/);
   assert.match(menuSource, /5, 10, 15, 30, 60/);
-  assert.match(menuSource, /AUTOMATION_MODELS\.map/);
+  assert.match(menuSource, /models\.map/);
   assert.match(menuSource, /EFFORT_LABELS\[effort\]/);
   assert.match(menuSource, /createPortal/);
   assert.match(menuSource, /window\.addEventListener\("resize"/);
@@ -143,7 +145,7 @@ test("the automation menu reuses the board switches and keeps form focus chrome 
 
 test("unavailable automation state has one notice, clears stale errors, and cannot change", () => {
   assert.match(menuSource, /error && error !== unavailableReason/);
-  assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
+  assert.match(menuSource, /const disabled = pending \|\| !selectedModel \|\| Boolean\(unavailableReason\)/);
   assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 5);
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),
@@ -158,11 +160,12 @@ test("unavailable automation state has one notice, clears stale errors, and cann
 
 test("automation changes submit immediately with model-specific effort normalization", () => {
   assert.match(menuSource, /onChange: \(options: AutomationOptions\) => void/);
-  assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
+  assert.match(menuSource, /const disabled = pending \|\| !selectedModel \|\| Boolean\(unavailableReason\)/);
   assert.match(menuSource, /const submitChange = \(next: AutomationOptions\) => \{[\s\S]*?setDraft\(next\);[\s\S]*?onChange\(next\);[\s\S]*?\}/);
-  assert.match(menuSource, /submitChange\(withAutomationModel\(draft, value as AutomationModel\)\)/);
-  assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map/);
-  assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map[\s\S]*?label: text\(\.\.\.EFFORT_LABELS\[effort\]\)/);
+  assert.match(menuSource, /const model = models\.find\(\(candidate\) => candidate\.slug === value\)/);
+  assert.match(menuSource, /model\.supportedReasoningEfforts\.includes\(draft\.reasoningEffort\)/);
+  assert.match(menuSource, /selectedModel\.supportedReasoningEfforts\.map/);
+  assert.match(menuSource, /EFFORT_LABELS\[effort\] \? text\(\.\.\.EFFORT_LABELS\[effort\]\) : effort/);
   assert.match(menuSource, /low: \["轻度", "Low"\]/);
   assert.match(menuSource, /xhigh: \["极高 \(xhigh\)", "Extra high \(xhigh\)"\]/);
   assert.match(menuSource, /max: \["最高", "Maximum"\]/);
@@ -178,7 +181,7 @@ test("pending completion reconciles the optimistic draft to confirmed host state
   assert.match(menuSource, /const wasPendingRef = useRef\(pending\)/);
   assert.match(
     menuSource,
-    /if \(wasPendingRef\.current && !pending\) \{\s*setDraft\(\{ \.\.\.DEFAULT_OPTIONS, \.\.\.automation \}\);\s*\}/,
+    /if \(wasPendingRef\.current && !pending\) \{\s*setDraft\(automationOptions\(models, automation\)\);\s*\}/,
   );
   assert.match(menuSource, /wasPendingRef\.current = pending/);
   assert.match(menuSource, /disabled=\{disabled\}/);

@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const globalStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
-const workflowStyles = await readFile(new URL("../web/src/components/workflow.css", import.meta.url), "utf8");
 
 function blocksForSelector(styles, selector) {
   return [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
@@ -38,7 +37,6 @@ test("editable-control wrappers do not add focus chrome", () => {
   for (const selector of [
     ".project-card:focus-within",
     ".detail-property-row:focus-within",
-    ".workflow-node-search:focus-within",
     ".comment-composer:focus-within",
   ]) {
     assertNoFocusChrome(globalStyles, selector);
@@ -49,17 +47,4 @@ test("editable-control wrappers do not add focus chrome", () => {
     /(?:^|;)\s*(?:border(?:-color)?|box-shadow|outline)\s*:/,
     ".search-field:focus-within must not alter border, shadow or outline",
   );
-
-  assert.equal(blocksForSelector(globalStyles, ".workflow-tab.is-renaming input:focus").length, 0);
-  assert.equal(blocksForSelector(globalStyles, ".workflow-config-section input:focus").length, 0);
-  assert.equal(blocksForSelector(globalStyles, ".workflow-config-section textarea:focus").length, 0);
-  assert.equal(blocksForSelector(globalStyles, ".workflow-config-section select:focus").length, 0);
-});
-
-test("workflow-local styles do not reintroduce input focus chrome", () => {
-  assertNoFocusChrome(workflowStyles, ".workflow-step-picker-search:focus-within");
-  assert.equal(blocksForSelector(workflowStyles, ".workflow-tab.is-renaming input:focus").length, 0);
-  assert.equal(blocksForSelector(workflowStyles, ".workflow-config-section input:focus").length, 0);
-  assert.equal(blocksForSelector(workflowStyles, ".workflow-config-section textarea:focus").length, 0);
-  assert.equal(blocksForSelector(workflowStyles, ".workflow-config-section select:focus").length, 0);
 });

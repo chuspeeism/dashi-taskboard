@@ -13,12 +13,13 @@ import type {
 } from "../taskConversations";
 import type { ActorIdentity, ProjectSummary, Task } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { LinearPriorityIcon } from "./LinearIcon";
+import { PriorityIcon } from "./SemanticIcons";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 
 interface DashboardViewProps {
   projectId: string;
   projectCreatedAt: string | null;
+  isAllProjects: boolean;
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
   currentUser: ActorIdentity;
@@ -165,6 +166,7 @@ function shortDate(value: string, locale: string) {
 export function DashboardView({
   projectId,
   projectCreatedAt,
+  isAllProjects,
   tasks,
   presentations,
   currentUser,
@@ -190,6 +192,11 @@ export function DashboardView({
   }, [animateSummaryOnMount, onSummaryAnimationStart, projectId]);
 
   useEffect(() => {
+    if (isAllProjects) {
+      setProjectSummary(null);
+      setSummaryLoadFailed(false);
+      return undefined;
+    }
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -217,7 +224,7 @@ export function DashboardView({
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [projectId]);
+  }, [isAllProjects, projectId]);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -237,7 +244,16 @@ export function DashboardView({
   const completionRate = tasks.length
     ? Math.round((completedTasks.length / tasks.length) * 100)
     : 0;
-  const progressData = buildProgressData(tasks, todayValue, projectCreatedAt);
+  const aggregateCreatedAt = isAllProjects
+    ? tasks.reduce<string | null>((earliest, task) => (
+        !earliest || task.createdAt < earliest ? task.createdAt : earliest
+      ), null)
+    : null;
+  const progressData = buildProgressData(
+    tasks,
+    todayValue,
+    projectCreatedAt ?? aggregateCreatedAt,
+  );
   const progressChart = (() => {
     const left = 0;
     const right = 426;
@@ -412,13 +428,23 @@ export function DashboardView({
     },
   ];
 
-  const summaryBody = projectSummary?.summary
-    ?? (summaryLoadFailed || projectSummary?.error
-      ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
-      : text(
-          "Codex 正在整理当前项目的进展、风险和下一步重点…",
-          "Codex is reviewing the project's progress, risks, and next steps…",
-        ));
+  const summaryBody = isAllProjects
+    ? text(
+        `所有项目共有 ${tasks.length} 个议题，${completedTasks.length} 个已完成，${activeTasks.length} 个尚未结束；当前 ${tasks.filter((task) => task.status === "blocked").length} 个遇到阻碍，${overdueTasks.length} 个已逾期。`,
+        `Across all projects, ${tasks.length} issues are tracked: ${completedTasks.length} completed and ${activeTasks.length} still open; ${tasks.filter((task) => task.status === "blocked").length} are blocked and ${overdueTasks.length} overdue.`,
+      )
+    : projectSummary?.summary
+      ?? (projectSummary?.refreshing
+        ? text(
+            "Codex 正在整理当前项目的进展、风险和下一步重点…",
+            "Codex is reviewing the project's progress, risks, and next steps…",
+          )
+        : summaryLoadFailed || projectSummary?.error
+          ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
+          : text(
+              "Codex 正在整理当前项目的进展、风险和下一步重点…",
+              "Codex is reviewing the project's progress, risks, and next steps…",
+            ));
   const hour = new Date().getHours();
   const greeting = hour < 12
     ? text("上午好", "Good morning")
@@ -430,7 +456,7 @@ export function DashboardView({
     `${greeting}，${currentUser.name}，今天是${summaryDate}，${summaryBody}`,
     `${greeting}, ${currentUser.name}. Today is ${summaryDate}. ${summaryBody}`,
   );
-  const summaryReady = projectSummary !== null || summaryLoadFailed;
+  const summaryReady = isAllProjects || projectSummary !== null || summaryLoadFailed;
 
   useEffect(() => {
     if (!summaryReady) {
@@ -530,7 +556,7 @@ export function DashboardView({
               {priorityCounts.map((item) => (
                 <div className={`dashboard-priority-row priority-${item.priority}`} key={item.priority}>
                   <span className="dashboard-priority-name">
-                    <LinearPriorityIcon priority={item.priority} />
+                    <PriorityIcon priority={item.priority} size={13} />
                     {item.label}
                   </span>
                   <span className="dashboard-priority-track">

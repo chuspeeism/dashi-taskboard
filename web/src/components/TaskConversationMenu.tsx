@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } fro
 import { createPortal } from "react-dom";
 import type { TaskConversationItem } from "../taskConversations";
 import { useTaskboardI18n } from "../i18n";
-import { TaskboardIcon } from "./TaskboardIcon";
+import { ConversationIcon } from "./SemanticIcons";
 
 interface TaskConversationMenuProps {
   conversations: TaskConversationItem[];
@@ -123,7 +123,7 @@ export function TaskConversationMenu({
           else openConversation(conversations[0]);
         }}
       >
-        <TaskboardIcon name="conversation" />
+        <ConversationIcon color="currentColor" size={16} />
         {multiple && <span>+{conversations.length}</span>}
       </button>
       {open && multiple && createPortal(
@@ -148,7 +148,7 @@ export function TaskConversationMenu({
               onClick={() => openConversation(conversation)}
             >
               <span className="task-conversation-menu-icon">
-                <TaskboardIcon name="conversation" />
+                <ConversationIcon color="currentColor" size={13} />
               </span>
               <span className="task-conversation-menu-copy">
                 <strong>{conversation.title}</strong>
