@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type { DragEvent } from "react";
-import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
-import { taskStatusLabel, useTaskboardI18n } from "../i18n";
+import type { ActorIdentity, Task, TaskDraft, TaskPriority, TaskStatus } from "../types";
+import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
 import { TaskCard } from "./TaskCard";
-import { PlusIcon, StatusIcon } from "./SemanticIcons";
+import { PlusIcon, PriorityIcon, StatusIcon } from "./SemanticIcons";
+
+const PRIORITY_GROUPS: TaskPriority[] = ["urgent", "high", "medium", "low", "none"];
 
 export const STATUS_DETAILS: Record<
   TaskStatus,
@@ -86,6 +88,7 @@ export function BoardColumn({
   const details = STATUS_DETAILS[status];
   const label = taskStatusLabel(language, status);
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
+  const [collapsedPriorities, setCollapsedPriorities] = useState<Partial<Record<TaskPriority, boolean>>>({});
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
   const remainingIndexes = new Map(remainingTasks.map((task, index) => [task.id, index]));
@@ -170,33 +173,57 @@ export function BoardColumn({
       </header>
 
       <div className="column-list" ref={scrollRef}>
-        {tasks.map((task) => {
-          const dragShift = getTaskDragShift(task);
+        {PRIORITY_GROUPS.map((priority) => {
+          const priorityTasks = tasks.filter((task) => task.priority === priority);
+          const isCollapsed = collapsedPriorities[priority] ?? false;
           return (
-            <TaskCard
-              key={task.id}
-              task={task}
-              presentation={presentations[task.id]}
-              now={now}
-              isDragging={draggedTaskId === task.id}
-              dragShift={dragShift}
-              isMoving={movingTaskId === task.id}
-              isSettling={settlingTaskId === task.id}
-              isContextMenuOpen={contextMenuTaskId === task.id}
-              availableLabels={availableLabels}
-              projectName={projectNames?.[task.projectId]}
-              currentUser={currentUser}
-              showCover={showCover}
-              showBody={showBody}
-              onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
-              onEdit={onEdit}
-              onUpdate={onUpdate}
-              onComplete={onComplete}
-              onContextMenu={onContextMenu}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-              onOpenConversation={onOpenConversation}
-            />
+            <section className={`priority-group priority-group-${priority}`} key={priority}>
+              <button
+                type="button"
+                className="priority-group-header"
+                aria-expanded={!isCollapsed}
+                onClick={() => setCollapsedPriorities((current) => ({ ...current, [priority]: !isCollapsed }))}
+              >
+                <span className="priority-group-title">
+                  <PriorityIcon priority={priority} size={14} />
+                  <span>{taskPriorityLabel(language, priority)}</span>
+                </span>
+                <span className="priority-group-count">{priorityTasks.length}</span>
+              </button>
+              {!isCollapsed && (
+                <div className="priority-group-list">
+                  {priorityTasks.map((task) => {
+                    const dragShift = getTaskDragShift(task);
+                    return (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        presentation={presentations[task.id]}
+                        now={now}
+                        isDragging={draggedTaskId === task.id}
+                        dragShift={dragShift}
+                        isMoving={movingTaskId === task.id}
+                        isSettling={settlingTaskId === task.id}
+                        isContextMenuOpen={contextMenuTaskId === task.id}
+                        availableLabels={availableLabels}
+                        projectName={projectNames?.[task.projectId]}
+                        currentUser={currentUser}
+                        showCover={showCover}
+                        showBody={showBody}
+                        onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
+                        onEdit={onEdit}
+                        onUpdate={onUpdate}
+                        onComplete={onComplete}
+                        onContextMenu={onContextMenu}
+                        onDragStart={onDragStart}
+                        onDragEnd={onDragEnd}
+                        onOpenConversation={onOpenConversation}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           );
         })}
         {tasks.length === 0 && <div className="column-empty">{emptyMessage}</div>}
