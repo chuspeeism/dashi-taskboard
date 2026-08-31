@@ -1578,6 +1578,42 @@ export function App() {
     window.history.pushState(window.history.state, "", detailUrl);
   }
 
+  function inheritedLabelsForChild(parent: Task): string[] {
+    const taskById = new Map(tasksRef.current.map((candidate) => [candidate.id, candidate]));
+    const labels: string[] = [];
+    const visited = new Set<string>();
+    let current: Task | undefined = parent;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      labels.push(...current.labels);
+      const parentId: string | undefined = current.relations.parent?.id;
+      current = parentId ? taskById.get(parentId) : undefined;
+    }
+    return [...new Set(labels)];
+  }
+
+  function openChildTaskEditor(parent: Task) {
+    setNewTaskDraft({
+      projectId: selectedProjectId,
+      targetProjectId: parent.projectId,
+      draft: {
+        title: "",
+        descriptionSegments: [],
+        status: "todo",
+        priority: "none",
+        assignee: currentUser,
+        selectedLabels: inheritedLabelsForChild(parent),
+        developmentContext: null,
+        startDate: "",
+        dueDate: "",
+        recurrence: null,
+        attachments: [],
+        relations: { parentId: parent.id, relatedIds: [], subIssueIds: [] },
+      },
+    });
+    setEditor({ task: null, status: "todo", projectId: parent.projectId });
+  }
+
   function closeTaskDetail() {
     const sourceProjectId = detailSourceProjectIdRef.current ?? selectedProjectId;
     detailSourceProjectIdRef.current = null;
@@ -3702,6 +3738,7 @@ export function App() {
             attachmentsRevision={attachmentsRevision}
             onCreateLabel={persistProjectLabel}
             onDeleteLabel={removeProjectLabel}
+            onCreateChild={openChildTaskEditor}
             onUpdate={(current, changes) => updateTaskProperties(current, changes)}
             onOpenTask={openTaskDetail}
             onAddRelation={(current, type, relatedTaskId, origin) => (

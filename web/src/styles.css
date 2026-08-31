@@ -3456,6 +3456,14 @@ kbd {
   margin-bottom: 5px;
 }
 
+.issue-sub-issue-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .issue-sub-issues > header > div:first-child,
 .sub-issue-summary {
   display: flex;

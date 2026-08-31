@@ -112,6 +112,7 @@ interface TaskDetailProps {
   attachmentsRevision: number;
   onCreateLabel: (label: string) => Promise<void>;
   onDeleteLabel: (label: string) => Promise<void>;
+  onCreateChild: (parent: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
   onOpenTask: (task: TaskRelationSummary) => void;
   onAddRelation: (
@@ -381,6 +382,7 @@ export function TaskDetail({
   attachmentsRevision,
   onCreateLabel,
   onDeleteLabel,
+  onCreateChild,
   onUpdate,
   onOpenTask,
   onAddRelation,
@@ -1233,6 +1235,7 @@ export function TaskDetail({
             <IssueSubIssues
               task={currentTask}
               tasks={tasks}
+              onCreateChild={() => onCreateChild(currentTask)}
               onOpenTask={onOpenTask}
               onAddRelation={(anchor, type, relatedTaskId) => applyRelationMutation(
                 () => onAddRelation(anchor, type, relatedTaskId),
