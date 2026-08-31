@@ -4,12 +4,10 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { resolvePersistedAttachmentUrl } from "../api";
 import {
-  TASK_PRIORITIES,
   type ActorIdentity,
   type AssigneeTarget,
   type Task,
   type TaskDraft,
-  type TaskPriority,
 } from "../types";
 import { labelPresentation } from "../labels";
 import { taskPriorityLabel, useTaskboardI18n } from "../i18n";
@@ -20,7 +18,7 @@ import type {
 } from "../taskConversations";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearIcon } from "./LinearIcon";
-import { DueDateIcon, PriorityIcon, ProjectIcon } from "./SemanticIcons";
+import { DueDateIcon, ProjectIcon } from "./SemanticIcons";
 import { LabelPicker } from "./LabelPicker";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskConversationMenu } from "./TaskConversationMenu";
@@ -270,45 +268,6 @@ function TaskLabels({ task }: { task: Task }) {
   );
 }
 
-function PriorityControl({
-  task,
-  disabled,
-  open,
-  onOpenChange,
-  onChange,
-}: {
-  task: Task;
-  disabled: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onChange: (priority: TaskPriority) => void;
-}) {
-  const { language, text } = useTaskboardI18n();
-  const displayIdentifier = task.externalKey ?? task.identifier;
-  return (
-    <TaskPropertyPicker
-      value={task.priority}
-      options={TASK_PRIORITIES.map((priority) => ({
-        value: priority,
-        label: taskPriorityLabel(language, priority),
-        icon: <PriorityIcon priority={priority} size={14} />,
-        className: `priority-${priority}`,
-      }))}
-      open={open}
-      disabled={disabled}
-      className="card-property-control"
-      triggerClassName={`priority-chip priority-chip-${task.priority}`}
-      ariaLabel={text(`${displayIdentifier} 优先级`, `${displayIdentifier} priority`)}
-      title={text(
-        `优先级：${taskPriorityLabel(language, task.priority)}`,
-        `Priority: ${taskPriorityLabel(language, task.priority)}`,
-      )}
-      onOpenChange={onOpenChange}
-      onChange={onChange}
-    />
-  );
-}
-
 function DueDateControl({
   task,
   disabled,
@@ -412,10 +371,10 @@ export function TaskCard({
   onDragEnd,
   onOpenConversation,
 }: TaskCardProps) {
-  const { locale, text } = useTaskboardI18n();
+  const { language, locale, text } = useTaskboardI18n();
   const displayIdentifier = task.externalKey ?? task.identifier;
-  const [propertyMenu, setPropertyMenu] = useState<"priority" | "labels" | "assignee" | null>(null);
-  const [savingProperty, setSavingProperty] = useState<"priority" | "labels" | "dueDate" | "assignee" | null>(null);
+  const [propertyMenu, setPropertyMenu] = useState<"labels" | "assignee" | null>(null);
+  const [savingProperty, setSavingProperty] = useState<"labels" | "dueDate" | "assignee" | null>(null);
   const creator: ActorIdentity = {
     type: task.creatorType,
     id: task.creatorId,
@@ -436,7 +395,7 @@ export function TaskCard({
     () => showBody ? taskBodyText(task.description) : "",
     [showBody, task.description],
   );
-  const hasProperties = task.priority !== "none" || task.labels.length > 0 || task.dueDate;
+  const hasProperties = task.labels.length > 0 || task.dueDate;
   const showsProperties = Boolean(projectName)
     || (!processingCard && (hasProperties || showsInlineParticipants || showsConversation));
   const propertyDisabled = savingProperty !== null;
@@ -450,7 +409,7 @@ export function TaskCard({
 
   return (
     <article
-      className={`task-card task-card-${variant} status-${task.status}${processingCard ? " is-processing-card" : ""}${processingCard && presentation.processing.running ? " is-running-card" : ""}${image ? " has-media" : ""}${presentation.unread ? " is-unread" : ""}${isDragging ? " is-dragging" : ""}${dragShift ? " is-drag-shifted" : ""}${isMoving ? " is-moving" : ""}${isSettling ? " is-settling" : ""}${isContextMenuOpen ? " is-context-open" : ""}${propertyMenu ? " is-property-menu-open" : ""}`}
+      className={`task-card task-card-${variant} status-${task.status} priority-${task.priority}${processingCard ? " is-processing-card" : ""}${processingCard && presentation.processing.running ? " is-running-card" : ""}${image ? " has-media" : ""}${presentation.unread ? " is-unread" : ""}${isDragging ? " is-dragging" : ""}${dragShift ? " is-drag-shifted" : ""}${isMoving ? " is-moving" : ""}${isSettling ? " is-settling" : ""}${isContextMenuOpen ? " is-context-open" : ""}${propertyMenu ? " is-property-menu-open" : ""}`}
       style={{
         viewTransitionName: task.status === "in_review" ? `review-task-${task.id}` : "none",
         ...(dragShift ? { transform: `translate3d(0, ${dragShift}px, 0)` } : {}),
@@ -477,6 +436,12 @@ export function TaskCard({
         type="button"
         aria-label={text(`打开 ${displayIdentifier}: ${task.title}`, `Open ${displayIdentifier}: ${task.title}`)}
         onClick={() => onEdit(task)}
+      />
+
+      <span
+        className="task-card-priority-indicator"
+        aria-label={text(`优先级：${taskPriorityLabel(language, task.priority)}`, `Priority: ${taskPriorityLabel(language, task.priority)}`)}
+        title={text(`优先级：${taskPriorityLabel(language, task.priority)}`, `Priority: ${taskPriorityLabel(language, task.priority)}`)}
       />
 
       <div className="card-topline">
@@ -536,15 +501,6 @@ export function TaskCard({
               <ProjectIcon color="currentColor" />
               <span>{projectName}</span>
             </span>
-          )}
-          {!processingCard && task.priority !== "none" && (
-            <PriorityControl
-              task={task}
-              disabled={propertyDisabled}
-              open={propertyMenu === "priority"}
-              onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
-              onChange={(priority) => updateProperty({ priority }, "priority")}
-            />
           )}
           {!processingCard && task.labels.length > 0 && (
             <LabelPicker

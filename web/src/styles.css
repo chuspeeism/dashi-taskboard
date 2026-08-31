@@ -27,10 +27,10 @@
   --danger-soft: #fff0f0;
   --warning: #f0bf00;
   --success: #43bc58;
-  --priority-urgent: #ff7236;
+  --priority-urgent: #f34e52;
   --priority-high: #ff7236;
-  --priority-medium: var(--text-tertiary);
-  --priority-low: var(--text-tertiary);
+  --priority-medium: #317cff;
+  --priority-low: #43bc58;
   --priority-none: var(--text-tertiary);
   --status-backlog: #9e9ea1;
   --status-todo: #9e9ea1;
@@ -2345,8 +2345,8 @@ kbd {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 24px;
-  padding: 2px 4px;
+  min-height: 18px;
+  padding: 0 4px;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -2369,7 +2369,7 @@ kbd {
   overflow: hidden;
   font-size: 11px;
   font-weight: 550;
-  line-height: 16px;
+  line-height: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9157,6 +9157,24 @@ kbd {
 
 .task-card > :not(.task-card-open) {
   z-index: 2;
+}
+
+.task-card {
+  --task-card-priority-color: var(--priority-none);
+}
+
+.task-card.priority-urgent { --task-card-priority-color: var(--priority-urgent); }
+.task-card.priority-high { --task-card-priority-color: var(--priority-high); }
+.task-card.priority-medium { --task-card-priority-color: var(--priority-medium); }
+.task-card.priority-low { --task-card-priority-color: var(--priority-low); }
+
+.task-card > .task-card-priority-indicator {
+  position: absolute;
+  z-index: 3;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--task-card-priority-color);
+  pointer-events: none;
 }
 
 .card-topline {
