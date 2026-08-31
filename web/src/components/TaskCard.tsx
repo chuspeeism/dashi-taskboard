@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -414,6 +422,13 @@ export function TaskCard({
 }: TaskCardProps) {
   const { language, locale, text } = useTaskboardI18n();
   const displayIdentifier = task.externalKey ?? task.identifier;
+  const pointerDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    dragged: boolean;
+  } | null>(null);
+  const suppressOpenRef = useRef(false);
   const [propertyMenu, setPropertyMenu] = useState<"labels" | "assignee" | "priority" | null>(null);
   const [savingProperty, setSavingProperty] = useState<"labels" | "dueDate" | "assignee" | "priority" | null>(null);
   const creator: ActorIdentity = {
@@ -448,6 +463,69 @@ export function TaskCard({
       .finally(() => setSavingProperty((current) => current === property ? null : current));
   }
 
+  function startDrag(event: DragEvent<HTMLElement>) {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", task.id);
+    event.dataTransfer.setData("application/x-taskboard-task", task.id);
+    const card = event.currentTarget.closest<HTMLElement>(".task-card") ?? event.currentTarget;
+    onDragStart(task, card.offsetHeight);
+  }
+
+  function startPointerDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    pointerDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragged: false,
+    };
+    window.addEventListener("pointermove", trackPointerDrag);
+    window.addEventListener("pointerup", finishPointerDrag);
+    window.addEventListener("pointercancel", cancelPointerDrag);
+  }
+
+  function trackPointerDrag(event: PointerEvent) {
+    const pointer = pointerDragRef.current;
+    if (!pointer || pointer.pointerId !== event.pointerId || pointer.dragged) return;
+    pointer.dragged = Math.hypot(
+      event.clientX - pointer.startX,
+      event.clientY - pointer.startY,
+    ) >= 6;
+  }
+
+  function cancelPointerDrag() {
+    pointerDragRef.current = null;
+    window.removeEventListener("pointermove", trackPointerDrag);
+    window.removeEventListener("pointerup", finishPointerDrag);
+    window.removeEventListener("pointercancel", cancelPointerDrag);
+  }
+
+  function finishPointerDrag(event: PointerEvent) {
+    const pointer = pointerDragRef.current;
+    if (!pointer || pointer.pointerId !== event.pointerId) return;
+    cancelPointerDrag();
+    if (!pointer.dragged) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    suppressOpenRef.current = true;
+    window.setTimeout(() => { suppressOpenRef.current = false; }, 0);
+
+    const group = document.elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-priority-group]");
+    const priority = group?.dataset.priorityGroup as TaskPriority | undefined;
+    if (
+      group?.dataset.status !== task.status
+      || !priority
+      || !TASK_PRIORITIES.includes(priority)
+      || priority === task.priority
+    ) return;
+
+    onDragEnd();
+    updateProperty({ priority }, "priority");
+  }
+
   return (
     <article
       className={`task-card task-card-${variant} status-${task.status} priority-${task.priority}${processingCard ? " is-processing-card" : ""}${processingCard && presentation.processing.running ? " is-running-card" : ""}${image ? " has-media" : ""}${presentation.unread ? " is-unread" : ""}${isDragging ? " is-dragging" : ""}${dragShift ? " is-drag-shifted" : ""}${isMoving ? " is-moving" : ""}${isSettling ? " is-settling" : ""}${isContextMenuOpen ? " is-context-open" : ""}${propertyMenu ? " is-property-menu-open" : ""}`}
@@ -464,19 +542,20 @@ export function TaskCard({
         event.stopPropagation();
         onContextMenu(task, { x: event.clientX, y: event.clientY });
       }}
-      onDragStart={(event) => {
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", task.id);
-        event.dataTransfer.setData("application/x-taskboard-task", task.id);
-        onDragStart(task, event.currentTarget.offsetHeight);
-      }}
+      onDragStart={startDrag}
       onDragEnd={onDragEnd}
     >
       <button
         className="task-card-open"
         type="button"
+        draggable={!isMoving}
         aria-label={text(`打开 ${displayIdentifier}: ${task.title}`, `Open ${displayIdentifier}: ${task.title}`)}
-        onClick={() => onEdit(task)}
+        onClick={() => {
+          if (!suppressOpenRef.current) onEdit(task);
+        }}
+        onDragStart={startDrag}
+        onDragEnd={onDragEnd}
+        onPointerDown={startPointerDrag}
       />
 
       <PriorityControl

@@ -139,6 +139,7 @@ import {
   type Task,
   type TaskboardMetadata,
   type TaskDraft,
+  type TaskPriority,
   type TaskStatus,
 } from "./types";
 // The poller stays in ESM JavaScript so its lifecycle can be tested directly with node:test.
@@ -2644,7 +2645,12 @@ export function App() {
     setDropTarget(null);
   }
 
-  function finishTaskDrop(destination: TaskStatus, taskId: string, beforeTaskId: string | null = null) {
+  function finishTaskDrop(
+    destination: TaskStatus,
+    taskId: string,
+    beforeTaskId: string | null = null,
+    targetPriority?: TaskPriority,
+  ) {
     const task = tasks.find((candidate) => candidate.id === taskId);
     setDraggedTaskId(null);
     setDraggedTaskHeight(0);
@@ -2654,6 +2660,10 @@ export function App() {
     window.setTimeout(() => {
       setSettlingTaskId((current) => current === task.id ? null : current);
     }, 220);
+    if (task.status === destination && targetPriority !== undefined && task.priority !== targetPriority) {
+      void updateTaskProperties(task, { priority: targetPriority });
+      return;
+    }
     void moveTask(task, destination, beforeTaskId, true);
   }
 

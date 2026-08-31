@@ -49,7 +49,12 @@ interface BoardColumnProps {
   onDragStart: (task: Task, height: number) => void;
   onDragEnd: () => void;
   onDragEnter: (status: TaskStatus) => void;
-  onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
+  onDrop: (
+    status: TaskStatus,
+    taskId: string,
+    beforeTaskId: string | null,
+    priority?: TaskPriority,
+  ) => void;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
@@ -88,6 +93,7 @@ export function BoardColumn({
   const details = STATUS_DETAILS[status];
   const label = taskStatusLabel(language, status);
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
+  const [dropPriority, setDropPriority] = useState<TaskPriority | null>(null);
   const [collapsedPriorities, setCollapsedPriorities] = useState<Partial<Record<TaskPriority, boolean>>>({});
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
@@ -100,7 +106,10 @@ export function BoardColumn({
   const dragDistance = draggedTaskHeight + 8;
 
   useEffect(() => {
-    if (!isDropTarget || !draggedTaskId) setDropBeforeTaskId(undefined);
+    if (!isDropTarget || !draggedTaskId) {
+      setDropBeforeTaskId(undefined);
+      setDropPriority(null);
+    }
   }, [draggedTaskId, isDropTarget]);
 
   function findDropBefore(container: HTMLElement, clientY: number): string | null {
@@ -117,6 +126,20 @@ export function BoardColumn({
       event.dataTransfer.getData("text/plain");
     if (taskId) onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY));
     setDropBeforeTaskId(undefined);
+    setDropPriority(null);
+  }
+
+  function handlePriorityDrop(event: DragEvent<HTMLElement>, priority: TaskPriority) {
+    event.preventDefault();
+    event.stopPropagation();
+    const taskId =
+      event.dataTransfer.getData("application/x-taskboard-task") ||
+      event.dataTransfer.getData("text/plain");
+    if (taskId) {
+      onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY), priority);
+    }
+    setDropBeforeTaskId(undefined);
+    setDropPriority(null);
   }
 
   function getTaskDragShift(task: Task): number {
@@ -177,7 +200,32 @@ export function BoardColumn({
           const priorityTasks = tasks.filter((task) => task.priority === priority);
           const isCollapsed = collapsedPriorities[priority] ?? false;
           return (
-            <section className={`priority-group priority-group-${priority}`} key={priority}>
+<<<<<<< HEAD
+            <section
+              className={`priority-group priority-group-${priority}${priorityTasks.length === 0 ? " priority-group-empty" : ""}${dropPriority === priority ? " is-drop-target" : ""}`}
+              data-priority-group={priority}
+              data-status={status}
+              key={priority}
+              onDragEnter={(event) => {
+                event.stopPropagation();
+                onDragEnter(status);
+                setDropPriority(priority);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = "move";
+                onDragEnter(status);
+                setDropPriority(priority);
+                setDropBeforeTaskId(findDropBefore(event.currentTarget, event.clientY));
+              }}
+              onDragLeave={(event) => {
+                if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                  setDropPriority((current) => current === priority ? null : current);
+                }
+              }}
+              onDrop={(event) => handlePriorityDrop(event, priority)}
+            >
               <button
                 type="button"
                 className="priority-group-header"

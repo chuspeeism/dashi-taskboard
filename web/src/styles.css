@@ -2361,6 +2361,11 @@ kbd {
   color: var(--text-secondary);
 }
 
+.priority-group.is-drop-target > .priority-group-header {
+  background: color-mix(in srgb, var(--task-card-priority-color, var(--accent)) 14%, var(--surface-muted));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+}
+
 .priority-group-title {
   display: flex;
   align-items: center;
@@ -2526,6 +2531,8 @@ kbd {
   border-radius: inherit;
   background: transparent;
   cursor: pointer;
+  -webkit-user-drag: element;
+  user-select: none;
 }
 
 .task-card-open:focus-visible {
