@@ -4,10 +4,12 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { resolvePersistedAttachmentUrl } from "../api";
 import {
+  TASK_PRIORITIES,
   type ActorIdentity,
   type AssigneeTarget,
   type Task,
   type TaskDraft,
+  type TaskPriority,
 } from "../types";
 import { labelPresentation } from "../labels";
 import { taskPriorityLabel, useTaskboardI18n } from "../i18n";
@@ -18,7 +20,7 @@ import type {
 } from "../taskConversations";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearIcon } from "./LinearIcon";
-import { DueDateIcon, ProjectIcon } from "./SemanticIcons";
+import { DueDateIcon, PriorityIcon, ProjectIcon } from "./SemanticIcons";
 import { LabelPicker } from "./LabelPicker";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskConversationMenu } from "./TaskConversationMenu";
@@ -347,6 +349,45 @@ function AssigneeControl({
   );
 }
 
+function PriorityControl({
+  task,
+  language,
+  disabled,
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  task: Task;
+  language: Parameters<typeof taskPriorityLabel>[0];
+  disabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (priority: TaskPriority) => void;
+}) {
+  const { text } = useTaskboardI18n();
+  const displayIdentifier = task.externalKey ?? task.identifier;
+  return (
+    <TaskPropertyPicker
+      value={task.priority}
+      options={TASK_PRIORITIES.map((priority) => ({
+        value: priority,
+        label: taskPriorityLabel(language, priority),
+        icon: <PriorityIcon priority={priority} size={14} />,
+        className: `priority-${priority}`,
+      }))}
+      open={open}
+      disabled={disabled}
+      className="task-card-priority-picker"
+      triggerClassName="task-card-priority-indicator"
+      triggerContent={<span aria-hidden="true" />}
+      ariaLabel={text(`${displayIdentifier} 优先级`, `${displayIdentifier} priority`)}
+      title={text(`优先级：${taskPriorityLabel(language, task.priority)}`, `Priority: ${taskPriorityLabel(language, task.priority)}`)}
+      onOpenChange={onOpenChange}
+      onChange={onChange}
+    />
+  );
+}
+
 export function TaskCard({
   task,
   variant = "main",
@@ -373,8 +414,8 @@ export function TaskCard({
 }: TaskCardProps) {
   const { language, locale, text } = useTaskboardI18n();
   const displayIdentifier = task.externalKey ?? task.identifier;
-  const [propertyMenu, setPropertyMenu] = useState<"labels" | "assignee" | null>(null);
-  const [savingProperty, setSavingProperty] = useState<"labels" | "dueDate" | "assignee" | null>(null);
+  const [propertyMenu, setPropertyMenu] = useState<"labels" | "assignee" | "priority" | null>(null);
+  const [savingProperty, setSavingProperty] = useState<"labels" | "dueDate" | "assignee" | "priority" | null>(null);
   const creator: ActorIdentity = {
     type: task.creatorType,
     id: task.creatorId,
@@ -438,10 +479,13 @@ export function TaskCard({
         onClick={() => onEdit(task)}
       />
 
-      <span
-        className="task-card-priority-indicator"
-        aria-label={text(`优先级：${taskPriorityLabel(language, task.priority)}`, `Priority: ${taskPriorityLabel(language, task.priority)}`)}
-        title={text(`优先级：${taskPriorityLabel(language, task.priority)}`, `Priority: ${taskPriorityLabel(language, task.priority)}`)}
+      <PriorityControl
+        task={task}
+        language={language}
+        disabled={propertyDisabled}
+        open={propertyMenu === "priority"}
+        onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
+        onChange={(priority) => updateProperty({ priority }, "priority")}
       />
 
       <div className="card-topline">
