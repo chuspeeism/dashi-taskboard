@@ -521,6 +521,16 @@ export function TaskCard({
         )}
       </div>
 
+      {task.relations.parent && (
+        <div
+          className="card-parent-title"
+          title={task.relations.parent.title}
+          aria-label={text(`母任务：${task.relations.parent.title}`, `Parent: ${task.relations.parent.title}`)}
+        >
+          {task.relations.parent.title}
+        </div>
+      )}
+
       <h3 id={`task-${task.id}-title`}>{task.title}</h3>
 
       {body && <p className="task-card-description">{body}</p>}
