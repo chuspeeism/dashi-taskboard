@@ -207,7 +207,6 @@ export function BoardColumn({
           const priorityTasks = tasks.filter((task) => task.priority === priority);
           const isCollapsed = collapsedPriorities[priority] ?? false;
           return (
-<<<<<<< HEAD
             <section
               className={`priority-group priority-group-${priority}${priorityTasks.length === 0 ? " priority-group-empty" : ""}${dropPriority === priority ? " is-drop-target" : ""}`}
               data-priority-group={priority}
@@ -240,7 +239,7 @@ export function BoardColumn({
                 onClick={() => setCollapsedPriorities((current) => ({ ...current, [priority]: !isCollapsed }))}
               >
                 <span className="priority-group-title">
-                  <PriorityIcon priority={priority} size={14} />
+                  <PriorityIcon priority={priority} color="currentColor" size={14} />
                   <span>{taskPriorityLabel(language, priority)}</span>
                 </span>
                 <span className="priority-group-count">{priorityTasks.length}</span>

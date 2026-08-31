@@ -2402,6 +2402,7 @@ kbd {
 .priority-group-medium .priority-group-title { color: var(--priority-medium); }
 .priority-group-low .priority-group-title { color: var(--priority-low); }
 .priority-group-none .priority-group-title { color: var(--priority-none); }
+.priority-group-empty .priority-group-title { color: var(--text-tertiary); }
 
 .priority-group-list {
   display: flex;
