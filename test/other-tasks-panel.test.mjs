@@ -92,7 +92,7 @@ test("panel cards reuse TaskCard and the existing ranked board drop path", () =>
   assert.match(panelSource, /onDrop\(activeTab, taskId, findDropBefore/);
   assert.match(panelSource, /busy=\{restoringTaskId !== null \|\| deletingTaskId !== null\}/);
   assert.match(appSource, /onDrop=\{finishTaskDrop\}/);
-  assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true\)/);
+  assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true, targetPriority\)/);
 });
 
 test("global creation defaults to todo while per-column creation keeps the chosen status", () => {

@@ -122,7 +122,8 @@ test("common issue mutations enter a Linear-style undo queue", () => {
   assert.match(appSource, /function pushUndo/);
   assert.match(appSource, /function performUndo[\s\S]*?await operation\.undo\(\)/);
   assert.match(appSource, /void performUndo\(\)/);
-  assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true\)/);
+  assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true, targetPriority\)/);
+  assert.match(appSource, /priorityChanged[\s\S]*?updateTaskRequest\(movedTask/);
   assert.match(appSource, /className="toast undo-toast"/);
   assert.match(appSource, />\s*\{text\("撤回", "Undo"\)\} <kbd>\{undoShortcut\}<\/kbd>/);
   assert.match(appSource, /restoreTaskRequest\(archived\)/);

@@ -2552,6 +2552,7 @@ export function App() {
     status: TaskStatus,
     beforeTaskId: string | null = null,
     useDropPosition = false,
+    targetPriority?: TaskPriority,
   ) {
     if (movingTaskId) {
       setDropTarget(null);
@@ -2597,21 +2598,37 @@ export function App() {
           ? nextTask.sortOrder - 1024
           : 1024;
     const previous = task;
+    const nextPriority = targetPriority ?? task.priority;
+    const priorityChanged = task.priority !== nextPriority;
     setActionError(null);
     setMovingTaskId(task.id);
     setTasks((current) => sortTasks(current.map((candidate) =>
-      candidate.id === task.id ? { ...candidate, status, sortOrder } : candidate,
+      candidate.id === task.id
+        ? { ...candidate, status, sortOrder, ...(priorityChanged ? { priority: nextPriority } : {}) }
+        : candidate,
     )));
 
     try {
-      const moved = await moveTaskRequest(task, status, sortOrder);
+      const movedTask = await moveTaskRequest(task, status, sortOrder);
+      const moved = priorityChanged
+        ? await updateTaskRequest(movedTask, {
+          ...taskToDraft(movedTask),
+          priority: nextPriority,
+        })
+        : movedTask;
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === moved.id ? moved : candidate,
       )));
       pushUndo(null, async () => {
         const candidate = tasksRef.current.find((current) => current.id === moved.id);
         const current = candidate && candidate.version >= moved.version ? candidate : moved;
-        const restored = await moveTaskRequest(current, previous.status, previous.sortOrder);
+        const restoredPosition = await moveTaskRequest(current, previous.status, previous.sortOrder);
+        const restored = priorityChanged
+          ? await updateTaskRequest(restoredPosition, {
+            ...taskToDraft(restoredPosition),
+            priority: previous.priority,
+          })
+          : restoredPosition;
         setTasks((tasks) => sortTasks(tasks.map((item) => item.id === restored.id ? restored : item)));
       });
     } catch (error) {
@@ -2664,7 +2681,7 @@ export function App() {
       void updateTaskProperties(task, { priority: targetPriority });
       return;
     }
-    void moveTask(task, destination, beforeTaskId, true);
+    void moveTask(task, destination, beforeTaskId, true, targetPriority);
   }
 
   async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>): Promise<Task> {
