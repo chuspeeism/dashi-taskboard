@@ -436,7 +436,10 @@ export function TaskCard({
     () => showBody ? taskBodyText(task.description) : "",
     [showBody, task.description],
   );
-  const hasProperties = task.priority !== "none" || task.labels.length > 0 || task.dueDate;
+  const hasProperties = task.priority !== "none"
+    || task.labels.length > 0
+    || task.dueDate
+    || Boolean(task.relations.parent);
   const showsProperties = Boolean(projectName)
     || (!processingCard && (hasProperties || showsInlineParticipants || showsConversation));
   const propertyDisabled = savingProperty !== null;
@@ -521,16 +524,6 @@ export function TaskCard({
         )}
       </div>
 
-      {task.relations.parent && (
-        <div
-          className="card-parent-title"
-          title={task.relations.parent.title}
-          aria-label={text(`母任务：${task.relations.parent.title}`, `Parent: ${task.relations.parent.title}`)}
-        >
-          {task.relations.parent.title}
-        </div>
-      )}
-
       <h3 id={`task-${task.id}-title`}>{task.title}</h3>
 
       {body && <p className="task-card-description">{body}</p>}
@@ -590,6 +583,15 @@ export function TaskCard({
               onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
             />
+          )}
+          {!processingCard && task.relations.parent && (
+            <span
+              className="card-parent-title"
+              title={task.relations.parent.title}
+              aria-label={text(`母任务：${task.relations.parent.title}`, `Parent: ${task.relations.parent.title}`)}
+            >
+              {task.relations.parent.title}
+            </span>
           )}
           {!processingCard && showsConversation && <span className="card-properties-spacer" aria-hidden="true" />}
           {!processingCard && showsConversation && (
