@@ -2486,6 +2486,7 @@ export function App() {
     let addedParentId: string | null = null;
     const addedRelatedIds: string[] = [];
     let relationWriteFailed = false;
+    let creationRolledBack = false;
     if (creating && createOptions) {
       const { parentId, relatedIds, subIssueIds } = createOptions.relations;
       try {
@@ -2514,14 +2515,28 @@ export function App() {
         relationWriteFailed = true;
       }
     }
-    relationUpdates.set(saved.id, saved);
+    if (creating && relationWriteFailed) {
+      try {
+        saved = await archiveTaskRequest(saved);
+        creationRolledBack = true;
+        setProjects((current) => current.map((project) => (
+          project.id === targetProjectId
+            ? { ...project, issueCount: Math.max(0, project.issueCount - 1) }
+            : project
+        )));
+      } catch {}
+    }
+    if (!creationRolledBack) relationUpdates.set(saved.id, saved);
     setTasks((current) => sortTasks([
       ...current.filter((task) => !relationUpdates.has(task.id)),
       ...relationUpdates.values(),
     ]));
     if (creating) setNewTaskDraft(null);
     const failedWrites = [
-      ...(relationWriteFailed ? [{ zh: "关系", en: "relations" }] : []),
+      ...(relationWriteFailed ? [{
+        zh: creationRolledBack ? "关系（已清理创建的议题）" : "关系",
+        en: creationRolledBack ? "relations (created issue was cleaned up)" : "relations",
+      }] : []),
       ...(postCreateWriteFailed ? [{ zh: "正文或媒体", en: "description or media" }] : []),
     ];
     if (!creating || !createOptions?.keepOpen || failedWrites.length > 0) setEditor(null);
@@ -2531,7 +2546,7 @@ export function App() {
         `${saved.identifier} was created, but these follow-up writes failed: ${failedWrites.map((failure) => failure.en).join(", ")}.`,
       ));
     }
-    if (creating) {
+    if (creating && !creationRolledBack) {
       pushUndo(null, async () => {
         const restoredRelations = new Map<string, Task>();
         const candidate = tasksRef.current.find((task) => task.id === saved.id);
