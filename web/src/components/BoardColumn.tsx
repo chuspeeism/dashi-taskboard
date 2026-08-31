@@ -98,6 +98,9 @@ export function BoardColumn({
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
   const remainingIndexes = new Map(remainingTasks.map((task, index) => [task.id, index]));
+  const draggedTask = draggedTaskId
+    ? tasks.find((task) => task.id === draggedTaskId)
+    : undefined;
   const draggedTaskIndex = draggedTaskId ? taskIndexes.get(draggedTaskId) ?? -1 : -1;
   const beforeIndex = dropBeforeTaskId
     ? remainingIndexes.get(dropBeforeTaskId) ?? remainingTasks.length
@@ -144,6 +147,10 @@ export function BoardColumn({
 
   function getTaskDragShift(task: Task): number {
     if (!draggedTaskId || task.id === draggedTaskId) return 0;
+    if (dropPriority !== null) {
+      if (task.priority !== dropPriority) return 0;
+      if (draggedTask?.priority !== dropPriority) return 0;
+    }
     let shift = 0;
     const taskIndex = taskIndexes.get(task.id) ?? -1;
     const remainingIndex = remainingIndexes.get(task.id) ?? -1;
