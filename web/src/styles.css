@@ -4041,6 +4041,53 @@ kbd {
   font-size: 10px;
 }
 
+.review-acceptance {
+  margin: 0 14px 18px;
+  padding: 16px;
+  border: var(--border-hairline) solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+
+.review-acceptance > header,
+.review-acceptance > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-acceptance > header span,
+.review-acceptance > footer span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.review-acceptance h2 {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review-delivery {
+  margin: 14px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.review-delivery > :first-child { margin-top: 0; }
+.review-delivery > :last-child { margin-bottom: 0; }
+
+@media (max-width: 719px) {
+  .review-acceptance > header,
+  .review-acceptance > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .activity-section {
   position: relative;
   padding: 22px 14px 60px;

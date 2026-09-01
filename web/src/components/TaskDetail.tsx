@@ -127,6 +127,8 @@ interface TaskDetailProps {
     origin?: IssueRelationOrigin,
   ) => Promise<RelationMutationResult>;
   onOpenThread: (binding: CodexThreadBinding) => void;
+  canContinueThread: boolean;
+  onContinueThread: (task: Task, feedback: string) => Promise<void>;
   onOpenLegacyLocalThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
@@ -386,6 +388,8 @@ export function TaskDetail({
   onAddRelation,
   onRemoveRelation,
   onOpenThread,
+  canContinueThread,
+  onContinueThread,
   onOpenLegacyLocalThread,
   onOpenInThread,
   onCopy,
@@ -430,6 +434,7 @@ export function TaskDetail({
   const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
   const descriptionScrollPositionRef = useRef<{ element: HTMLElement; top: number } | null>(null);
   const descriptionCaretRef = useRef<{ text: string; offset: number; occurrence: number } | null>(null);
+  const commentComposerFormRef = useRef<HTMLFormElement>(null);
   const composerRef = useRef<InlineMediaComposerHandle>(null);
   const editingComposerRef = useRef<InlineMediaComposerHandle>(null);
   const editingCommentScrollPositionRef = useRef<{ element: HTMLElement; top: number } | null>(null);
@@ -821,8 +826,12 @@ export function TaskDetail({
     }
   }
 
-  async function submitComment() {
+  async function submitComment(intent: "record" | "return" = "record") {
     const body = draft.trim();
+    if (
+      intent === "return"
+      && (!body || currentTask.status !== "in_review" || !currentTask.threadBinding || !canContinueThread)
+    ) return;
     if ((!body && commentInlineImages.length === 0 && commentInlineFiles.length === 0) || submitting) return;
     setSubmitting(true);
     setCommentsError(null);
@@ -850,7 +859,27 @@ export function TaskDetail({
       setCommentSegments(createInlineMediaSegments());
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       let relationAnchor = await getTask(currentTask.id);
-      if (changeStatusToTodo) {
+      if (intent === "return") {
+        if (relationAnchor.status !== "in_review" || !relationAnchor.threadBinding) {
+          throw new Error(text(
+            "议题或任务绑定已变化，请刷新后重试。",
+            "The issue or task binding changed. Refresh and try again.",
+          ));
+        }
+        await onContinueThread(relationAnchor, body);
+        try {
+          const saved = await onUpdate(relationAnchor, { status: "in_progress" });
+          setCurrentTask(saved);
+          relationAnchor = saved;
+          setChangeStatusToTodo(false);
+        } catch {
+          setCommentsError(text(
+            "反馈已发送，但状态更新失败。请刷新议题；不要再次发送反馈。",
+            "Feedback was sent, but the status update failed. Refresh the issue; do not send the feedback again.",
+          ));
+          return;
+        }
+      } else if (changeStatusToTodo) {
         const saved = await onUpdate(relationAnchor, { status: "todo" });
         setCurrentTask(saved);
         relationAnchor = saved;
@@ -1016,6 +1045,16 @@ export function TaskDetail({
   ].sort((left, right) => (
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
   ));
+  const latestAgentDelivery = comments.reduce<Comment | null>((latest, comment) => {
+    if (comment.authorType === "agent" && comment.body.trim()) {
+      if (!latest) return comment;
+      return comment.createdAt.localeCompare(latest.createdAt) > 0
+        || (comment.createdAt === latest.createdAt && comment.id.localeCompare(latest.id) > 0)
+        ? comment
+        : latest;
+    }
+    return latest;
+  }, null);
 
   return (
     <section
@@ -1217,6 +1256,63 @@ export function TaskDetail({
                 () => onRemoveRelation(anchor, type, relatedTaskId),
               )}
             />
+
+            {currentTask.status === "in_review" && (
+              <section className="review-acceptance" aria-labelledby="review-acceptance-heading">
+                <header>
+                  <div>
+                    <span>{text("等待你验收", "Waiting for your review")}</span>
+                    <h2 id="review-acceptance-heading">{currentTask.title}</h2>
+                  </div>
+                  <button
+                    className="button primary"
+                    type="button"
+                    disabled={savingProperty !== null || submitting}
+                    onClick={() => {
+                      setSavingProperty("review-complete");
+                      void onUpdate(currentTask, { status: "done" })
+                        .then(setCurrentTask)
+                        .catch((error) => onError(issueMessageFor(error)))
+                        .finally(() => setSavingProperty(null));
+                    }}
+                  >
+                    {text("通过并完成", "Approve and complete")}
+                  </button>
+                </header>
+                <div className="review-delivery">
+                  {latestAgentDelivery
+                    ? <DescriptionDocument
+                        value={latestAgentDelivery.body}
+                        referenceTasks={referenceTasks}
+                        onOpenTask={onOpenTask}
+                        attachments={latestAgentDelivery.attachments}
+                        enableImagePreview
+                        onOpenAttachment={handleAttachmentDownload}
+                      />
+                    : <p>{text(
+                        "暂无 Agent 交付说明，请打开处理对话查看结果。",
+                        "No Agent delivery note is available. Open the processing task to inspect the result.",
+                      )}</p>}
+                </div>
+                <footer>
+                  <span>{text(
+                    "普通评论只保存记录，不会通知 Codex。",
+                    "Regular comments are recorded without notifying Codex.",
+                  )}</span>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={!canContinueThread || !currentTask.threadBinding}
+                    onClick={() => {
+                      commentComposerFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      requestAnimationFrame(() => composerRef.current?.focus());
+                    }}
+                  >
+                    {text("写退回意见", "Write return feedback")}
+                  </button>
+                </footer>
+              </section>
+            )}
 
             <section className="activity-section" aria-labelledby="activity-heading">
               <header className="activity-heading">
@@ -1494,7 +1590,11 @@ export function TaskDetail({
                 </div>
               )}
 
-              <form className="comment-composer" onSubmit={(event) => { event.preventDefault(); void submitComment(); }}>
+              <form
+                ref={commentComposerFormRef}
+                className="comment-composer"
+                onSubmit={(event) => { event.preventDefault(); void submitComment(); }}
+              >
                 <div className="composer-author">
                   <ActorAvatar
                     className="comment-avatar"
@@ -1546,7 +1646,9 @@ export function TaskDetail({
                   </div>
                   <div>
                     <div className="comment-status-action">
-                      <span>{text("改变状态为-等待认领", "Change status to Todo")}</span>
+                      <span>{currentTask.status === "in_review"
+                        ? text("仅改为等待认领（不通知）", "Move to Todo only (no notification)")
+                        : text("改变状态为-等待认领", "Change status to Todo")}</span>
                       <button
                         type="button"
                         className={`board-setting-switch${changeStatusToTodo ? " is-on" : ""}`}
@@ -1558,17 +1660,43 @@ export function TaskDetail({
                         <span aria-hidden="true" />
                       </button>
                     </div>
-                    <button
-                      className="button primary"
-                      type="submit"
-                      disabled={(
-                        !draft.trim()
-                        && commentInlineImages.length === 0
-                        && commentInlineFiles.length === 0
-                      ) || submitting}
-                    >
-                      {submitting ? text("发布中…", "Posting…") : text("评论", "Comment")}
-                    </button>
+                    {currentTask.status === "in_review" ? (
+                      <>
+                        <button
+                          className="button secondary"
+                          type="submit"
+                          disabled={(
+                            !draft.trim()
+                            && commentInlineImages.length === 0
+                            && commentInlineFiles.length === 0
+                          ) || submitting}
+                        >
+                          {submitting ? text("发布中…", "Posting…") : text("仅记录评论", "Record comment")}
+                        </button>
+                        <button
+                          className="button primary"
+                          type="button"
+                          disabled={!draft.trim() || submitting || !canContinueThread || !currentTask.threadBinding}
+                          onClick={() => void submitComment("return")}
+                        >
+                          {submitting
+                            ? text("发送中…", "Sending…")
+                            : text("退回并继续原任务", "Return and continue original task")}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="button primary"
+                        type="submit"
+                        disabled={(
+                          !draft.trim()
+                          && commentInlineImages.length === 0
+                          && commentInlineFiles.length === 0
+                        ) || submitting}
+                      >
+                        {submitting ? text("发布中…", "Posting…") : text("评论", "Comment")}
+                      </button>
+                    )}
                   </div>
                 </footer>
               </form>

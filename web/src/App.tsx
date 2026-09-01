@@ -3776,6 +3776,8 @@ export function App() {
               mutateTaskRelation("remove", current, type, relatedTaskId, origin)
             )}
             onOpenThread={openThread}
+            canContinueThread={embedded && window.parent !== window}
+            onContinueThread={continueTaskThread}
             onOpenLegacyLocalThread={openLegacyLocalThread}
             onOpenInThread={openTaskInThread}
             onCopy={(text, message) => void copyText(text, message)}

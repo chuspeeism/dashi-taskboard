@@ -165,6 +165,19 @@ test("comments upload and render their own attachments in the content flow", () 
   assert.match(composerSource, /className="inline-media-attachment"/);
 });
 
+test("in-review details expose acceptance and exact-task return actions", () => {
+  assert.match(detailSource, /currentTask\.status === "in_review"[\s\S]*?className="review-acceptance"/);
+  assert.match(detailSource, /comments[\s\S]*?authorType === "agent"[\s\S]*?等待你验收/);
+  assert.match(detailSource, /通过并完成/);
+  assert.match(detailSource, /onUpdate\(currentTask, \{ status: "done" \}\)/);
+  assert.match(detailSource, /写退回意见/);
+  assert.match(detailSource, /commentComposerFormRef\.current\?\.scrollIntoView[\s\S]*?composerRef\.current\?\.focus\(\)/);
+  assert.match(detailSource, /createComment\([\s\S]*?getTask\([\s\S]*?onContinueThread\([\s\S]*?status: "in_progress"/);
+  assert.match(detailSource, /仅改为等待认领（不通知）/);
+  assert.match(detailSource, /退回并继续原任务/);
+  assert.match(styles, /\.review-acceptance/);
+});
+
 test("issue creation and detail share one searchable, creatable label picker", () => {
   assert.match(editorSource, /<LabelPicker/);
   assert.match(detailSource, /<LabelPicker/);
