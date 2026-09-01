@@ -176,6 +176,9 @@ test("in-review details expose acceptance and exact-task return actions", () => 
   assert.match(detailSource, /仅改为等待认领（不通知）/);
   assert.match(detailSource, /退回并继续原任务/);
   assert.match(styles, /\.review-acceptance/);
+  assert.match(styles, /\.composer-footer > div:last-child \{[\s\S]*?flex: 1 1 100%/);
+  assert.match(styles, /\.comment-status-action \{[\s\S]*?flex: 1 1 100%/);
+  assert.match(styles, /\.composer-footer \.button \{[\s\S]*?white-space: nowrap/);
 });
 
 test("issue creation and detail share one searchable, creatable label picker", () => {

@@ -8617,6 +8617,25 @@ kbd {
     margin-left: 0;
   }
 
+  .composer-footer {
+    flex-wrap: wrap;
+  }
+
+  .composer-footer > div:last-child {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .comment-status-action {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+
+  .composer-footer .button {
+    white-space: nowrap;
+  }
+
   .composer-footer > span,
   .composer-footer kbd {
     display: none;
