@@ -1244,6 +1244,35 @@
     }
   }
 
+  async function continueTaskThread(payload) {
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+    if (!requestId) return;
+    try {
+      const response = await requestHost("continue-task-thread", {
+        identifier: payload.identifier,
+        feedback: payload.feedback,
+        threadBinding: payload.threadBinding,
+      });
+      postToFrame({
+        type: "taskboard:continue-thread-response",
+        payload: { requestId, ok: true, turnId: response.turnId },
+      });
+    } catch (error) {
+      postToFrame({
+        type: "taskboard:continue-thread-response",
+        payload: {
+          requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : hostText(
+            "无法继续原 Codex 任务",
+            "Could not continue the original Codex task",
+          ),
+          uncertain: error?.uncertain === true,
+        },
+      });
+    }
+  }
+
   function handleExternalOpen(payload) {
     try {
       const url = new URL(payload?.url);
@@ -1345,6 +1374,10 @@
     }
     if (message.type === "taskboard:open-thread") {
       void openThread(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:continue-thread-request") {
+      void continueTaskThread(message.payload);
       return;
     }
     if (message.type === "taskboard:expand-sidebar") {
@@ -1601,7 +1634,9 @@
         : window.setTimeout(() => {
           hostRequests.delete(id);
           const error = hostError("任务面板启动器没有响应", "The Taskboard launcher did not respond");
-          if (action === "start-task-conversation") error.uncertain = true;
+          if (action === "start-task-conversation" || action === "continue-task-thread") {
+            error.uncertain = true;
+          }
           reject(error);
         }, timeoutMs);
       hostRequests.set(id, { resolve, reject, timeout });

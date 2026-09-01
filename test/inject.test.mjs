@@ -923,3 +923,17 @@ test("host integration stays thin", () => {
   assert.doesNotMatch(source, /import\s*\(/);
   assert.doesNotMatch(source, /window\.fetch\s*=/);
 });
+
+test("review feedback crosses the authenticated host bridge without creating a task", () => {
+  assert.match(webApp, /type: "taskboard:continue-thread-request"/);
+  assert.match(source, /message\.type === "taskboard:continue-thread-request"/);
+  assert.match(source, /requestHost\("continue-task-thread",/);
+  assert.match(source, /type: "taskboard:continue-thread-response"/);
+  assert.match(webApp, /message\.type === "taskboard:continue-thread-response"/);
+
+  const handlerStart = source.indexOf("async function continueTaskThread");
+  const handlerEnd = source.indexOf("\n\n  function handleExternalOpen", handlerStart);
+  const handler = source.slice(handlerStart, handlerEnd);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+  assert.doesNotMatch(handler, /createThreadForTask|taskboard:create-thread|thread\/start/);
+});
