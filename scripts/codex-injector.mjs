@@ -2351,6 +2351,45 @@ function installTaskboardHostBinding(
             : reconcileTaskboardAutomation(request, rpc);
         })()
       ),
+      continueTaskThread: async (request) => {
+        const { threadBinding } = request;
+        const read = await requestCodexAppServerViaCdp(
+          cdp,
+          undefined,
+          threadBinding.codexHostId,
+          "thread/read",
+          { threadId: threadBinding.threadId, includeTurns: false },
+        );
+        if (
+          read?.thread?.id !== threadBinding.threadId
+          || normalizeRemoteWorkspace(read.thread.cwd) !== normalizeRemoteWorkspace(threadBinding.workspacePath)
+        ) {
+          throw new Error("The bound Codex task no longer matches its saved workspace");
+        }
+        const started = await requestCodexAppServerViaCdp(
+          cdp,
+          undefined,
+          threadBinding.codexHostId,
+          "turn/start",
+          {
+            threadId: threadBinding.threadId,
+            input: [{
+              type: "text",
+              text: [
+                `用户在 Taskboard 退回 ${request.identifier}。`,
+                "",
+                request.feedback.trim(),
+                "",
+                "请在这个原任务中继续处理；不要创建新任务。完成直接验证后，按原任务约定回报结果。",
+              ].join("\n"),
+            }],
+          },
+        );
+        if (typeof started?.turn?.id !== "string" || !started.turn.id) {
+          throw new Error("Codex did not confirm the continued turn");
+        }
+        return { turnId: started.turn.id };
+      },
       startConversation: (request) => (
         getOrStartTaskConversation(cdp, undefined, request)
       ),

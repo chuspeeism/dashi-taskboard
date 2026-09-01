@@ -59,6 +59,36 @@ function parseHostRequest(payload, parseAutomationRequest) {
         };
   }
   if (
+    request.action === "continue-task-thread"
+    && typeof request.identifier === "string"
+    && request.identifier.length > 0
+    && request.identifier.length <= 128
+    && typeof request.feedback === "string"
+    && request.feedback.trim().length > 0
+    && request.feedback.length <= 100_000
+    && request.threadBinding
+    && typeof request.threadBinding.threadId === "string"
+    && request.threadBinding.threadId.length > 0
+    && request.threadBinding.threadId.length <= 240
+    && typeof request.threadBinding.codexProjectId === "string"
+    && request.threadBinding.codexProjectId.length > 0
+    && request.threadBinding.codexProjectId.length <= 240
+    && (request.threadBinding.codexProjectKind === "local" || request.threadBinding.codexProjectKind === "remote")
+    && typeof request.threadBinding.codexHostId === "string"
+    && request.threadBinding.codexHostId.length > 0
+    && request.threadBinding.codexHostId.length <= 240
+    && typeof request.threadBinding.workspacePath === "string"
+    && request.threadBinding.workspacePath.length > 0
+    && request.threadBinding.workspacePath.length <= 4_096
+    && !/[\u0000-\u001f\u007f]/.test([
+      request.identifier,
+      request.threadBinding.threadId,
+      request.threadBinding.codexProjectId,
+      request.threadBinding.codexHostId,
+      request.threadBinding.workspacePath,
+    ].join(""))
+  ) return { id, request, error: null };
+  if (
     request.action === "start-task-conversation"
     && typeof request.taskId === "string"
     && request.taskId.length > 0
@@ -125,6 +155,8 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.openAttachment(parsed.request);
     } else if (parsed.request.action === "automation") {
       result = await handlers.runAutomation(parsed.request, params.executionContextId);
+    } else if (parsed.request.action === "continue-task-thread") {
+      result = await handlers.continueTaskThread(parsed.request, params.executionContextId);
     } else {
       result = await handlers.startConversation(parsed.request, params.executionContextId);
     }

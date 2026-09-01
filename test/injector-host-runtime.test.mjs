@@ -265,3 +265,56 @@ test("refresh stops every stale resident before starting one token-verified repl
     ["ready", 9231, 9876, startupToken],
   ]);
 });
+
+test("review feedback reaches the exact bound Codex task", async () => {
+  const calls = [];
+  const responses = [];
+  const request = {
+    id: "continue-review-1",
+    action: "continue-task-thread",
+    identifier: "LOCAL-12",
+    feedback: "Please keep the original layout and fix the empty state.",
+    threadBinding: {
+      threadId: "01a00000-0000-7000-8000-000000000012",
+      codexProjectId: "project-12",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/workspace/project-12",
+    },
+  };
+
+  const result = await handleHostBindingPayload({
+    payload: JSON.stringify(request),
+    executionContextId: 12,
+  }, {
+    parseAutomationRequest: () => null,
+    continueTaskThread: async (value) => {
+      calls.push(value);
+      return { turnId: "turn-12" };
+    },
+    startConversation: async () => assert.fail("must not create a task"),
+    sendResponse: async (_executionContextId, response) => responses.push(response),
+  });
+
+  assert.deepEqual(result, { responded: true, accepted: true });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].threadBinding, request.threadBinding);
+  assert.deepEqual(responses, [{ id: request.id, ok: true, turnId: "turn-12" }]);
+
+  const rejected = [];
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
+      ...request,
+      id: "continue-review-invalid",
+      threadBinding: { ...request.threadBinding, workspacePath: "" },
+    }),
+    executionContextId: 12,
+  }, {
+    parseAutomationRequest: () => null,
+    continueTaskThread: async () => assert.fail("invalid binding must not reach Codex"),
+    startConversation: async () => assert.fail("invalid binding must not create a task"),
+    sendResponse: async (_executionContextId, response) => rejected.push(response),
+  });
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].ok, false);
+});
