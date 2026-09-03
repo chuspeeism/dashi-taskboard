@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID } from "../shared/domain.mjs";
+import { DEFAULT_LABEL_NAMES, DEFAULT_PROJECT_ID, JIRA_PROJECT_ID } from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const TASK_TREE_MAX_NODES = 1_000;
@@ -1350,8 +1350,8 @@ export class TaskboardDatabase {
     if (!project) {
       throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${id}' does not exist`);
     }
-    if (!id.startsWith("temp-")) {
-      throw new ApiError(403, "PROJECT_DELETE_FORBIDDEN", "Only manually created projects can be deleted");
+    if (id === DEFAULT_PROJECT_ID) {
+      throw new ApiError(403, "PROJECT_DELETE_FORBIDDEN", "The default project cannot be deleted");
     }
     const result = this.database.prepare(`
       DELETE FROM projects
