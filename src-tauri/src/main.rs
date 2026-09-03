@@ -220,7 +220,7 @@ struct UpdateDialog {
 impl UpdateDialog {
     fn prompt(_app: &AppHandle, version: &str) -> Option<Self> {
         let message = format!(
-            "Codex Taskboard {version} 已下载并通过签名验证。是否现在安装并重启？"
+            "Atlas Workbench {version} 已下载并通过签名验证。是否现在安装并重启？"
         );
         let (response, result) = std::sync::mpsc::channel();
         let dialog = run_on_main(move |mtm| {
@@ -233,7 +233,7 @@ impl UpdateDialog {
             progress_indicator.setFrameSize(NSSize::new(280.0, 20.0));
             progress_indicator.sizeToFit();
             progress_indicator.setDisplayedWhenStopped(true);
-            alert.setMessageText(&NSString::from_str("Codex Taskboard 更新"));
+            alert.setMessageText(&NSString::from_str("Atlas Workbench 更新"));
             alert.setInformativeText(&NSString::from_str(&message));
             let install_button = alert.addButtonWithTitle(&NSString::from_str("立即更新"));
             let defer_button = alert.addButtonWithTitle(&NSString::from_str("稍后"));
@@ -331,9 +331,9 @@ impl UpdateDialog {
     fn prompt(app: &AppHandle, version: &str) -> Option<Self> {
         app.dialog()
             .message(format!(
-                "Codex Taskboard {version} 已下载并通过签名验证。是否现在安装并重启？"
+                "Atlas Workbench {version} 已下载并通过签名验证。是否现在安装并重启？"
             ))
-            .title("Codex Taskboard 更新")
+            .title("Atlas Workbench 更新")
             .kind(MessageDialogKind::Info)
             .buttons(MessageDialogButtons::OkCancelCustom(
                 "立即更新".into(),
@@ -378,7 +378,7 @@ impl LauncherState {
             child: Mutex::new(None),
             snapshot: Mutex::new(LauncherSnapshot {
                 phase: "starting".into(),
-                message: "正在启动任务面板…".into(),
+                message: "正在启动阿特拉斯工作台…".into(),
                 update_message: "启动后将自动检查更新。".into(),
                 update_available: false,
                 version,
@@ -560,7 +560,7 @@ fn take_macos_bundle_migration_marker() -> Result<Option<MacosBundleMigration>, 
         .map_err(|error| format!("无法解析当前可执行文件路径：{error}"))?;
     let current_app = macos_app_path_from_executable(&current_executable)
         .ok_or_else(|| "当前可执行文件不在 macOS App bundle 内".to_string())?;
-    if current_app.file_name() != Some(std::ffi::OsStr::new("Codex Taskboard Beta.app")) {
+    if current_app.file_name() != Some(std::ffi::OsStr::new("Atlas Workbench Beta.app")) {
         return Err(format!(
             "macOS App bundle migration marker 只能由改名后的 Beta App 恢复：{}",
             current_app.display()
@@ -572,7 +572,7 @@ fn take_macos_bundle_migration_marker() -> Result<Option<MacosBundleMigration>, 
     let expected_source_executable = current_app
         .parent()
         .ok_or_else(|| format!("无法定位 App 上级目录：{}", current_app.display()))?
-        .join("Codex Taskboard.app")
+        .join("Atlas Workbench.app")
         .join(relative_executable);
     if source_executable != expected_source_executable {
         return Err(format!(
@@ -604,10 +604,10 @@ fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, 
     let Some(current_app) = macos_app_path_from_executable(&current_executable) else {
         return Ok(None);
     };
-    if current_app.file_name() == Some(std::ffi::OsStr::new("Codex Taskboard Beta.app")) {
+    if current_app.file_name() == Some(std::ffi::OsStr::new("Atlas Workbench Beta.app")) {
         return Ok(None);
     }
-    if current_app.file_name() != Some(std::ffi::OsStr::new("Codex Taskboard.app")) {
+    if current_app.file_name() != Some(std::ffi::OsStr::new("Atlas Workbench.app")) {
         return Err(format!(
             "Beta App 当前路径名称不受支持：{}",
             current_app.display()
@@ -616,7 +616,7 @@ fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, 
     let destination_app = current_app
         .parent()
         .ok_or_else(|| format!("无法定位 App 上级目录：{}", current_app.display()))?
-        .join("Codex Taskboard Beta.app");
+        .join("Atlas Workbench Beta.app");
     let executable_name = current_executable
         .file_name()
         .ok_or_else(|| format!("无法定位 App 可执行文件名：{}", current_executable.display()))?
@@ -808,7 +808,7 @@ fn resolve_legacy_skill_conflict(
             "检测到旧位置中的 manage-taskboard Skill 与当前 App 内置版本不同，可能包含你的修改。\n\n为避免 Codex 同时发现两个版本，Taskboard 会把旧副本完整保留到：\n\n{}\n\n选择退出不会改动旧副本，也不会启动 Codex。",
             backup_path.display()
         ))
-        .title("Codex Taskboard Skill 冲突")
+        .title("Atlas Workbench Skill 冲突")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
             "保留备份并继续".into(),
@@ -1090,7 +1090,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
         thread::sleep(Duration::from_millis(100));
     }
     if process_is_running(pid) {
-        return Err("Codex 尚未退出，任务面板没有启动".to_string());
+        return Err("Codex 尚未退出，阿特拉斯工作台没有启动".to_string());
     }
     Ok(())
 }
@@ -1204,7 +1204,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
     if exited {
         Ok(())
     } else {
-        Err("Codex 尚未退出，任务面板没有启动".to_string())
+        Err("Codex 尚未退出，阿特拉斯工作台没有启动".to_string())
     }
 }
 
@@ -1271,7 +1271,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
         thread::sleep(Duration::from_millis(100));
     }
     if process_is_running(pid) {
-        return Err("Codex 尚未退出，任务面板没有启动".to_string());
+        return Err("Codex 尚未退出，阿特拉斯工作台没有启动".to_string());
     }
     Ok(())
 }
@@ -1496,7 +1496,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     }
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "stopped".into();
-        snapshot.message = "任务面板已停止。".into();
+        snapshot.message = "阿特拉斯工作台已停止。".into();
         snapshot.child_pid = None;
         snapshot.open_signal_pid = None;
     });
@@ -1533,7 +1533,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         && snapshot.child_pid == Some(pid)
                     {
                         snapshot.phase = "starting".into();
-                        snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
+                        snapshot.message = "阿特拉斯工作台服务已启动，正在注入 Codex…".into();
                     }
                 });
             } else if !is_stderr && line.contains("\"openTaskboardSignalReady\":true") {
@@ -1563,7 +1563,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         && snapshot.child_pid == Some(pid)
                     {
                         snapshot.phase = "running".into();
-                        snapshot.message = "任务面板已在现有 Codex 的浏览面板中打开。".into();
+                        snapshot.message = "阿特拉斯工作台已在现有 Codex 的浏览面板中打开。".into();
                     }
                 });
             } else if !is_stderr && line.contains("\"injected\"") {
@@ -1572,7 +1572,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         && snapshot.child_pid == Some(pid)
                     {
                         snapshot.phase = "running".into();
-                        snapshot.message = "任务面板已在 Codex 客户端中打开。".into();
+                        snapshot.message = "阿特拉斯工作台已在 Codex 客户端中打开。".into();
                     }
                 });
             }
@@ -1618,8 +1618,8 @@ fn start_launcher_locked(
     if let Some(codex_pid) = ordinary_codex_pid {
         let restart = app
             .dialog()
-            .message("需要重新启动 Codex 才能显示任务面板")
-            .title("Codex Taskboard")
+            .message("需要重新启动 Codex 才能显示阿特拉斯工作台")
+            .title("Atlas Workbench")
             .kind(MessageDialogKind::Info)
             .buttons(MessageDialogButtons::OkCancelCustom(
                 "重新启动 Codex".into(),
@@ -1630,7 +1630,7 @@ fn start_launcher_locked(
             append_log(state, "Codex restart canceled by user");
             return Ok(update_snapshot(app, state, |snapshot| {
                 snapshot.phase = "stopped".into();
-                snapshot.message = "已取消重新启动 Codex，任务面板未注入。".into();
+                snapshot.message = "已取消重新启动 Codex，阿特拉斯工作台未注入。".into();
                 snapshot.app_path = Some(codex_app.display().to_string());
                 snapshot.open_signal_pid = None;
                 snapshot.open_request_pending = false;
@@ -1646,7 +1646,7 @@ fn start_launcher_locked(
     state.intentional_stop.store(false, Ordering::SeqCst);
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "starting".into();
-        snapshot.message = "正在启动任务面板服务…".into();
+        snapshot.message = "正在启动阿特拉斯工作台服务…".into();
         snapshot.app_path = Some(codex_app.display().to_string());
         snapshot.open_signal_pid = None;
     });
@@ -1829,7 +1829,7 @@ fn start_launcher_locked(
                 snapshot.open_signal_pid = None;
                 if !intentional {
                     snapshot.phase = "error".into();
-                    snapshot.message = "任务面板进程已退出，正在恢复…".into();
+                    snapshot.message = "阿特拉斯工作台进程已退出，正在恢复…".into();
                 }
             }
         });
@@ -1868,8 +1868,8 @@ fn start_launcher_locked(
             });
             show_error_dialog(
                 &event_app,
-                "Codex Taskboard 恢复失败",
-                &format!("任务面板进程无法恢复：{error}\n\n请重新打开 App。"),
+                "Atlas Workbench 恢复失败",
+                &format!("阿特拉斯工作台进程无法恢复：{error}\n\n请重新打开 App。"),
             );
         }
     });
@@ -1912,7 +1912,7 @@ fn restart_launcher(
                 && snapshot.child_pid.is_none()
             {
                 snapshot.phase = "error".into();
-                snapshot.message = format!("任务面板启动失败：{error}");
+                snapshot.message = format!("阿特拉斯工作台启动失败：{error}");
                 snapshot.open_signal_pid = None;
             }
         });
@@ -1949,7 +1949,7 @@ fn open_taskboard_in_browser(state: &LauncherState) -> Result<(), String> {
     status
         .success()
         .then_some(())
-        .ok_or_else(|| "系统默认浏览器没有打开任务面板".to_string())
+        .ok_or_else(|| "系统默认浏览器没有打开阿特拉斯工作台".to_string())
 }
 
 async fn check_for_startup_update(
@@ -2213,7 +2213,7 @@ fn install_update(
             snapshot.update_available = true;
             if let Some(restart_error) = &restart_error {
                 snapshot.phase = "error".into();
-                snapshot.message = format!("任务面板恢复失败：{restart_error}");
+                snapshot.message = format!("阿特拉斯工作台恢复失败：{restart_error}");
             }
         });
         return Err(error.to_string());
@@ -2279,7 +2279,7 @@ async fn offer_update(
             if show_current_version {
                 show_error_dialog(
                     app,
-                    "Codex Taskboard 更新检查失败",
+                    "Atlas Workbench 更新检查失败",
                     &format!("无法检查更新。请稍后重试。\n\n{error}"),
                 );
             }
@@ -2292,7 +2292,7 @@ async fn offer_update(
             let current_version = state.snapshot.lock().unwrap().version.clone();
             app.dialog()
                 .message(format!("当前版本 {current_version} 已是最新版本。"))
-                .title("Codex Taskboard 更新")
+                .title("Atlas Workbench 更新")
                 .buttons(MessageDialogButtons::Ok)
                 .blocking_show();
         }
@@ -2315,7 +2315,7 @@ async fn offer_update(
             if show_current_version {
                 show_error_dialog(
                     app,
-                    "Codex Taskboard 更新准备失败",
+                    "Atlas Workbench 更新准备失败",
                     &format!("无法下载或验证更新。请稍后重试。\n\n{error}"),
                 );
             }
@@ -2349,14 +2349,14 @@ async fn offer_update(
             append_log(state, &format!("Update installation failed: {error}"));
             let service_recovered = state.snapshot.lock().unwrap().child_pid.is_some();
             let service_message = if service_recovered {
-                "任务面板服务已恢复。"
+                "阿特拉斯工作台服务已恢复。"
             } else {
-                "任务面板服务未能恢复，请重新打开 App。"
+                "阿特拉斯工作台服务未能恢复，请重新打开 App。"
             };
             update_dialog.close();
             show_error_dialog(
                 app,
-                "Codex Taskboard 更新失败",
+                "Atlas Workbench 更新失败",
                 &format!(
                     "更新未完成。{service_message}\n\n请稍后重试。详情见启动日志。\n\n{error}"
                 ),
@@ -2468,11 +2468,11 @@ fn main() {
             )?;
             *state.status_menu.lock().unwrap() = Some(launcher_status.clone());
             let open_taskboard_item =
-                MenuItem::with_id(app, "open-taskboard", "打开任务面板", true, None::<&str>)?;
+                MenuItem::with_id(app, "open-taskboard", "打开阿特拉斯工作台", true, None::<&str>)?;
             let open_taskboard_web = MenuItem::with_id(
                 app,
                 "open-taskboard-web",
-                "在网页打开任务面板",
+                "在网页打开阿特拉斯工作台",
                 true,
                 None::<&str>,
             )?;
@@ -2525,7 +2525,7 @@ fn main() {
             TrayIconBuilder::new()
                 .icon(tauri::include_image!("icons/tray-codex.png"))
                 .icon_as_template(true)
-                .tooltip("Codex Taskboard")
+                .tooltip("Atlas Workbench")
                 .menu(&tray_menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "check-update" => {
@@ -2551,7 +2551,7 @@ fn main() {
                                 append_log(&state, &format!("Launcher menu open failed: {error}"));
                                 show_error_dialog(
                                     &app,
-                                    "Codex Taskboard 打开失败",
+                                    "Atlas Workbench 打开失败",
                                     &format!("{error}\n\n请确认 Codex 正在运行。"),
                                 );
                             }
@@ -2569,7 +2569,7 @@ fn main() {
                                     &state,
                                     &format!("Launcher menu browser open failed: {error}"),
                                 );
-                                show_error_dialog(&app, "Codex Taskboard 网页打开失败", &error);
+                                show_error_dialog(&app, "Atlas Workbench 网页打开失败", &error);
                             }
                         });
                     }
@@ -2587,7 +2587,7 @@ fn main() {
                                 );
                                 show_error_dialog(
                                     &app,
-                                    "Codex Taskboard 启动失败",
+                                    "Atlas Workbench 启动失败",
                                     &format!("{error}\n\n请确认官方 Codex/ChatGPT App 已安装。"),
                                 );
                             }
@@ -2623,7 +2623,7 @@ fn main() {
                             }
                         };
                         if let Some(error) = operation_error.or(sync_error) {
-                            show_error_dialog(app, "Codex Taskboard 自启动设置失败", &error);
+                            show_error_dialog(app, "Atlas Workbench 自启动设置失败", &error);
                         }
                     }
                     "quit" => {
@@ -2671,7 +2671,7 @@ fn main() {
                         Err(error) => {
                             show_error_dialog(
                                 &app_handle,
-                                "Codex Taskboard Skill 更新失败",
+                                "Atlas Workbench Skill 更新失败",
                                 &format!("无法保留旧 Skill：{error}"),
                             );
                             app_handle.exit(1);
@@ -2687,7 +2687,7 @@ fn main() {
                     });
                     show_error_dialog(
                         &app_handle,
-                        "Codex Taskboard 启动失败",
+                        "Atlas Workbench 启动失败",
                         &format!(
                             "{error}\n\n请确认官方 Codex/ChatGPT App 已安装。详情见启动日志。"
                         ),
@@ -2705,7 +2705,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to build Codex Taskboard");
+        .expect("failed to build Atlas Workbench");
 
     app.run(|app_handle, event| match event {
         #[cfg(target_os = "macos")]
@@ -2718,7 +2718,7 @@ fn main() {
                 append_log(&state, &format!("Launcher panel reopen failed: {error}"));
                 show_error_dialog(
                     app_handle,
-                    "Codex Taskboard 打开失败",
+                    "Atlas Workbench 打开失败",
                     &format!("{error}\n\n请确认官方 Codex/ChatGPT App 已安装。"),
                 );
             }

@@ -7,6 +7,7 @@
     "node": ">=22.5"
   },
   "bin": {
+    "atlasctl": "./cli/taskctl.mjs",
     "taskctl": "./cli/taskctl.mjs"
   },
   "scripts": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Codex Taskboard",
+  "productName": "Atlas Workbench",
   "version": "1.1.22",
   "identifier": "com.chuspeeism.codex-taskboard",
   "app": {
@@ -10,7 +10,7 @@
     "active": true,
     "targets": ["app", "dmg"],
     "category": "Productivity",
-    "shortDescription": "在 Codex 客户端中打开本地任务面板",
+    "shortDescription": "在 Codex 客户端中打开阿特拉斯工作台",
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/node"],
     "resources": {

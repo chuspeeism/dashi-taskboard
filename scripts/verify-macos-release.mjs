@@ -45,7 +45,7 @@ if (releaseTag !== stableTag && !/^[1-9]\d*$/.test(betaNumber)) {
   throw new Error("Release tag does not match package.json version");
 }
 const releaseVersion = releaseTag.slice(1);
-const productName = betaNumber ? "Codex Taskboard Beta" : tauriConfig.productName;
+const productName = betaNumber ? "Atlas Workbench Beta" : tauriConfig.productName;
 const appName = `${productName}.app`;
 
 function run(command, args, options = {}) {
@@ -147,7 +147,7 @@ async function manifest(root, relative = "") {
   return entries;
 }
 
-const artifactName = `Codex.Taskboard_${packageJson.version}_universal.app.tar.gz`;
+const artifactName = `Atlas.Workbench_${packageJson.version}_universal.app.tar.gz`;
 const artifactPath = path.join(releaseDirectory, artifactName);
 const signaturePath = `${artifactPath}.sig`;
 const signature = await readFile(signaturePath, "utf8");

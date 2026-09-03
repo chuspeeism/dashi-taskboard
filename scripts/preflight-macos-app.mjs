@@ -105,7 +105,7 @@ verifyNode(appPath);
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-preflight."));
 let mountedDmg = null;
 try {
-  const archivePath = path.join(temporaryRoot, "Codex.Taskboard.preflight.app.tar.gz");
+  const archivePath = path.join(temporaryRoot, "Atlas.Workbench.preflight.app.tar.gz");
   run("/usr/bin/tar", ["-czf", archivePath, path.basename(appPath)], {
     cwd: path.dirname(appPath),
   });
@@ -129,7 +129,7 @@ try {
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", extractedApp]);
   verifyNode(extractedApp);
 
-  const dmgPath = path.join(temporaryRoot, "Codex.Taskboard.preflight.dmg");
+  const dmgPath = path.join(temporaryRoot, "Atlas.Workbench.preflight.dmg");
   const dmgSource = path.join(temporaryRoot, "dmg-source");
   run("/bin/mkdir", ["-p", dmgSource]);
   run("/usr/bin/ditto", [appPath, path.join(dmgSource, path.basename(appPath))]);

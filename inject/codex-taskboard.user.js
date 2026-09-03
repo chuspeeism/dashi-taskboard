@@ -319,10 +319,10 @@
 
   function syncEntryText(button = entry) {
     if (!button) return;
-    button.setAttribute("aria-label", hostText("打开任务面板", "Open Taskboard"));
-    button.setAttribute("title", hostText("任务面板", "Taskboard"));
-    if (entryLabel) entryLabel.textContent = hostText("任务面板", "Taskboard");
-    else button.textContent = hostText("任务面板", "Taskboard");
+    button.setAttribute("aria-label", hostText("打开阿特拉斯工作台", "Open Atlas Workbench"));
+    button.setAttribute("title", hostText("阿特拉斯工作台", "Atlas Workbench"));
+    if (entryLabel) entryLabel.textContent = hostText("阿特拉斯工作台", "Atlas Workbench");
+    else button.textContent = hostText("阿特拉斯工作台", "Atlas Workbench");
   }
 
   function syncEntryState() {
@@ -1224,7 +1224,7 @@
         payload: {
           requestId,
           ok: false,
-          error: hostText("仅本地任务面板可用", "Available only in the local Taskboard"),
+          error: hostText("仅本地阿特拉斯工作台可用", "Available only in local Atlas Workbench"),
         },
       });
       return;
@@ -1421,7 +1421,7 @@
     section.hidden = true;
     section.setAttribute(OWNED_ATTRIBUTE, "true");
     section.setAttribute("role", "region");
-    section.setAttribute("aria-label", hostText("任务面板", "Taskboard"));
+    section.setAttribute("aria-label", hostText("阿特拉斯工作台", "Atlas Workbench"));
 
     status = document.createElement("div");
     status.id = STATUS_ID;
@@ -1460,7 +1460,7 @@
 
   function renderLoading() {
     if (!status) return;
-    status.replaceChildren(document.createTextNode(hostText("正在启动任务面板…", "Starting Taskboard…")));
+    status.replaceChildren(document.createTextNode(hostText("正在启动阿特拉斯工作台…", "Starting Atlas Workbench…")));
     status.hidden = false;
     if (frame) frame.hidden = true;
   }
@@ -1501,8 +1501,8 @@
     if (hostUiLanguage === language) return;
     hostUiLanguage = language;
     syncEntryText();
-    if (page) page.setAttribute("aria-label", hostText("任务面板", "Taskboard"));
-    if (frame) frame.title = hostText("任务面板", "Taskboard");
+    if (page) page.setAttribute("aria-label", hostText("阿特拉斯工作台", "Atlas Workbench"));
+    if (frame) frame.title = hostText("阿特拉斯工作台", "Atlas Workbench");
     if (statusView === "loading") renderLoading();
     else if (statusView === "error") renderLoadError();
   }
@@ -1523,7 +1523,7 @@
         reject,
         timer: window.setTimeout(() => {
           frameReadyWaiters.delete(waiter);
-          reject(hostError("任务面板页面加载超时", "Taskboard page load timed out"));
+          reject(hostError("阿特拉斯工作台页面加载超时", "Atlas Workbench page load timed out"));
         }, FRAME_READY_TIMEOUT_MS),
       };
       frameReadyWaiters.add(waiter);
@@ -1531,7 +1531,7 @@
   }
 
   function loadTaskboardFrame(cacheBust = false) {
-    cancelFrameReadyWaiters(hostError("任务面板正在重新加载", "Taskboard is reloading"));
+    cancelFrameReadyWaiters(hostError("阿特拉斯工作台正在重新加载", "Atlas Workbench is reloading"));
     frame?.remove();
     frame = null;
     frameTaskboardUrl = "";
@@ -1557,7 +1557,7 @@
     nextFrame.hidden = true;
     nextFrame.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-downloads");
     nextFrame.src = "about:blank";
-    nextFrame.title = hostText("任务面板", "Taskboard");
+    nextFrame.title = hostText("阿特拉斯工作台", "Atlas Workbench");
     nextFrame.referrerPolicy = "no-referrer";
     nextFrame.setAttribute("allow", "clipboard-read; clipboard-write");
     nextFrame.addEventListener("load", challengeFrameDocument);
@@ -1606,8 +1606,8 @@
   function requestHost(action, payload = {}, timeoutMs = HOST_REQUEST_TIMEOUT_MS) {
     if (!hasLiveHostBinding()) {
       return Promise.reject(hostError(
-        "Taskboard 启动器未运行，无法操作 Codex 对话输入框",
-        "The Taskboard launcher is not running, so the Codex composer is unavailable",
+        "阿特拉斯工作台启动器未运行，无法操作 Codex 对话输入框",
+        "The Atlas Workbench launcher is not running, so the Codex composer is unavailable",
       ));
     }
 
@@ -1617,7 +1617,7 @@
         ? null
         : window.setTimeout(() => {
           hostRequests.delete(id);
-          const error = hostError("任务面板启动器没有响应", "The Taskboard launcher did not respond");
+          const error = hostError("阿特拉斯工作台启动器没有响应", "The Atlas Workbench launcher did not respond");
           if (action === "start-task-conversation") error.uncertain = true;
           reject(error);
         }, timeoutMs);
@@ -1670,7 +1670,7 @@
     else {
       const error = response.error
         ? new Error(response.error)
-        : hostError("任务面板服务启动失败", "The Taskboard service failed to start");
+        : hostError("阿特拉斯工作台服务启动失败", "The Atlas Workbench service failed to start");
       if (typeof response.threadId === "string") error.threadId = response.threadId;
       if (response.uncertain === true) error.uncertain = true;
       pending.reject(error);
@@ -1727,8 +1727,8 @@
       showLoadError(bindingAvailable
         ? error
         : hostError(
-          "任务面板服务未就绪。请保持 Taskboard 启动器运行后重试。",
-          "The Taskboard service is not ready. Keep the Taskboard launcher running and try again.",
+          "阿特拉斯工作台服务未就绪。请保持启动器运行后重试。",
+          "Atlas Workbench is not ready. Keep its launcher running and try again.",
         ));
     }
   }
@@ -1909,10 +1909,10 @@
     hostContextTimer = null;
     observer?.disconnect();
     observer = null;
-    cancelFrameReadyWaiters(hostError("任务面板已关闭", "Taskboard was closed"));
+    cancelFrameReadyWaiters(hostError("阿特拉斯工作台已关闭", "Atlas Workbench was closed"));
     hostRequests.forEach(({ reject, timeout }) => {
       if (timeout !== null) window.clearTimeout(timeout);
-      reject(hostError("任务面板已关闭", "Taskboard was closed"));
+      reject(hostError("阿特拉斯工作台已关闭", "Atlas Workbench was closed"));
     });
     hostRequests.clear();
     pendingThreadCreation = null;

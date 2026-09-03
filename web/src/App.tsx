@@ -59,7 +59,7 @@ import {
   type BoardDisplaySettings,
 } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
-import { ProjectReadmeView } from "./components/ProjectReadmeView";
+import { ProjectLibrary } from "./components/ProjectLibrary";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
@@ -325,7 +325,7 @@ function issueReadStorageKey(mode: string, task: Pick<Task, "id" | "projectId">)
 
 function readProjectBoardView(projectId: string): BoardView {
   const view = taskboardStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
-  return view === "readme" || view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
+  return view === "readme" || view === "dashboard" || view === "list" || view === "issues"
     ? view
     : "issues";
 }
@@ -374,6 +374,11 @@ const EVENT_NAMES = [
   "project.created",
   "project.labels.updated",
   "project.readme.updated",
+  "document.created",
+  "document.updated",
+  "document.folder.created",
+  "document.folder.updated",
+  "document.attachment.created",
   "client-storage.updated",
 ] as const;
 
@@ -651,7 +656,7 @@ function LocalRealtimeSync({
         return;
       }
       if (!affectsSelectedProject) return;
-      if (event.type === "project.readme.updated") {
+      if (event.type === "project.readme.updated" || event.type.startsWith("document.")) {
         setReadmeRevision((current) => current + 1);
         return;
       }
@@ -1010,7 +1015,7 @@ export function App() {
       return { unavailableReason: text("仅可在 Codex App 中使用", "Available only in the Codex app") };
     }
     if (!isLocalTaskboardOrigin(new URL(document.baseURI).origin)) {
-      return { unavailableReason: text("仅本地任务面板可用", "Available only on the local taskboard") };
+      return { unavailableReason: text("仅本地阿特拉斯工作台可用", "Available only in local Atlas Workbench") };
     }
     if (!selectedProject) {
       return { unavailableReason: text("请先选择项目", "Select a project first") };
@@ -1033,8 +1038,8 @@ export function App() {
       }
       if (!manageTaskboardSkillPath) {
         return { unavailableReason: text(
-          "任务面板还没有读取到 Skill 路径",
-          "Taskboard has not received the Skill path",
+          "阿特拉斯工作台还没有读取到 Skill 路径",
+          "Atlas Workbench has not received the Skill path",
         ) };
       }
       return { ...savedIdentity, unavailableReason: null };
@@ -1073,8 +1078,8 @@ export function App() {
     }
     if (!manageTaskboardSkillPath) {
       return { unavailableReason: text(
-        "任务面板还没有读取到 Skill 路径",
-        "Taskboard has not received the Skill path",
+        "阿特拉斯工作台还没有读取到 Skill 路径",
+        "Atlas Workbench has not received the Skill path",
       ) };
     }
     const codexProject = hostContext?.projects?.find((project) => project.id === codexProjectId);
@@ -1813,8 +1818,8 @@ export function App() {
       for (const pending of pendingAutomationRequestsRef.current.values()) {
         window.clearTimeout(pending.timeoutId);
         pending.reject(new Error(textRef.current(
-          "Taskboard 消息桥已关闭",
-          "The Taskboard host bridge was closed",
+          "阿特拉斯工作台消息桥已关闭",
+          "The Atlas Workbench host bridge was closed",
         )));
       }
       pendingAutomationRequestsRef.current.clear();
@@ -3324,7 +3329,7 @@ export function App() {
     ? text("所有项目", "All projects")
     : selectedProject?.id === GLOBAL_PROJECT_ID
       ? text("临时任务", "Temporary tasks")
-      : selectedProject?.name ?? text("任务面板", "Taskboard");
+      : selectedProject?.name ?? text("阿特拉斯工作台", "Atlas Workbench");
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
@@ -3546,7 +3551,7 @@ export function App() {
               aria-pressed={boardView === "dashboard"}
               onClick={() => selectBoardView("dashboard")}
             >
-              {text("仪表盘", "Dashboard")}
+              {text("动态", "Activity")}
             </button>
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
@@ -3554,7 +3559,7 @@ export function App() {
               aria-pressed={boardView === "issues"}
               onClick={() => selectBoardView("issues")}
             >
-              {text("议题看板", "Issue board")}
+              {text("计划", "Plan")}
             </button>
             <button
               className={`view-tab${boardView === "list" ? " active" : ""}`}
@@ -3562,15 +3567,7 @@ export function App() {
               aria-pressed={boardView === "list"}
               onClick={() => selectBoardView("list")}
             >
-              {text("列表视图", "List")}
-            </button>
-            <button
-              className={`view-tab${boardView === "gantt" ? " active" : ""}`}
-              type="button"
-              aria-pressed={boardView === "gantt"}
-              onClick={() => selectBoardView("gantt")}
-            >
-              {text("甘特图", "Gantt")}
+              {text("任务", "Tasks")}
             </button>
             {!isAllProjects && (
               <button
@@ -3579,7 +3576,7 @@ export function App() {
                 aria-pressed={boardView === "readme"}
                 onClick={() => selectBoardView("readme")}
               >
-                {text("项目文档", "Project Docs")}
+                {text("资料库", "Library")}
               </button>
             )}
           </div>
@@ -3671,7 +3668,7 @@ export function App() {
         {(loadError || actionErrorText) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionErrorText ?? loadError?.message}</p></div>
+            <div><strong>{text("阿特拉斯工作台需要处理", "Atlas Workbench needs attention")}</strong><p>{actionErrorText ?? loadError?.message}</p></div>
             <button
               type="button"
               onClick={() => {
@@ -3738,8 +3735,8 @@ export function App() {
                     projectId: selectedProject.id,
                     issueId: null,
                     composerText: text(
-                      "只检查当前项目目录对应的 Codex 对话。请将其中已完成、处理中和待执行的任务整理并导入当前项目的 Taskboard。",
-                      "Only inspect Codex conversations associated with this project directory. Organize completed, in-progress, and pending tasks, then import them into this project's Taskboard.",
+                      "只检查当前项目目录对应的 Codex 对话。请将其中已完成、处理中和待执行的任务整理并导入当前项目的阿特拉斯工作台。",
+                      "Only inspect Codex conversations associated with this project directory. Organize completed, in-progress, and pending tasks, then import them into this project's Atlas Workbench.",
                     ),
                     requestId: aiOpenThreadRequestSequenceRef.current,
                   });
@@ -3757,13 +3754,10 @@ export function App() {
             </div>
           </div>
         ) : boardView === "readme" && selectedProject ? (
-          <ProjectReadmeView
+          <ProjectLibrary
             key={selectedProjectId}
             project={selectedProject}
-            tasks={tasks.filter((task) => task.projectId === selectedProject.id)}
-            referenceTasks={referenceTasks.filter((task) => task.projectId === selectedProject.id)}
             revision={readmeRevision}
-            onOpenTask={openTaskDetail}
             onError={setActionError}
           />
         ) : boardView === "dashboard" && (selectedProject || isAllProjects) ? (

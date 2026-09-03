@@ -23,6 +23,12 @@ import type {
   Project,
   ProjectReadme,
   ProjectReadmeAttachment,
+  DocumentAttachment,
+  DocumentFolder,
+  DocumentRevision,
+  ProjectDocument,
+  ProjectDocumentStatus,
+  ProjectDocumentType,
   ProjectSummary,
   Task,
   TaskChangeActivity,
@@ -498,6 +504,107 @@ export async function uploadProjectReadmeAttachment(
         "Content-Type": file.type || "application/octet-stream",
         "X-Taskboard-Filename": encodeURIComponent(file.name),
         "X-Taskboard-Attachment-Kind": "inline",
+      },
+      body: file,
+    },
+  );
+  return data.attachment;
+}
+
+export async function listDocumentFolders(projectId: string): Promise<DocumentFolder[]> {
+  const data = await request<{ folders: DocumentFolder[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/document-folders`,
+  );
+  return data.folders;
+}
+
+export async function createDocumentFolder(
+  projectId: string,
+  name: string,
+  parentId: string | null,
+): Promise<DocumentFolder> {
+  const data = await request<{ folder: DocumentFolder }>(
+    `/api/projects/${encodeURIComponent(projectId)}/document-folders`,
+    { method: "POST", body: JSON.stringify({ name, parentId }) },
+  );
+  return data.folder;
+}
+
+export async function listProjectDocuments(
+  projectId: string,
+  options: { folderId?: string | null; query?: string; type?: ProjectDocumentType | "" } = {},
+): Promise<ProjectDocument[]> {
+  const search = new URLSearchParams();
+  if (Object.hasOwn(options, "folderId")) search.set("folderId", options.folderId ?? "");
+  if (options.query) search.set("q", options.query);
+  if (options.type) search.set("type", options.type);
+  const suffix = search.size > 0 ? `?${search}` : "";
+  const data = await request<{ documents: ProjectDocument[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/documents${suffix}`,
+  );
+  return data.documents;
+}
+
+export async function createProjectDocument(
+  projectId: string,
+  input: {
+    folderId: string | null;
+    title: string;
+    type: ProjectDocumentType;
+    content?: string;
+  },
+): Promise<ProjectDocument> {
+  const data = await request<{ document: ProjectDocument }>(
+    `/api/projects/${encodeURIComponent(projectId)}/documents`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.document;
+}
+
+export async function updateProjectDocument(
+  documentId: string,
+  input: {
+    version: number;
+    title?: string;
+    folderId?: string | null;
+    type?: ProjectDocumentType;
+    status?: ProjectDocumentStatus;
+    content?: string;
+  },
+): Promise<ProjectDocument> {
+  const data = await request<{ document: ProjectDocument }>(
+    `/api/documents/${encodeURIComponent(documentId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+  return data.document;
+}
+
+export async function listDocumentRevisions(documentId: string): Promise<DocumentRevision[]> {
+  const data = await request<{ revisions: DocumentRevision[] }>(
+    `/api/documents/${encodeURIComponent(documentId)}/revisions`,
+  );
+  return data.revisions;
+}
+
+export async function listDocumentAttachments(documentId: string): Promise<DocumentAttachment[]> {
+  const data = await request<{ attachments: DocumentAttachment[] }>(
+    `/api/documents/${encodeURIComponent(documentId)}/attachments`,
+  );
+  return data.attachments;
+}
+
+export async function uploadDocumentAttachment(
+  documentId: string,
+  file: File,
+): Promise<DocumentAttachment> {
+  const data = await request<{ attachment: DocumentAttachment }>(
+    `/api/documents/${encodeURIComponent(documentId)}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Taskboard-Filename": encodeURIComponent(file.name),
+        "X-Taskboard-Attachment-Kind": file.type.startsWith("image/") ? "inline" : "attachment",
       },
       body: file,
     },

@@ -34,7 +34,7 @@ function run(command, args, options = {}) {
 }
 
 await mkdir(outputDirectory, { recursive: true });
-const artifactName = `Codex.Taskboard_${packageJson.version}_universal.app.tar.gz`;
+const artifactName = `Atlas.Workbench_${packageJson.version}_universal.app.tar.gz`;
 const artifactPath = path.join(outputDirectory, artifactName);
 run("/usr/bin/tar", ["-czf", artifactPath, path.basename(appPath)], {
   cwd: path.dirname(appPath),
@@ -46,7 +46,7 @@ const downloadUrl = `https://github.com/chuspeeism/dashi-taskboard/releases/down
 const platform = { signature, url: downloadUrl };
 const latest = {
   version: releaseVersion,
-  notes: `Codex Taskboard ${releaseVersion}`,
+  notes: `Atlas Workbench ${releaseVersion}`,
   pub_date: new Date().toISOString(),
   platforms: {
     "darwin-aarch64": platform,

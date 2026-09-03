@@ -373,6 +373,77 @@ export interface ProjectReadmeAttachment {
   createdAt: string;
 }
 
+export type ProjectDocumentType =
+  | "general"
+  | "spec"
+  | "plan"
+  | "tasks"
+  | "run-report"
+  | "test-report";
+
+export type ProjectDocumentStatus =
+  | "draft"
+  | "awaiting_confirmation"
+  | "approved"
+  | "frozen"
+  | "superseded";
+
+export interface DocumentActor {
+  type: "user" | "agent";
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export interface DocumentFolder {
+  id: string;
+  projectId: string;
+  parentId: string | null;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectDocument {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  title: string;
+  type: ProjectDocumentType;
+  status: ProjectDocumentStatus;
+  content: string;
+  size: number;
+  version: number;
+  isProjectOverview: boolean;
+  taskIds: string[];
+  createdBy: DocumentActor;
+  updatedBy: DocumentActor;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentRevision {
+  id: string;
+  documentId: string;
+  version: number;
+  title: string;
+  type: ProjectDocumentType;
+  status: ProjectDocumentStatus;
+  content: string;
+  updatedBy: DocumentActor;
+  createdAt: string;
+}
+
+export interface DocumentAttachment {
+  id: string;
+  documentId: string;
+  kind: "inline" | "attachment";
+  filename: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
+}
+
 export interface TaskRelationSummary {
   id: string;
   identifier: string;

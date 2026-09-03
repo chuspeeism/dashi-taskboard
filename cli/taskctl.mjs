@@ -34,6 +34,16 @@ const COMMAND_OPTIONS = new Map([
   ["project create", new Set(["id", "name", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
   ["project readme", new Set(["content", "file", "if-version", "json"])],
+  ["folder list", new Set(["project", "json"])],
+  ["folder create", new Set(["project", "name", "parent", "json"])],
+  ["folder update", new Set(["name", "parent", "json"])],
+  ["document list", new Set(["project", "folder", "type", "json"])],
+  ["document get", new Set(["json"])],
+  ["document create", new Set(["project", "folder", "title", "type", "status", "task", "content", "file", "json"])],
+  ["document update", new Set(["folder", "title", "type", "status", "content", "file", "if-version", "json"])],
+  ["document history", new Set(["json"])],
+  ["document search", new Set(["project", "query", "type", "json"])],
+  ["document export", new Set(["output", "json"])],
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
@@ -129,6 +139,16 @@ Commands:
   project map PROJECT_ID --workspace-path PATH
   project readme get [PROJECT_ID]
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
+  folder list --project PROJECT_ID
+  folder create --project PROJECT_ID --name NAME [--parent FOLDER_ID]
+  folder update FOLDER_ID [--name NAME] [--parent FOLDER_ID]
+  document list --project PROJECT_ID [--folder FOLDER_ID] [--type TYPE]
+  document get DOCUMENT_ID
+  document create --project PROJECT_ID --title TITLE [--content TEXT | --file FILE]
+  document update DOCUMENT_ID [--content TEXT | --file FILE] --if-version N
+  document history DOCUMENT_ID
+  document search --project PROJECT_ID --query TEXT [--type TYPE]
+  document export DOCUMENT_ID --output PATH
   cloud login --url URL --actor-name NAME
   cloud status|logout
   issue list|get|create|update|move|archive|restore|tree|relation
@@ -310,7 +330,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, folder list/create/update, document list/get/create/update/history/search/export, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -354,6 +374,100 @@ async function execute(parsed, overrides) {
       );
     case "project readme":
       return executeProjectReadme(api, parsed, overrides);
+    case "folder list":
+      expectOperandCount(parsed, 0);
+      return api.request(
+        "GET",
+        `/api/projects/${encodeURIComponent(requiredOption(parsed.options, "project"))}/document-folders`,
+      );
+    case "folder create":
+      expectOperandCount(parsed, 0);
+      return api.request(
+        "POST",
+        `/api/projects/${encodeURIComponent(requiredOption(parsed.options, "project"))}/document-folders`,
+        {
+          name: requiredOption(parsed.options, "name"),
+          parentId: parsed.options.parent ?? null,
+        },
+      );
+    case "folder update": {
+      expectOperandCount(parsed, 1);
+      if (parsed.options.name === undefined && parsed.options.parent === undefined) {
+        throw usageError("folder update requires --name or --parent");
+      }
+      return api.request(
+        "PATCH",
+        `/api/document-folders/${encodeURIComponent(parsed.operands[0])}`,
+        {
+          ...optionalField("name", parsed.options.name),
+          ...optionalField("parentId", parsed.options.parent),
+        },
+      );
+    }
+    case "document list": {
+      expectOperandCount(parsed, 0);
+      const search = new URLSearchParams();
+      if (parsed.options.folder !== undefined) search.set("folderId", parsed.options.folder);
+      if (parsed.options.type !== undefined) search.set("type", parsed.options.type);
+      const query = search.size > 0 ? `?${search}` : "";
+      return api.request(
+        "GET",
+        `/api/projects/${encodeURIComponent(requiredOption(parsed.options, "project"))}/documents${query}`,
+      );
+    }
+    case "document get":
+      expectOperandCount(parsed, 1);
+      return api.request("GET", `/api/documents/${encodeURIComponent(parsed.operands[0])}`);
+    case "document create": {
+      expectOperandCount(parsed, 0);
+      const content = await resolveDocumentContent(parsed.options, overrides, { optional: true });
+      return api.request(
+        "POST",
+        `/api/projects/${encodeURIComponent(requiredOption(parsed.options, "project"))}/documents`,
+        {
+          title: requiredOption(parsed.options, "title"),
+          type: parsed.options.type ?? "general",
+          status: parsed.options.status ?? "draft",
+          folderId: parsed.options.folder ?? null,
+          content,
+          ...optionalField("taskId", parsed.options.task),
+        },
+      );
+    }
+    case "document update": {
+      expectOperandCount(parsed, 1);
+      const hasContent = parsed.options.content !== undefined || parsed.options.file !== undefined;
+      if (!hasContent && ["folder", "title", "type", "status"].every((name) => parsed.options[name] === undefined)) {
+        throw usageError("document update requires a document field");
+      }
+      return api.request(
+        "PUT",
+        `/api/documents/${encodeURIComponent(parsed.operands[0])}`,
+        {
+          ...optionalField("folderId", parsed.options.folder),
+          ...optionalField("title", parsed.options.title),
+          ...optionalField("type", parsed.options.type),
+          ...optionalField("status", parsed.options.status),
+          ...(hasContent ? { content: await resolveDocumentContent(parsed.options, overrides) } : {}),
+          version: explicitVersion(parsed.options["if-version"]),
+        },
+      );
+    }
+    case "document history":
+      expectOperandCount(parsed, 1);
+      return api.request("GET", `/api/documents/${encodeURIComponent(parsed.operands[0])}/revisions`);
+    case "document search": {
+      expectOperandCount(parsed, 0);
+      const search = new URLSearchParams({ q: requiredOption(parsed.options, "query") });
+      if (parsed.options.type !== undefined) search.set("type", parsed.options.type);
+      return api.request(
+        "GET",
+        `/api/projects/${encodeURIComponent(requiredOption(parsed.options, "project"))}/documents?${search}`,
+      );
+    }
+    case "document export":
+      expectOperandCount(parsed, 1);
+      return exportDocument(api, parsed.operands[0], parsed.options, overrides);
     case "cloud login":
       expectOperandCount(parsed, 0);
       return cloudLogin(
@@ -1189,6 +1303,49 @@ function taskPath(taskId) {
 function commentPath(commentId) {
   if (!commentId) throw usageError("Missing comment id");
   return `/api/comments/${encodeURIComponent(commentId)}`;
+}
+
+async function resolveDocumentContent(options, overrides, { optional = false } = {}) {
+  if (options.content !== undefined && options.file !== undefined) {
+    throw usageError("Use either --content or --file, not both");
+  }
+  if (options.content !== undefined) return options.content;
+  if (options.file === undefined) {
+    if (optional) return "";
+    throw usageError("Document content requires --content or --file");
+  }
+  const read = overrides.readFile ?? readFile;
+  const filename = resolveInputPath(options.file, overrides);
+  try {
+    return await read(filename, "utf8");
+  } catch (error) {
+    throw new TaskctlError(`Cannot read document file: ${filename}`, {
+      code: "FILE_READ_FAILED",
+      exitCode: 2,
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function exportDocument(api, documentId, options, overrides) {
+  const output = resolveInputPath(requiredOption(options, "output"), overrides);
+  const downloaded = await api.download(`/api/documents/${encodeURIComponent(documentId)}/export`);
+  const write = overrides.writeFile ?? writeFile;
+  try {
+    await write(output, downloaded.bytes);
+  } catch (error) {
+    throw new TaskctlError(`Cannot write document export: ${output}`, {
+      code: "FILE_WRITE_FAILED",
+      exitCode: 2,
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return {
+    documentId,
+    output,
+    contentType: downloaded.contentType,
+    size: downloaded.size,
+  };
 }
 
 function attachmentContentPath(attachmentId) {

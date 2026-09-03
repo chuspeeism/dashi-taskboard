@@ -264,15 +264,15 @@ jobs:
           --bundles app
           --no-sign
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
-      - run: test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+      - run: test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/Atlas Workbench.app"
       - name: Verify packaged taskctl and inherited listener
         run: >-
           npm run app:verify-packaged-taskctl --
-          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Atlas Workbench.app"
       - name: Verify secretless App, updater, and DMG preflight
         run: >-
           npm run app:preflight --
-          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Atlas Workbench.app"
 
   windows-launcher:
     name: Windows x64 launcher

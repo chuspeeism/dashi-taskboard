@@ -14,8 +14,8 @@ if (process.platform !== "linux") {
   throw new Error("Linux packages must be verified on Linux");
 }
 const productName = process.env.CODEX_TASKBOARD_RELEASE_VERSION?.includes("-beta.")
-  ? "Codex Taskboard Beta"
-  : "Codex Taskboard";
+  ? "Atlas Workbench Beta"
+  : "Atlas Workbench";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {

@@ -387,6 +387,76 @@ function projectReadmeAttachmentFromRow(row) {
   };
 }
 
+function documentFolderFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    parentId: row.parent_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function documentActorFromRow(row, prefix) {
+  return {
+    type: row[`${prefix}_by_type`],
+    id: row[`${prefix}_by_id`],
+    name: row[`${prefix}_by_name`],
+    avatarUrl: row[`${prefix}_by_avatar_url`],
+  };
+}
+
+function documentFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    folderId: row.folder_id,
+    title: row.title,
+    type: row.type,
+    status: row.status,
+    content: row.content,
+    size: Buffer.byteLength(row.content, "utf8"),
+    version: row.version,
+    isProjectOverview: row.is_project_overview === 1,
+    createdBy: documentActorFromRow(row, "created"),
+    updatedBy: documentActorFromRow(row, "updated"),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function documentRevisionFromRow(row) {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    version: row.version,
+    title: row.title,
+    type: row.type,
+    status: row.status,
+    content: row.content,
+    updatedBy: {
+      type: row.updated_by_type,
+      id: row.updated_by_id,
+      name: row.updated_by_name,
+      avatarUrl: row.updated_by_avatar_url,
+    },
+    createdAt: row.created_at,
+  };
+}
+
+function documentAttachmentFromRow(row) {
+  return {
+    id: row.id,
+    documentId: row.document_id,
+    kind: row.kind,
+    filename: row.filename,
+    contentType: row.content_type,
+    size: row.size,
+    createdAt: row.created_at,
+  };
+}
+
 function aiChatRunFromRow(row) {
   return {
     id: row.id,
@@ -587,6 +657,89 @@ export class TaskboardDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS document_folders (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        parent_id TEXT REFERENCES document_folders(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS document_folders_project_parent
+        ON document_folders(project_id, parent_id, name, id);
+
+      CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        folder_id TEXT REFERENCES document_folders(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN (
+          'general', 'spec', 'plan', 'tasks', 'run-report', 'test-report'
+        )),
+        status TEXT NOT NULL CHECK (status IN (
+          'draft', 'awaiting_confirmation', 'approved', 'frozen', 'superseded'
+        )),
+        content TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        is_project_overview INTEGER NOT NULL DEFAULT 0 CHECK (is_project_overview IN (0, 1)),
+        created_by_type TEXT NOT NULL,
+        created_by_id TEXT NOT NULL,
+        created_by_name TEXT NOT NULL,
+        created_by_avatar_url TEXT,
+        updated_by_type TEXT NOT NULL,
+        updated_by_id TEXT NOT NULL,
+        updated_by_name TEXT NOT NULL,
+        updated_by_avatar_url TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS documents_project_folder_updated
+        ON documents(project_id, folder_id, updated_at DESC, id);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS documents_one_project_overview
+        ON documents(project_id) WHERE is_project_overview = 1;
+
+      CREATE TABLE IF NOT EXISTS document_revisions (
+        id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL CHECK (version > 0),
+        title TEXT NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        content TEXT NOT NULL,
+        updated_by_type TEXT NOT NULL,
+        updated_by_id TEXT NOT NULL,
+        updated_by_name TEXT NOT NULL,
+        updated_by_avatar_url TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(document_id, version)
+      );
+
+      CREATE INDEX IF NOT EXISTS document_revisions_document_version
+        ON document_revisions(document_id, version DESC);
+
+      CREATE TABLE IF NOT EXISTS task_documents (
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(task_id, document_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS document_attachments (
+        id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('inline', 'attachment')),
+        filename TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        size INTEGER NOT NULL CHECK (size >= 0),
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS document_attachments_document_created
+        ON document_attachments(document_id, created_at, id);
+
       CREATE TABLE IF NOT EXISTS project_summaries (
         project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
         summary TEXT,
@@ -653,6 +806,34 @@ export class TaskboardDatabase {
       CREATE INDEX IF NOT EXISTS ai_chat_events_thread_created
         ON ai_chat_events(thread_id, created_at, id);
 
+    `);
+
+    this.database.exec(`
+      INSERT OR IGNORE INTO documents (
+        id, project_id, folder_id, title, type, status, content, version,
+        is_project_overview,
+        created_by_type, created_by_id, created_by_name, created_by_avatar_url,
+        updated_by_type, updated_by_id, updated_by_name, updated_by_avatar_url,
+        created_at, updated_at
+      )
+      SELECT
+        'project-overview:' || project_id, project_id, NULL, '项目说明', 'general', 'draft',
+        content, version, 1,
+        'agent', 'migration-agent', '系统迁移', NULL,
+        'agent', 'migration-agent', '系统迁移', NULL,
+        created_at, updated_at
+      FROM project_readmes;
+
+      INSERT OR IGNORE INTO document_revisions (
+        id, document_id, version, title, type, status, content,
+        updated_by_type, updated_by_id, updated_by_name, updated_by_avatar_url, created_at
+      )
+      SELECT
+        'project-overview:' || project_id || ':v' || version,
+        'project-overview:' || project_id,
+        version, '项目说明', 'general', 'draft', content,
+        'agent', 'migration-agent', '系统迁移', NULL, updated_at
+      FROM project_readmes;
     `);
 
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
@@ -1497,59 +1678,288 @@ export class TaskboardDatabase {
     return this.getProjectSummary(projectId);
   }
 
+  listDocumentFolders(projectId) {
+    if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    return this.database.prepare(`
+      SELECT * FROM document_folders
+      WHERE project_id = ?
+      ORDER BY name COLLATE NOCASE, id
+    `).all(projectId).map(documentFolderFromRow);
+  }
+
+  createDocumentFolder(projectId, input) {
+    if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    if (input.parentId !== null && input.parentId !== undefined) {
+      const parent = this.database.prepare(`
+        SELECT project_id FROM document_folders WHERE id = ?
+      `).get(input.parentId);
+      if (!parent || parent.project_id !== projectId) {
+        throw new ApiError(400, "INVALID_FOLDER", "Parent folder does not belong to this project");
+      }
+    }
+    const timestamp = now();
+    const id = input.id ?? randomUUID();
+    this.database.prepare(`
+      INSERT INTO document_folders (id, project_id, parent_id, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, input.parentId ?? null, input.name, timestamp, timestamp);
+    return documentFolderFromRow(this.database.prepare(`
+      SELECT * FROM document_folders WHERE id = ?
+    `).get(id));
+  }
+
+  updateDocumentFolder(id, changes) {
+    const current = this.database.prepare("SELECT * FROM document_folders WHERE id = ?").get(id);
+    if (!current) throw new ApiError(404, "DOCUMENT_FOLDER_NOT_FOUND", `Document folder '${id}' does not exist`);
+    const parentId = changes.parentId === undefined ? current.parent_id : changes.parentId;
+    if (parentId === id) throw new ApiError(400, "INVALID_FOLDER", "A folder cannot contain itself");
+    if (parentId !== null) {
+      const parent = this.database.prepare("SELECT project_id FROM document_folders WHERE id = ?").get(parentId);
+      if (!parent || parent.project_id !== current.project_id) {
+        throw new ApiError(400, "INVALID_FOLDER", "Parent folder does not belong to this project");
+      }
+    }
+    this.database.prepare(`
+      UPDATE document_folders
+      SET name = ?, parent_id = ?, updated_at = ?
+      WHERE id = ?
+    `).run(changes.name ?? current.name, parentId, now(), id);
+    return documentFolderFromRow(this.database.prepare("SELECT * FROM document_folders WHERE id = ?").get(id));
+  }
+
+  #documentWithTaskIds(row) {
+    if (!row) return null;
+    const document = documentFromRow(row);
+    document.taskIds = this.database.prepare(`
+      SELECT task_id FROM task_documents WHERE document_id = ? ORDER BY created_at, task_id
+    `).all(document.id).map((relation) => relation.task_id);
+    return document;
+  }
+
+  listDocuments(projectId, options = {}) {
+    if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    const where = ["project_id = ?"];
+    const params = [projectId];
+    if (Object.hasOwn(options, "folderId")) {
+      where.push(options.folderId === null ? "folder_id IS NULL" : "folder_id = ?");
+      if (options.folderId !== null) params.push(options.folderId);
+    }
+    if (options.type) {
+      where.push("type = ?");
+      params.push(options.type);
+    }
+    if (options.query) {
+      where.push("(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')");
+      const escaped = options.query.replace(/[\\%_]/g, "\\$&");
+      params.push(`%${escaped}%`, `%${escaped}%`);
+    }
+    return this.database.prepare(`
+      SELECT * FROM documents
+      WHERE ${where.join(" AND ")}
+      ORDER BY is_project_overview DESC, updated_at DESC, title COLLATE NOCASE, id
+    `).all(...params).map((row) => this.#documentWithTaskIds(row));
+  }
+
+  getDocument(id) {
+    return this.#documentWithTaskIds(this.database.prepare("SELECT * FROM documents WHERE id = ?").get(id));
+  }
+
+  createDocument(projectId, input, actor) {
+    if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    if (input.folderId !== null && input.folderId !== undefined) {
+      const folder = this.database.prepare("SELECT project_id FROM document_folders WHERE id = ?").get(input.folderId);
+      if (!folder || folder.project_id !== projectId) {
+        throw new ApiError(400, "INVALID_FOLDER", "Document folder does not belong to this project");
+      }
+    }
+    if (input.taskId) {
+      const task = this.database.prepare("SELECT project_id FROM tasks WHERE id = ? OR identifier = ?").get(input.taskId, input.taskId);
+      if (!task || task.project_id !== projectId) {
+        throw new ApiError(400, "INVALID_TASK", "Document task does not belong to this project");
+      }
+    }
+    const id = input.id ?? randomUUID();
+    const timestamp = input.timestamp ?? now();
+    const version = input.version ?? 1;
+    const principal = actor ?? { type: "user", id: "local-user", name: "本地用户", avatarUrl: null };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO documents (
+          id, project_id, folder_id, title, type, status, content, version, is_project_overview,
+          created_by_type, created_by_id, created_by_name, created_by_avatar_url,
+          updated_by_type, updated_by_id, updated_by_name, updated_by_avatar_url,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, projectId, input.folderId ?? null, input.title, input.type ?? "general",
+        input.status ?? "draft", input.content ?? "", version, input.isProjectOverview ? 1 : 0,
+        principal.type, principal.id, principal.name, principal.avatarUrl ?? null,
+        principal.type, principal.id, principal.name, principal.avatarUrl ?? null,
+        timestamp, timestamp,
+      );
+      this.database.prepare(`
+        INSERT INTO document_revisions (
+          id, document_id, version, title, type, status, content,
+          updated_by_type, updated_by_id, updated_by_name, updated_by_avatar_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `${id}:v${version}`, id, version, input.title, input.type ?? "general",
+        input.status ?? "draft", input.content ?? "",
+        principal.type, principal.id, principal.name, principal.avatarUrl ?? null, timestamp,
+      );
+      if (input.taskId) {
+        const task = this.database.prepare("SELECT id FROM tasks WHERE id = ? OR identifier = ?").get(input.taskId, input.taskId);
+        this.database.prepare(`
+          INSERT INTO task_documents (task_id, document_id, created_at) VALUES (?, ?, ?)
+        `).run(task.id, id, timestamp);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getDocument(id);
+  }
+
+  updateDocument(id, changes, expectedVersion, actor) {
+    const principal = actor ?? { type: "user", id: "local-user", name: "本地用户", avatarUrl: null };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.database.prepare("SELECT * FROM documents WHERE id = ?").get(id);
+      if (!current) throw new ApiError(404, "DOCUMENT_NOT_FOUND", `Document '${id}' does not exist`);
+      if (current.version !== expectedVersion) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Document changed since it was last read", {
+          expectedVersion,
+          actualVersion: current.version,
+        });
+      }
+      if (current.status === "frozen" && changes.content !== undefined) {
+        throw new ApiError(409, "DOCUMENT_FROZEN", "Frozen documents cannot be overwritten");
+      }
+      const folderId = changes.folderId === undefined ? current.folder_id : changes.folderId;
+      if (folderId !== null) {
+        const folder = this.database.prepare("SELECT project_id FROM document_folders WHERE id = ?").get(folderId);
+        if (!folder || folder.project_id !== current.project_id) {
+          throw new ApiError(400, "INVALID_FOLDER", "Document folder does not belong to this project");
+        }
+      }
+      const timestamp = now();
+      const version = current.version + 1;
+      const title = changes.title ?? current.title;
+      const type = changes.type ?? current.type;
+      const status = changes.status ?? current.status;
+      const content = changes.content ?? current.content;
+      this.database.prepare(`
+        UPDATE documents
+        SET folder_id = ?, title = ?, type = ?, status = ?, content = ?, version = ?,
+            updated_by_type = ?, updated_by_id = ?, updated_by_name = ?, updated_by_avatar_url = ?,
+            updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(
+        folderId, title, type, status, content, version,
+        principal.type, principal.id, principal.name, principal.avatarUrl ?? null,
+        timestamp, id, expectedVersion,
+      );
+      this.database.prepare(`
+        INSERT INTO document_revisions (
+          id, document_id, version, title, type, status, content,
+          updated_by_type, updated_by_id, updated_by_name, updated_by_avatar_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `${id}:v${version}`, id, version, title, type, status, content,
+        principal.type, principal.id, principal.name, principal.avatarUrl ?? null, timestamp,
+      );
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getDocument(id);
+  }
+
+  listDocumentRevisions(documentId) {
+    if (!this.getDocument(documentId)) {
+      throw new ApiError(404, "DOCUMENT_NOT_FOUND", `Document '${documentId}' does not exist`);
+    }
+    return this.database.prepare(`
+      SELECT * FROM document_revisions
+      WHERE document_id = ?
+      ORDER BY version DESC
+    `).all(documentId).map(documentRevisionFromRow);
+  }
+
+  createDocumentAttachment(documentId, input) {
+    if (!this.getDocument(documentId)) {
+      throw new ApiError(404, "DOCUMENT_NOT_FOUND", `Document '${documentId}' does not exist`);
+    }
+    this.database.prepare(`
+      INSERT INTO document_attachments (
+        id, document_id, kind, filename, content_type, size, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.id, documentId, input.kind, input.filename, input.contentType, input.size, now(),
+    );
+    return this.getDocumentAttachment(input.id);
+  }
+
+  getDocumentAttachment(id) {
+    const row = this.database.prepare("SELECT * FROM document_attachments WHERE id = ?").get(id);
+    return row ? documentAttachmentFromRow(row) : null;
+  }
+
+  listDocumentAttachments(documentId) {
+    if (!this.getDocument(documentId)) {
+      throw new ApiError(404, "DOCUMENT_NOT_FOUND", `Document '${documentId}' does not exist`);
+    }
+    return this.database.prepare(`
+      SELECT * FROM document_attachments WHERE document_id = ? ORDER BY created_at, id
+    `).all(documentId).map(documentAttachmentFromRow);
+  }
+
   getProjectReadme(projectId) {
     if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
       throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
     }
     const row = this.database.prepare(`
       SELECT project_id, content, version, created_at, updated_at
-      FROM project_readmes
-      WHERE project_id = ?
+      FROM documents
+      WHERE project_id = ? AND is_project_overview = 1
     `).get(projectId);
     return row
       ? projectReadmeFromRow(row, projectId)
       : { projectId, content: "", version: 0, createdAt: null, updatedAt: null };
   }
 
-  saveProjectReadme(projectId, content, expectedVersion) {
-    const timestamp = now();
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
-        throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+  saveProjectReadme(projectId, content, expectedVersion, actor) {
+    const current = this.database.prepare(`
+      SELECT id, version FROM documents WHERE project_id = ? AND is_project_overview = 1
+    `).get(projectId);
+    if (!current) {
+      if (expectedVersion !== undefined && expectedVersion !== 0) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Project README changed since it was last read", {
+          expectedVersion,
+          actualVersion: 0,
+        });
       }
-      const current = this.database.prepare(`
-        SELECT version FROM project_readmes WHERE project_id = ?
-      `).get(projectId);
-      if (expectedVersion !== undefined) {
-        const actualVersion = current?.version ?? 0;
-        if (actualVersion !== expectedVersion) {
-          throw new ApiError(409, "VERSION_CONFLICT", "Project README changed since it was last read", {
-            expectedVersion,
-            actualVersion,
-          });
-        }
-      }
-      if (current) {
-        const versionCondition = expectedVersion !== undefined ? " AND version = ?" : "";
-        const params = expectedVersion !== undefined
-          ? [content, timestamp, projectId, expectedVersion]
-          : [content, timestamp, projectId];
-        this.database.prepare(`
-          UPDATE project_readmes
-          SET content = ?, version = version + 1, updated_at = ?
-          WHERE project_id = ?${versionCondition}
-        `).run(...params);
-      } else {
-        this.database.prepare(`
-          INSERT INTO project_readmes (project_id, content, version, created_at, updated_at)
-          VALUES (?, ?, 1, ?, ?)
-        `).run(projectId, content, timestamp, timestamp);
-      }
-      this.database.exec("COMMIT");
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
+      this.createDocument(projectId, {
+        id: `project-overview:${projectId}`,
+        title: "项目说明",
+        type: "general",
+        status: "draft",
+        content,
+        isProjectOverview: true,
+      }, actor);
+    } else {
+      this.updateDocument(current.id, { content }, expectedVersion ?? current.version, actor);
     }
     return this.getProjectReadme(projectId);
   }

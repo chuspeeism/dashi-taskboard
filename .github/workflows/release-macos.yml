@@ -263,16 +263,16 @@ jobs:
           mkdir -p "$LINUX_RELEASE"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
+            "$LINUX_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb.sig \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig"
+            "$LINUX_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+            "$LINUX_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig"
+            "$LINUX_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig"
 
       - name: Preserve Ubuntu 24.04 x64 release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -328,7 +328,7 @@ jobs:
       CODEX_TASKBOARD_RELEASE_VERSION: ${{ needs['release-preflight'].outputs.release_version }}
       RELEASE_TAG: ${{ needs['release-preflight'].outputs.release_tag }}
       PACKAGE_VERSION: ${{ needs['release-preflight'].outputs.package_version }}
-      APP_NAME: ${{ needs['release-preflight'].outputs.prerelease == 'true' && 'Codex Taskboard Beta.app' || 'Codex Taskboard.app' }}
+      APP_NAME: ${{ needs['release-preflight'].outputs.prerelease == 'true' && 'Atlas Workbench Beta.app' || 'Atlas Workbench.app' }}
 
     steps:
       - name: Checkout
@@ -429,7 +429,7 @@ jobs:
         run: |
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
           RAW_DMG_NAME="${APP_NAME%.app}_${PACKAGE_VERSION}_universal.dmg"
-          RELEASE_DMG_NAME="Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          RELEASE_DMG_NAME="Atlas.Workbench_${PACKAGE_VERSION}_universal.dmg"
           rm -f "$BUNDLE_ROOT/dmg/$RAW_DMG_NAME" "$BUNDLE_ROOT/macos/$RAW_DMG_NAME"
           (
             cd "$BUNDLE_ROOT/macos"
@@ -472,7 +472,7 @@ jobs:
           set -euo pipefail
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
           APP_PATH="$BUNDLE_ROOT/macos/$APP_NAME"
-          DMG_PATH="$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          DMG_PATH="$BUNDLE_ROOT/dmg/Atlas.Workbench_${PACKAGE_VERSION}_universal.dmg"
           RELEASE_ROOT="$BUNDLE_ROOT/release"
           npm run app:verify-release -- "$APP_PATH" "$DMG_PATH" "$RELEASE_ROOT" "$RELEASE_TAG"
 
@@ -482,10 +482,10 @@ jobs:
           MACOS_RELEASE="$RUNNER_TEMP/macos-release"
           mkdir -p "$MACOS_RELEASE"
           cp \
-            "$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
-            "$MACOS_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
-          cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" "$MACOS_RELEASE/"
-          cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$MACOS_RELEASE/"
+            "$BUNDLE_ROOT/dmg/Atlas.Workbench_${PACKAGE_VERSION}_universal.dmg" \
+            "$MACOS_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_macOS-universal.dmg"
+          cp "$BUNDLE_ROOT/release/Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz" "$MACOS_RELEASE/"
+          cp "$BUNDLE_ROOT/release/Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$MACOS_RELEASE/"
           cp "$BUNDLE_ROOT/release/latest.json" "$MACOS_RELEASE/"
 
       - name: Preserve final public macOS release assets
@@ -548,8 +548,8 @@ jobs:
       - name: Add and verify the Linux x64 updater
         run: |
           LATEST_PATH="$RUNNER_TEMP/macos-release/latest.json"
-          LINUX_DEB_NAME="Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
-          LINUX_APPIMAGE_NAME="Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+          LINUX_DEB_NAME="Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
+          LINUX_APPIMAGE_NAME="Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
           LINUX_DEB="$RUNNER_TEMP/linux-release/$LINUX_DEB_NAME"
           LINUX_APPIMAGE="$RUNNER_TEMP/linux-release/$LINUX_APPIMAGE_NAME"
           jq \
@@ -574,36 +574,36 @@ jobs:
           RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
           MANIFEST_ROOT="$RUNNER_TEMP/release-manifest"
           mkdir -p "$RELEASE_ASSETS" "$MANIFEST_ROOT"
-          cp "$MACOS_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" "$RELEASE_ASSETS/"
-          cp "$MACOS_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" "$RELEASE_ASSETS/"
-          cp "$MACOS_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$RELEASE_ASSETS/"
+          cp "$MACOS_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_macOS-universal.dmg" "$RELEASE_ASSETS/"
+          cp "$MACOS_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz" "$RELEASE_ASSETS/"
+          cp "$MACOS_RELEASE/Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$RELEASE_ASSETS/"
           cp "$MACOS_RELEASE/latest.json" "$RELEASE_ASSETS/"
           cp \
             "$RUNNER_TEMP/windows-preview/"*-setup.exe \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe"
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+            "$RUNNER_TEMP/linux-release/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
             "$RELEASE_ASSETS/"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
+            "$RUNNER_TEMP/linux-release/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
             "$RELEASE_ASSETS/"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+            "$RUNNER_TEMP/linux-release/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
             "$RELEASE_ASSETS/"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
+            "$RUNNER_TEMP/linux-release/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
             "$RELEASE_ASSETS/"
           (
             cd "$RELEASE_ASSETS"
             shasum -a 256 \
-              "Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_macOS-universal.dmg" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz" \
+              "Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
               "latest.json" > "$MANIFEST_ROOT/release-assets.sha256"
           )
 
@@ -635,16 +635,16 @@ jobs:
             "${RELEASE_FLAGS[@]}" \
             --title "Codex Taskboard $RELEASE_TAG" \
             --generate-notes \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_macOS-universal.dmg"
           gh release upload "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz" \
+            "$RELEASE_ASSETS/Atlas.Workbench_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
             "$RELEASE_ASSETS/latest.json"
 
   promote-release:
@@ -749,7 +749,7 @@ jobs:
           API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
           MANIFEST_PATH="$RUNNER_TEMP/trusted-release-manifest/release-assets.sha256"
           LATEST_PATH="$RUNNER_TEMP/release-latest.json"
-          FIRST_ASSET_NAME="Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+          FIRST_ASSET_NAME="Atlas.Workbench_${PACKAGE_VERSION}_macOS-universal.dmg"
           RELEASES="$(gh api --header "$API_VERSION_HEADER" \
             "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
           DRAFT_RELEASE="$(jq -c \
@@ -836,7 +836,7 @@ jobs:
           set -euo pipefail
           API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
           MANIFEST_PATH="$RUNNER_TEMP/trusted-release-manifest/release-assets.sha256"
-          FIRST_ASSET_NAME="Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+          FIRST_ASSET_NAME="Atlas.Workbench_${PACKAGE_VERSION}_macOS-universal.dmg"
           FINAL_RELEASE="$(gh api --header "$API_VERSION_HEADER" \
             "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
           LATEST_RELEASE="$(gh api --header "$API_VERSION_HEADER" \

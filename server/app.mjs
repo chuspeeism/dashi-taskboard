@@ -38,6 +38,9 @@ const execFileAsync = promisify(execFile);
 const JSON_BODY_LIMIT = 1024 * 1024;
 const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
+const DOCUMENT_BODY_LIMIT = 3 * 1024 * 1024;
+const DOCUMENT_TYPES = new Set(["general", "spec", "plan", "tasks", "run-report", "test-report"]);
+const DOCUMENT_STATUSES = new Set(["draft", "awaiting_confirmation", "approved", "frozen", "superseded"]);
 const AI_CHAT_TURN_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_ATTACHMENT_LIMIT = 10;
 const AI_CHAT_SKILL_MARKER = "\uFFFC";
@@ -517,6 +520,93 @@ function parseProjectReadmeSave(body) {
     throw new ApiError(400, "INVALID_FIELD", "'version' must be a non-negative integer");
   }
   return { content, version };
+}
+
+function parseDocumentFolderCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["name", "parentId"]));
+  return {
+    name: stringField(body.name, "name", { required: true, maxLength: 120 }),
+    parentId: stringField(body.parentId ?? null, "parentId", { nullable: true, maxLength: 128 }),
+  };
+}
+
+function parseDocumentFolderUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["name", "parentId"]));
+  if (body.name === undefined && body.parentId === undefined) {
+    throw new ApiError(400, "INVALID_BODY", "PATCH requires name or parentId");
+  }
+  return {
+    ...(body.name === undefined
+      ? {}
+      : { name: stringField(body.name, "name", { required: true, maxLength: 120 }) }),
+    ...(body.parentId === undefined
+      ? {}
+      : { parentId: stringField(body.parentId, "parentId", { nullable: true, maxLength: 128 }) }),
+  };
+}
+
+function parseDocumentType(value, fallback = "general") {
+  const type = value ?? fallback;
+  if (!DOCUMENT_TYPES.has(type)) {
+    throw new ApiError(400, "INVALID_FIELD", "'type' is not a supported document type");
+  }
+  return type;
+}
+
+function parseDocumentStatus(value, fallback = "draft") {
+  const status = value ?? fallback;
+  if (!DOCUMENT_STATUSES.has(status)) {
+    throw new ApiError(400, "INVALID_FIELD", "'status' is not a supported document status");
+  }
+  return status;
+}
+
+function parseDocumentContent(value) {
+  const content = value ?? "";
+  if (typeof content !== "string") {
+    throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
+  }
+  if (content.length > 500_000) {
+    throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
+  }
+  return content;
+}
+
+function parseDocumentCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["folderId", "title", "type", "status", "content", "taskId"]));
+  return {
+    folderId: stringField(body.folderId ?? null, "folderId", { nullable: true, maxLength: 128 }),
+    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
+    type: parseDocumentType(body.type),
+    status: parseDocumentStatus(body.status),
+    content: parseDocumentContent(body.content),
+    taskId: stringField(body.taskId ?? null, "taskId", { nullable: true, maxLength: 128 }),
+  };
+}
+
+function parseDocumentUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["folderId", "title", "type", "status", "content", "version"]));
+  if (!Number.isSafeInteger(body.version) || body.version < 1) {
+    throw new ApiError(400, "INVALID_FIELD", "'version' must be a positive integer");
+  }
+  const changes = {};
+  if (body.folderId !== undefined) {
+    changes.folderId = stringField(body.folderId, "folderId", { nullable: true, maxLength: 128 });
+  }
+  if (body.title !== undefined) {
+    changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
+  }
+  if (body.type !== undefined) changes.type = parseDocumentType(body.type);
+  if (body.status !== undefined) changes.status = parseDocumentStatus(body.status);
+  if (body.content !== undefined) changes.content = parseDocumentContent(body.content);
+  if (Object.keys(changes).length === 0) {
+    throw new ApiError(400, "INVALID_BODY", "PUT requires at least one document field");
+  }
+  return { changes, version: body.version };
 }
 
 function parseThreadId(value) {
@@ -2697,6 +2787,246 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { project });
       }
 
+      const documentFoldersRoute = pathname.match(/^\/api\/projects\/([^/]+)\/document-folders$/);
+      if (documentFoldersRoute) {
+        let projectId;
+        try {
+          projectId = decodeURIComponent(documentFoldersRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document folder routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { folders: database.listDocumentFolders(projectId) });
+        }
+        if (request.method === "POST") {
+          const folder = database.createDocumentFolder(
+            projectId,
+            parseDocumentFolderCreate(await readJson(request)),
+          );
+          events.emit("document.folder.created", { projectId, folder });
+          return sendJson(response, 201, { folder });
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const documentFolderRoute = pathname.match(/^\/api\/document-folders\/([^/]+)$/);
+      if (documentFolderRoute) {
+        let folderId;
+        try {
+          folderId = decodeURIComponent(documentFolderRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Document folder id contains invalid encoding");
+        }
+        if (!folderId || folderId.length > 128) {
+          throw new ApiError(400, "INVALID_PATH", "Document folder id is invalid");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document folder routes do not accept query parameters");
+        }
+        if (request.method !== "PATCH") return methodNotAllowed(response, ["PATCH"]);
+        const folder = database.updateDocumentFolder(
+          folderId,
+          parseDocumentFolderUpdate(await readJson(request)),
+        );
+        events.emit("document.folder.updated", { projectId: folder.projectId, folder });
+        return sendJson(response, 200, { folder });
+      }
+
+      const projectDocumentsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/documents$/);
+      if (projectDocumentsRoute) {
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectDocumentsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method === "GET") {
+          const allowed = new Set(["folderId", "q", "type"]);
+          const unknown = [...url.searchParams.keys()].find((key) => !allowed.has(key));
+          if (unknown) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${unknown}`);
+          const options = {};
+          if (url.searchParams.has("folderId")) {
+            options.folderId = url.searchParams.get("folderId") || null;
+          }
+          const query = url.searchParams.get("q")?.trim();
+          if (query) options.query = query.slice(0, 240);
+          if (url.searchParams.has("type")) options.type = parseDocumentType(url.searchParams.get("type"));
+          return sendJson(response, 200, { documents: database.listDocuments(projectId, options) });
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "POST document routes do not accept query parameters");
+        }
+        if (request.method === "POST") {
+          const document = database.createDocument(
+            projectId,
+            parseDocumentCreate(await readJson(
+              request,
+              DOCUMENT_BODY_LIMIT,
+              "Document request cannot exceed 3 MiB",
+            )),
+            actorFromRequest(request),
+          );
+          events.emit("document.created", { projectId, document });
+          return sendJson(response, 201, { document });
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const documentRevisionsRoute = pathname.match(/^\/api\/documents\/([^/]+)\/revisions$/);
+      if (documentRevisionsRoute) {
+        let documentId;
+        try {
+          documentId = decodeURIComponent(documentRevisionsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Document id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document revision routes do not accept query parameters");
+        }
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        return sendJson(response, 200, { revisions: database.listDocumentRevisions(documentId) });
+      }
+
+      const documentExportRoute = pathname.match(/^\/api\/documents\/([^/]+)\/export$/);
+      if (documentExportRoute) {
+        let documentId;
+        try {
+          documentId = decodeURIComponent(documentExportRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Document id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document export routes do not accept query parameters");
+        }
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          return methodNotAllowed(response, ["GET", "HEAD"]);
+        }
+        const document = database.getDocument(documentId);
+        if (!document) throw new ApiError(404, "DOCUMENT_NOT_FOUND", `Document '${documentId}' does not exist`);
+        const filename = `${document.title.replace(/[\\/:*?"<>|]/g, "-") || "document"}.md`;
+        const encodedFilename = encodeURIComponent(filename).replace(/['()*]/g, (character) => (
+          `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+        ));
+        const body = Buffer.from(document.content, "utf8");
+        response.writeHead(200, {
+          "cache-control": "private, no-store",
+          "content-disposition": `attachment; filename*=UTF-8''${encodedFilename}`,
+          "content-length": body.length,
+          "content-type": "text/markdown; charset=utf-8",
+        });
+        response.end(request.method === "HEAD" ? undefined : body);
+        return;
+      }
+
+      const documentAttachmentsRoute = pathname.match(/^\/api\/documents\/([^/]+)\/attachments$/);
+      if (documentAttachmentsRoute) {
+        let documentId;
+        try {
+          documentId = decodeURIComponent(documentAttachmentsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Document id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document attachment routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { attachments: database.listDocumentAttachments(documentId) });
+        }
+        if (request.method !== "POST") return methodNotAllowed(response, ["GET", "POST"]);
+        const metadata = parseAttachmentHeaders(request);
+        const body = await readBody(request, ATTACHMENT_BODY_LIMIT, "Attachment cannot exceed 25 MiB");
+        const id = randomUUID();
+        await mkdir(resolved.attachmentsDirectory, { recursive: true });
+        const storagePath = path.join(resolved.attachmentsDirectory, id);
+        await writeFile(storagePath, body, { flag: "wx" });
+        let attachment;
+        try {
+          attachment = database.createDocumentAttachment(documentId, {
+            id,
+            ...metadata,
+            size: body.length,
+          });
+        } catch (error) {
+          await unlink(storagePath);
+          throw error;
+        }
+        events.emit("document.attachment.created", {
+          projectId: database.getDocument(documentId)?.projectId,
+          documentId,
+          attachment,
+        });
+        return sendJson(response, 201, { attachment });
+      }
+
+      const documentAttachmentContentRoute = pathname.match(/^\/api\/document-attachments\/([^/]+)\/content$/);
+      if (documentAttachmentContentRoute) {
+        let attachmentId;
+        try {
+          attachmentId = decodeURIComponent(documentAttachmentContentRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Document attachment id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document attachment routes do not accept query parameters");
+        }
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          return methodNotAllowed(response, ["GET", "HEAD"]);
+        }
+        const attachment = database.getDocumentAttachment(attachmentId);
+        if (!attachment) throw new ApiError(404, "ATTACHMENT_NOT_FOUND", `Attachment '${attachmentId}' does not exist`);
+        const body = await readFile(path.join(resolved.attachmentsDirectory, attachment.id));
+        const encodedFilename = encodeURIComponent(attachment.filename).replace(/['()*]/g, (character) => (
+          `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+        ));
+        response.writeHead(200, {
+          "cache-control": "private, no-store",
+          "content-disposition": `attachment; filename*=UTF-8''${encodedFilename}`,
+          "content-length": body.length,
+          "content-type": "application/octet-stream",
+        });
+        response.end(request.method === "HEAD" ? undefined : body);
+        return;
+      }
+
+      const documentRoute = pathname.match(/^\/api\/documents\/([^/]+)$/);
+      if (documentRoute) {
+        let documentId;
+        try {
+          documentId = decodeURIComponent(documentRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Document id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Document routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          const document = database.getDocument(documentId);
+          if (!document) throw new ApiError(404, "DOCUMENT_NOT_FOUND", `Document '${documentId}' does not exist`);
+          return sendJson(response, 200, { document });
+        }
+        if (request.method === "PUT") {
+          const input = parseDocumentUpdate(await readJson(
+            request,
+            DOCUMENT_BODY_LIMIT,
+            "Document request cannot exceed 3 MiB",
+          ));
+          const document = database.updateDocument(
+            documentId,
+            input.changes,
+            input.version,
+            actorFromRequest(request),
+          );
+          events.emit("document.updated", { projectId: document.projectId, document });
+          return sendJson(response, 200, { document });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
       const projectReadmeAttachmentsRoute = pathname.match(
         /^\/api\/projects\/([^/]+)\/readme\/attachments$/,
       );
@@ -2756,7 +3086,12 @@ export function createTaskboardServer(options = {}) {
             PROJECT_README_BODY_LIMIT,
             "Project README request cannot exceed 3 MiB",
           ));
-          const readme = database.saveProjectReadme(projectId, input.content, input.version);
+          const readme = database.saveProjectReadme(
+            projectId,
+            input.content,
+            input.version,
+            actorFromRequest(request),
+          );
           events.emit("project.readme.updated", {
             projectId,
             readmeVersion: readme.version,

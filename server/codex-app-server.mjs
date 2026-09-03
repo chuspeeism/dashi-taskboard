@@ -126,7 +126,7 @@ export class CodexAppServer {
         this.#sendRequest("initialize", {
           clientInfo: {
             name: "codex-taskboard",
-            title: "Codex Taskboard",
+            title: "Atlas Workbench",
             version: "1.0.1",
           },
           capabilities: {
