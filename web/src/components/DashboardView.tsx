@@ -62,6 +62,43 @@ interface ProgressForecast {
   conservativeAt: number;
 }
 
+interface ProjectCompletion {
+  parentCount: number;
+  completedParents: number;
+  percentage: number;
+}
+
+function calculateProjectCompletion(tasks: Task[]): ProjectCompletion {
+  const activeTasks = tasks.filter((task) => task.status !== "canceled");
+  const taskById = new Map(activeTasks.map((task) => [task.id, task]));
+  const parents = activeTasks.filter((task) => (
+    task.relations.parent === null
+    && task.relations.subIssues.some((child) => taskById.has(child.id))
+  ));
+
+  if (parents.length === 0) {
+    return { parentCount: 0, completedParents: 0, percentage: 0 };
+  }
+
+  const completedParents = parents.filter((task) => task.status === "done").length;
+  const childContribution = parents.reduce((total, parent) => {
+    if (parent.status === "done") return total;
+    const children = parent.relations.subIssues
+      .map((child) => taskById.get(child.id))
+      .filter((child): child is Task => Boolean(child));
+    if (children.length === 0) return total;
+    return total + children.filter((child) => child.status === "done").length / children.length;
+  }, 0);
+  const parentCount = parents.length;
+  const completion = completedParents / parentCount + childContribution / parentCount / 2;
+
+  return {
+    parentCount,
+    completedParents,
+    percentage: Math.round(completion * 100),
+  };
+}
+
 function chartDate(value: number, locale: string, referenceValue?: number) {
   const includeYear = referenceValue !== undefined
     && new Date(value).getFullYear() !== new Date(referenceValue).getFullYear();
@@ -235,15 +272,13 @@ export function DashboardView({
   const upcomingEnd = todayValue + 14 * 86_400_000;
   const activeTasks = tasks.filter((task) => task.status !== "done" && task.status !== "canceled");
   const completedTasks = tasks.filter((task) => task.status === "done");
+  const projectCompletion = calculateProjectCompletion(tasks);
   const overdueTasks = activeTasks.filter((task) => task.dueDate && dayValue(task.dueDate) < todayValue);
   const runningTasks = tasks.filter((task) => presentations[task.id]?.processing.running);
   const upcomingTasks = activeTasks
     .filter((task) => task.dueDate && dayValue(task.dueDate) <= upcomingEnd)
     .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? ""))
     .slice(0, 5);
-  const completionRate = tasks.length
-    ? Math.round((completedTasks.length / tasks.length) * 100)
-    : 0;
   const aggregateCreatedAt = isAllProjects
     ? tasks.reduce<string | null>((earliest, task) => (
         !earliest || task.createdAt < earliest ? task.createdAt : earliest
@@ -508,10 +543,14 @@ export function DashboardView({
           <header className="dashboard-heading">
             <h1>{text("项目完成度", "Project completion")}</h1>
             <div className="dashboard-hero-value">
-              <strong>{completionRate}%</strong>
+              <strong>{projectCompletion.percentage}%</strong>
               <span>{text(
-                `${completedTasks.length} 个已完成 · ${activeTasks.length} 个尚未结束`,
-                `${completedTasks.length} completed · ${activeTasks.length} remaining`,
+                projectCompletion.parentCount > 0
+                  ? `${projectCompletion.completedParents}/${projectCompletion.parentCount} 个父任务完成 · ${completedTasks.length} 个议题已完成`
+                  : "暂无可计算的父任务",
+                projectCompletion.parentCount > 0
+                  ? `${projectCompletion.completedParents}/${projectCompletion.parentCount} parent issues complete · ${completedTasks.length} issues complete`
+                  : "No parent issues to calculate",
               )}</span>
             </div>
           </header>
