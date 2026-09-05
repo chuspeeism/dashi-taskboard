@@ -61,6 +61,21 @@ ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
 
 The desktop app keeps this same directory synchronized with its bundled Skill. The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
 
+## AI integrations
+
+- **Claude Code**: Use `taskctl ... --thread-id <conversationId>` or set `TASKBOARD_THREAD_ID` environment variable.
+- **OpenCode, Cursor, Gemini**: Set `TASKBOARD_THREAD_ID` to the session identifier. MCP server available for universal tool access.
+- **Devin, WorkBuddy, DeepSeek**: Plugin available in each ecosystem; uses the same underlying `taskctl` CLI.
+- **CI/CD**: Use `TASKBOARD_URL` environment variable to point to a shared board.
+
+## MCP server
+
+An MCP server is available in `mcp/` that exposes Taskboard operations as Tools. The MCP server automatically uses `TASKBOARD_THREAD_ID` or `CODEX_THREAD_ID` for conversation attribution.
+
+## Non-Codex CLI usage
+
+When working outside Codex, always pass `--thread-id <sessionId>` for operations that modify tasks or comments. For other CLI tools, you can also set the environment variable `TASKBOARD_THREAD_ID`.
+
 ## Embed in Codex
 
 ### Manual: use a dedicated CDP port
