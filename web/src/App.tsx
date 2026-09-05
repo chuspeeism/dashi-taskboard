@@ -1607,7 +1607,6 @@ export function App() {
         startDate: "",
         dueDate: "",
         recurrence: null,
-        attachments: [],
         relations: { parentId: parent.id, relatedIds: [], subIssueIds: [] },
       },
     });

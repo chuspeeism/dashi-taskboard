@@ -52,8 +52,8 @@ test("issue details mirror Linear parent, sub-issue, dependency, and related sec
   assert.match(styles, /\.issue-relation-sidebar/);
 });
 
-test("board cards leave relation context in issue details", () => {
-  assert.doesNotMatch(cardSource, /task\.relations/);
+test("board cards expose parent relation context", () => {
+  assert.match(cardSource, /task\.relations\.parent/);
   assert.doesNotMatch(cardSource, /sub-issue-progress|blocked-by-count/);
 });
 
