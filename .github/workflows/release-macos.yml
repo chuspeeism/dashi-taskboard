@@ -224,6 +224,13 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ubuntu-24.04-x64
+          cache-bin: false
+
       - name: Install Ubuntu build dependencies
         run: |
           sudo apt-get update
@@ -306,6 +313,13 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-x64
+          cache-bin: false
+
       - name: Install dependencies
         run: npm ci
 
@@ -347,6 +361,13 @@ jobs:
         uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: macos-universal
+          cache-bin: false
 
       - name: Install dependencies
         run: npm ci
