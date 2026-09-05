@@ -61,6 +61,17 @@ ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
 
 桌面 App 会让该目录与内置 Skill 保持同步。该 Skill 会指导 Codex 检查议题，将其移到 `in_progress`，使用乐观版本控制，验证工作，然后将其移到 `in_review`；只有在用户明确确认接受或要求将议题标记为完成后，才会将议题移到 `done`。
 
+### 可选：同步 GSD 规划文件
+
+如果你的工作区采用 GSD 规划约定，还可以安装可选的 `skills/gsd-taskboard-sync` Skill：
+
+```bash
+ln -s /absolute/path/to/codex-taskboard/skills/gsd-taskboard-sync \
+  ~/.agents/skills/gsd-taskboard-sync
+```
+
+这个适配器会读取 `.planning/` 文件，并在同步前先执行只读 dry run，将 GSD 的 Phase、PLAN 和 Todo 映射为普通 Taskboard 议题及关系。不使用 GSD 的用户不需要安装它。
+
 ## 嵌入 Codex
 
 ### 手动：使用专用 CDP 端口
