@@ -1,0 +1,29 @@
+{
+  "name": "codex-taskboard-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing Codex Taskboard API (taskctl) as Tools. Calls taskctl with proper thread attribution and automatic fallback to $TASKBOARD_THREAD_ID.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/afonsoft/dashi-taskboard"
+  },
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs",
+    "lint": "biome check",
+    "format": "biome format"
+  },
+  "keywords": ["mcp", "taskboard", "codex", "issue", "cli"],
+  "author": "afonsoft",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.8.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "biome": "^0.3.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
