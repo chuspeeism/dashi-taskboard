@@ -380,7 +380,7 @@ function parseDevelopmentContext(value) {
 
 function parseProjectCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
+  assertAllowedKeys(body, new Set(["id", "name", "area", "workspacePath"]));
   const name = stringField(body.name, "name", { required: true, maxLength: 120 });
   const id = validateProjectId(body.id ?? slugify(name));
   if (!id) {
@@ -393,7 +393,18 @@ function parseProjectCreate(body) {
   if (workspacePath?.includes("\0")) {
     throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
   }
-  return { id, name, workspacePath };
+  const area = stringField(body.area ?? null, "area", { nullable: true, maxLength: 120 }) || null;
+  return { id, name, area, workspacePath };
+}
+
+function parseProjectAreaBackfill(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["area"]));
+  const area = stringField(body.area, "area", {
+    required: true,
+    maxLength: 120,
+  });
+  return { area };
 }
 
 function parseProjectReadmeSave(body) {
@@ -2397,11 +2408,17 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
         }
         validateProjectId(projectId);
+        if (request.method === "PATCH") {
+          const input = parseProjectAreaBackfill(await readJson(request));
+          const project = database.backfillProjectArea(projectId, input.area);
+          events.emit("project.updated", { project });
+          return sendJson(response, 200, { project });
+        }
         if (request.method === "DELETE") {
           database.deleteProject(projectId);
           return sendEmpty(response, 204);
         }
-        return methodNotAllowed(response, ["DELETE"]);
+        return methodNotAllowed(response, ["PATCH", "DELETE"]);
       }
 
       const projectLabelsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/labels$/);

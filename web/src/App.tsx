@@ -147,6 +147,7 @@ import { createRevisionPoller, createRevisionWebSocketClient, getRevisionPolling
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt";
+type SmartScope = "workbench" | "today" | "review";
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number; scrollLeft: number }
   | { projectId: string; view: "list"; scrollTop: number };
@@ -188,6 +189,7 @@ interface ContextMenuState {
 interface ProjectChoice {
   id: string;
   name: string;
+  area: string | null;
   issueCount: number;
   inCodex: boolean;
   persisted: boolean;
@@ -326,7 +328,21 @@ function readProjectBoardView(projectId: string): BoardView {
   const view = taskboardStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
   return view === "readme" || view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
-    : "issues";
+    : projectId === ALL_PROJECTS_ID ? "dashboard" : "issues";
+}
+
+function localDateKey(date = new Date()): string {
+  const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60_000));
+  return localDate.toISOString().slice(0, 10);
+}
+
+function matchesSmartScope(task: Task, scope: SmartScope, today: string): boolean {
+  if (scope === "workbench") return true;
+  if (scope === "review") return task.status === "in_review";
+  if (task.status === "done" || task.status === "canceled") return false;
+  const startsByToday = Boolean(task.startDate && task.startDate.slice(0, 10) <= today);
+  const dueByToday = Boolean(task.dueDate && task.dueDate.slice(0, 10) <= today);
+  return task.status === "in_progress" || startsByToday || dueByToday;
 }
 
 function readProjectBoardDisplaySettings(): Record<string, BoardDisplaySettings> {
@@ -371,6 +387,7 @@ const EVENT_NAMES = [
   "attachment.created",
   "attachment.deleted",
   "project.created",
+  "project.updated",
   "project.labels.updated",
   "project.readme.updated",
   "client-storage.updated",
@@ -637,7 +654,7 @@ function LocalRealtimeSync({
           || !eventProjectId
           || eventProjectId === selectedProjectId
         );
-      if (event.type === "project.created") {
+      if (event.type === "project.created" || event.type === "project.updated") {
         scheduleRefresh({ projects: true });
         return;
       }
@@ -759,6 +776,8 @@ export function App() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
   const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
+  const [smartScope, setSmartScope] = useState<SmartScope>("workbench");
+  const [todayKey, setTodayKey] = useState(localDateKey);
   const [projectBoardDisplaySettings, setProjectBoardDisplaySettings] = useState(
     readProjectBoardDisplaySettings,
   );
@@ -809,6 +828,7 @@ export function App() {
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const [projectArea, setProjectArea] = useState("");
   const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [jiraConnection, setJiraConnection] = useState<JiraConnection | null>(null);
   const [jiraSaving, setJiraSaving] = useState(false);
@@ -909,6 +929,7 @@ export function App() {
     [deviceWorkspacePaths, hostContext, projectCodexIdentities, projects, selectedProject?.id],
   );
   const isAllProjects = selectedProjectId === ALL_PROJECTS_ID;
+  const activeSmartScope: SmartScope = isAllProjects ? smartScope : "workbench";
   const isJiraProject = selectedProject?.source === "jira";
   const storedBoardDisplaySettings = projectBoardDisplaySettings[selectedProjectId]
     ?? (isAllProjects
@@ -1145,7 +1166,7 @@ export function App() {
     : selectedProject?.labels ?? [];
   const projectNames = useMemo(() => Object.fromEntries(projects.map((project) => [
     project.id,
-    project.id === GLOBAL_PROJECT_ID ? text("临时任务", "Temporary tasks") : project.name,
+    project.id === GLOBAL_PROJECT_ID ? text("收件箱", "Inbox") : project.name,
   ])), [projects, text]);
   const projectChoices = useMemo<ProjectChoice[]>(() => {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
@@ -1157,8 +1178,9 @@ export function App() {
       choices.push({
         id: project.id,
         name: project.id === GLOBAL_PROJECT_ID
-          ? text("临时任务", "Temporary tasks")
+          ? text("收件箱", "Inbox")
           : persistedById.get(project.id)?.name ?? project.name,
+        area: persistedById.get(project.id)?.area?.trim() || null,
         issueCount: persistedById.get(project.id)?.issueCount ?? 0,
         inCodex: true,
         persisted: persistedById.has(project.id),
@@ -1177,8 +1199,9 @@ export function App() {
       choices.push({
         id: project.id,
         name: project.id === GLOBAL_PROJECT_ID
-          ? text("临时任务", "Temporary tasks")
+          ? text("收件箱", "Inbox")
           : project.name,
+        area: project.area?.trim() || null,
         issueCount: project.issueCount,
         inCodex: false,
         persisted: true,
@@ -1195,15 +1218,30 @@ export function App() {
       ...sortedChoices.filter((project) => project.issueCount === 0),
     ];
   }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
-  const projectMenuCandidates = projectChoices.filter(
-    (project) => project.id !== GLOBAL_PROJECT_ID || project.issueCount > 0,
-  );
+  const projectMenuCandidates = projectChoices;
   const projectMenuNeedle = projectMenuSearch.trim().toLocaleLowerCase();
   const projectMenuChoices = projectMenuNeedle
-    ? projectMenuCandidates.filter((project) => project.name.toLocaleLowerCase().includes(projectMenuNeedle))
+    ? projectMenuCandidates.filter((project) => (
+        project.name.toLocaleLowerCase().includes(projectMenuNeedle)
+        || project.area?.toLocaleLowerCase().includes(projectMenuNeedle)
+      ))
     : projectMenuCandidates;
-  const firstEmptyProjectId = projectMenuChoices.find((project) => project.issueCount === 0)?.id ?? null;
-  const hasProjectsWithIssues = projectMenuChoices.some((project) => project.issueCount > 0);
+  const inboxProjectChoice = projectMenuChoices.find((project) => project.id === GLOBAL_PROJECT_ID) ?? null;
+  const projectMenuGroups: Array<{ key: string; area: string; projects: ProjectChoice[] }> = [];
+  for (const project of projectMenuChoices) {
+    if (project.id === GLOBAL_PROJECT_ID) continue;
+    const key = project.area || "";
+    const area = project.area || text("未分组", "Other");
+    const group = projectMenuGroups.find((candidate) => candidate.key === key);
+    if (group) group.projects.push(project);
+    else projectMenuGroups.push({ key, area, projects: [project] });
+  }
+  projectMenuGroups.sort((left, right) => {
+    if (!left.key && !right.key) return 0;
+    if (!left.key) return 1;
+    if (!right.key) return -1;
+    return left.area.localeCompare(right.area, locale, { sensitivity: "base" });
+  });
   const editorProjectId = editor?.task?.projectId
     ?? editor?.projectId
     ?? (newTaskDraft?.projectId === selectedProjectId ? newTaskDraft.targetProjectId : undefined)
@@ -1227,6 +1265,24 @@ export function App() {
     setContextMenu({ taskId: task.id, ...position });
   }
   const issueReadMode = taskboardMetadata?.mode ?? "local";
+
+  useEffect(() => {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 100);
+    const timeout = window.setTimeout(
+      () => setTodayKey(localDateKey()),
+      Math.max(1_000, nextMidnight.getTime() - now.getTime()),
+    );
+    const syncVisibleDate = () => {
+      if (document.visibilityState === "visible") setTodayKey(localDateKey());
+    };
+    document.addEventListener("visibilitychange", syncVisibleDate);
+    return () => {
+      window.clearTimeout(timeout);
+      document.removeEventListener("visibilitychange", syncVisibleDate);
+    };
+  }, [todayKey]);
 
   useEffect(() => {
     let mountFrame = 0;
@@ -1582,7 +1638,9 @@ export function App() {
     setDetailTaskIdentifier(null);
     if (sourceProjectId !== selectedProjectId) {
       setSelectedProjectId(sourceProjectId);
-      setBoardView(sourceProjectId === ALL_PROJECTS_ID ? "issues" : readProjectBoardView(sourceProjectId));
+      setBoardView(sourceProjectId === ALL_PROJECTS_ID && smartScope !== "workbench"
+        ? "list"
+        : readProjectBoardView(sourceProjectId));
     }
     const url = buildIssueUrl(window.location.href, sourceProjectId, null);
     window.history.replaceState(window.history.state, "", url);
@@ -1637,13 +1695,15 @@ export function App() {
       if (!routeIssueIdentifier) detailSourceProjectIdRef.current = null;
       setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
-      setBoardView(routeProjectId === ALL_PROJECTS_ID ? "issues" : readProjectBoardView(routeProjectId));
+      setBoardView(routeProjectId === ALL_PROJECTS_ID && smartScope !== "workbench"
+        ? "list"
+        : readProjectBoardView(routeProjectId));
       setSelectedProjectId(routeProjectId);
     }
 
     window.addEventListener("popstate", syncRouteFromLocation);
     return () => window.removeEventListener("popstate", syncRouteFromLocation);
-  }, [boardView, selectedProjectId]);
+  }, [boardView, selectedProjectId, smartScope]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -1662,9 +1722,11 @@ export function App() {
 
   useEffect(() => {
     if (selectedProjectId) {
-      setBoardView(selectedProjectId === ALL_PROJECTS_ID ? "issues" : readProjectBoardView(selectedProjectId));
+      setBoardView(selectedProjectId === ALL_PROJECTS_ID && smartScope !== "workbench"
+        ? "list"
+        : readProjectBoardView(selectedProjectId));
     }
-  }, [selectedProjectId]);
+  }, [selectedProjectId, smartScope]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -2219,16 +2281,24 @@ export function App() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
-      (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
+      (task) => matchesSmartScope(task, activeSmartScope, todayKey)
+        && matchesTaskSearch(task, search, language)
+        && matchesTaskFilters(task, filters),
     );
-  }, [filters, language, search, tasks]);
+  }, [activeSmartScope, filters, language, search, tasks, todayKey]);
 
-  const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
-    (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
-  ), [archivedTasks, filters, language, search]);
+  const filteredArchivedTasks = useMemo(() => {
+    return archivedTasks.filter(
+      (task) => matchesSmartScope(task, activeSmartScope, todayKey)
+        && matchesTaskSearch(task, search, language)
+        && matchesTaskFilters(task, filters),
+    );
+  }, [activeSmartScope, archivedTasks, filters, language, search, todayKey]);
 
   const activeFilterCount = taskFilterCount(filters);
-  const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
+  const hasActiveTaskFilters = activeSmartScope !== "workbench"
+    || Boolean(search.trim())
+    || activeFilterCount > 0;
 
   const trackedCodexThreadIds = useMemo(() => [...new Set(tasks
     .filter((task) => task.status === "in_progress" && task.threadId)
@@ -2324,6 +2394,16 @@ export function App() {
     setBoardView(view);
     if (selectedProjectId) {
       taskboardStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
+    }
+  }
+
+  function selectSmartScope(scope: SmartScope) {
+    changeProject(ALL_PROJECTS_ID);
+    setSmartScope(scope);
+    const view: BoardView = scope === "workbench" ? "dashboard" : "list";
+    setBoardView(view);
+    if (scope === "workbench") {
+      taskboardStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${ALL_PROJECTS_ID}`, view);
     }
   }
 
@@ -3093,7 +3173,8 @@ export function App() {
     setProjectMenuOpen(false);
     detailSourceProjectIdRef.current = null;
     setDetailTaskIdentifier(null);
-    setBoardView(projectId === ALL_PROJECTS_ID ? "issues" : readProjectBoardView(projectId));
+    setSmartScope("workbench");
+    setBoardView(readProjectBoardView(projectId));
     if (projectId !== ALL_PROJECTS_ID) rememberProjectOpen(projectId);
     setSelectedProjectId(projectId);
     setSearch("");
@@ -3116,6 +3197,7 @@ export function App() {
           project = await createProjectRequest({
             id: choice.id,
             name: choice.name,
+            ...(issueReadMode === "cloud" ? {} : { area: choice.area }),
             workspacePath: null,
           });
           setProjects((current) => [...current, project!]);
@@ -3201,6 +3283,7 @@ export function App() {
     setProjectMenuOpen(false);
     setProjectContextMenu(null);
     setProjectName("");
+    setProjectArea("");
     setActionError(null);
     setProjectCreateOpen(true);
   }
@@ -3222,6 +3305,7 @@ export function App() {
       const project = await createProjectRequest({
         id: projectId,
         name,
+        ...(issueReadMode === "cloud" ? {} : { area: projectArea.trim() || null }),
         workspacePath: null,
       });
       setProjects((current) => [...current, project]);
@@ -3286,10 +3370,40 @@ export function App() {
     }
   }
 
+  function renderProjectMenuChoice(project: ProjectChoice) {
+    return (
+      <button
+        key={project.id}
+        type="button"
+        role="menuitemradio"
+        aria-checked={project.id === selectedProjectId}
+        disabled={openingProjectId !== null}
+        onContextMenu={project.id.startsWith("temp-") ? (event) => {
+          event.preventDefault();
+          setProjectContextMenu({
+            project,
+            x: event.clientX,
+            y: event.clientY,
+          });
+        } : undefined}
+        onClick={() => {
+          if (project.id === selectedProjectId) setProjectMenuOpen(false);
+          else void selectProject(project);
+        }}
+      >
+        <TaskboardIcon className="project-avatar" name="projectFolder" />
+        <span>{project.name}</span>
+        {project.id === selectedProjectId && (
+          <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>
+        )}
+      </button>
+    );
+  }
+
   const headerProjectName = isAllProjects
-    ? text("所有项目", "All projects")
+    ? text("工作台", "Workbench")
     : selectedProject?.id === GLOBAL_PROJECT_ID
-      ? text("临时任务", "Temporary tasks")
+      ? text("收件箱", "Inbox")
       : selectedProject?.name ?? text("任务面板", "Taskboard");
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
@@ -3389,44 +3503,25 @@ export function App() {
                             aria-checked={isAllProjects}
                             disabled={openingProjectId !== null}
                             onClick={() => {
-                              if (isAllProjects) setProjectMenuOpen(false);
-                              else changeProject(ALL_PROJECTS_ID);
+                              if (isAllProjects && smartScope === "workbench") setProjectMenuOpen(false);
+                              else selectSmartScope("workbench");
                             }}
                           >
                             <TaskboardIcon className="project-avatar" name="projectFolder" />
-                            <span>{text("所有项目", "All projects")}</span>
+                            <span>{text("工作台", "Workbench")}</span>
                             {isAllProjects && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
                           </button>
                           <div className="project-menu-divider" role="separator" />
                         </>
                       )}
-                      {projectMenuChoices.map((project) => (
-                        <Fragment key={project.id}>
-                          {hasProjectsWithIssues && project.id === firstEmptyProjectId && (
-                            <div className="project-menu-divider" role="separator" />
-                          )}
-                          <button
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={project.id === selectedProjectId}
-                            disabled={openingProjectId !== null}
-                            onContextMenu={project.id.startsWith("temp-") ? (event) => {
-                              event.preventDefault();
-                              setProjectContextMenu({
-                                project,
-                                x: event.clientX,
-                                y: event.clientY,
-                              });
-                            } : undefined}
-                            onClick={() => {
-                              if (project.id === selectedProjectId) setProjectMenuOpen(false);
-                              else void selectProject(project);
-                            }}
-                          >
-                            <TaskboardIcon className="project-avatar" name="projectFolder" />
-                            <span>{project.name}</span>
-                            {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
-                          </button>
+                      {inboxProjectChoice && renderProjectMenuChoice(inboxProjectChoice)}
+                      {inboxProjectChoice && projectMenuGroups.length > 0 && (
+                        <div className="project-menu-divider" role="separator" />
+                      )}
+                      {projectMenuGroups.map((group) => (
+                        <Fragment key={group.key || "__ungrouped__"}>
+                          <div className="project-menu-group-label">{group.area}</div>
+                          {group.projects.map(renderProjectMenuChoice)}
                         </Fragment>
                       ))}
                       {projectMenuNeedle && projectMenuChoices.length === 0 && (
@@ -3463,6 +3558,33 @@ export function App() {
               </div>
             </div>
           </div>
+
+          <nav className="smart-view-nav" aria-label={text("智能入口", "Smart views")}>
+            <button
+              className={isAllProjects && smartScope === "workbench" ? "active" : ""}
+              type="button"
+              aria-pressed={isAllProjects && smartScope === "workbench"}
+              onClick={() => selectSmartScope("workbench")}
+            >
+              {text("工作台", "Workbench")}
+            </button>
+            <button
+              className={isAllProjects && smartScope === "today" ? "active" : ""}
+              type="button"
+              aria-pressed={isAllProjects && smartScope === "today"}
+              onClick={() => selectSmartScope("today")}
+            >
+              {text("今日", "Today")}
+            </button>
+            <button
+              className={isAllProjects && smartScope === "review" ? "active" : ""}
+              type="button"
+              aria-pressed={isAllProjects && smartScope === "review"}
+              onClick={() => selectSmartScope("review")}
+            >
+              {text("等你确认", "Review")}
+            </button>
+          </nav>
 
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
@@ -3738,7 +3860,7 @@ export function App() {
             projectId={selectedProjectId}
             projectCreatedAt={selectedProject?.createdAt ?? null}
             isAllProjects={isAllProjects}
-            tasks={tasks}
+            tasks={activeSmartScope === "workbench" ? tasks : filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}
             animateSummary={dashboardSummaryAnimatedProjectId !== selectedProjectId}
@@ -3953,6 +4075,17 @@ export function App() {
                 onChange={(event) => setProjectName(event.target.value)}
               />
             </label>
+            {issueReadMode !== "cloud" && (
+              <label>
+                <span>{text("业务领域（可选）", "Area (optional)")}</span>
+                <input
+                  maxLength={120}
+                  value={projectArea}
+                  onChange={(event) => setProjectArea(event.target.value)}
+                  placeholder={text("例如：制作、发行、财务", "For example: Production or Finance")}
+                />
+              </label>
+            )}
             {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
             <div>
               <button

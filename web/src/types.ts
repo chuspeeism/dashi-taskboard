@@ -339,6 +339,7 @@ export interface CodexThreadBinding extends CodexProjectIdentity {
 export interface Project {
   id: string;
   name: string;
+  area?: string | null;
   workspacePath: string | null;
   source: "local" | "jira";
   labels: string[];

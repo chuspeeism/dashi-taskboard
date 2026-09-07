@@ -480,6 +480,17 @@ kbd {
   font-size: 11px;
 }
 
+.project-menu-group-label {
+  padding: 8px 7px 3px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .header-project-menu button:not(.search-clear) {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto auto;
@@ -7309,6 +7320,43 @@ kbd {
   font-size: 11px;
 }
 
+.smart-view-nav {
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 28px;
+  gap: 2px;
+  padding: 2px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.smart-view-nav button {
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.smart-view-nav button:hover,
+.smart-view-nav button:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.smart-view-nav button.active {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow);
+}
+
 .workspace-kicker .detail-back-button {
   width: 22px;
   height: 22px;
@@ -9635,6 +9683,9 @@ kbd {
 
 @media (max-width: 760px) {
   .board-toolbar { overflow: hidden; }
+  .header-project-button { max-width: 22vw; }
+  .header-project-button .project-name { max-width: 18vw; }
+  .smart-view-nav button { padding-inline: 5px; }
   .view-tabs { gap: 2px; overflow-x: auto; scrollbar-width: none; }
   .view-tabs::-webkit-scrollbar { display: none; }
   .dashboard-codex-summary {
