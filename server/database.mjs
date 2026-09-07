@@ -948,6 +948,26 @@ export class TaskboardDatabase {
     return this.getProject(input.id);
   }
 
+  backfillProjectArea(id, area) {
+    const result = this.database.prepare(`
+      UPDATE projects
+      SET area = ?, updated_at = ?
+      WHERE id = ? AND area IS NULL
+    `).run(area, now(), id);
+    if (result.changes === 1) return this.getProject(id);
+
+    const project = this.getProject(id);
+    if (!project) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${id}' does not exist`);
+    }
+    if (project.area === area) return project;
+    throw new ApiError(
+      409,
+      "PROJECT_AREA_CONFLICT",
+      `Project '${id}' already belongs to area '${project.area}'`,
+    );
+  }
+
   ensureJiraProject(name) {
     const timestamp = now();
     this.database.prepare(`

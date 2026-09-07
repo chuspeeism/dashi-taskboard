@@ -110,7 +110,7 @@ CODEX_TASKBOARD_PORT=47823 \
 npm run business-os
 ```
 
-`business-os` 会先核验权限为私有的 runtime descriptor 和真实 Launcher 进程。重复运行时复用现有服务并再次打开页面；未知端口占用不会被自动终止。不要同时再运行 `npm start`。
+`business-os` 会先核验权限为私有的 runtime descriptor 和真实 Launcher 进程。重复运行时复用现有服务并再次打开页面；未知端口占用不会被自动终止。启动期间还会持有一个由操作系统管理的本机单例协调端口：默认配置为 `127.0.0.1:47824`，进程异常退出时会自动释放；如该端口与本机其他程序冲突，可通过 `CODEX_TASKBOARD_LAUNCH_LOCK_PORT` 指定另一个空闲端口。服务端口、Codex 调试端口和协调端口必须互不相同。不要同时再运行 `npm start`。
 
 Launcher 运行时读取项目列表：
 

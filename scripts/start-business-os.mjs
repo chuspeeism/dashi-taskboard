@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile as execFileCallback, spawn } from "node:child_process";
-import { open, mkdir, readFile, stat, unlink } from "node:fs/promises";
+import { mkdir, readFile, readlink, stat } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -9,7 +9,8 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const execFile = promisify(execFileCallback);
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const modulePath = fileURLToPath(import.meta.url);
+const projectRoot = path.resolve(path.dirname(modulePath), "..");
 const injectorPath = path.join(projectRoot, "scripts", "codex-injector.mjs");
 const dataDirectory = path.resolve(
   process.env.CODEX_TASKBOARD_DATA_DIR || path.join(projectRoot, ".data"),
@@ -17,11 +18,14 @@ const dataDirectory = path.resolve(
 const runtimeFile = path.resolve(
   process.env.CODEX_TASKBOARD_RUNTIME_FILE || path.join(dataDirectory, "launcher-runtime.json"),
 );
-const lockFile = path.join(dataDirectory, "business-os-launch.lock");
-const recoveryLockFile = `${lockFile}.recovery`;
 const host = process.env.CODEX_TASKBOARD_HOST || "127.0.0.1";
 const port = parsePort(process.env.CODEX_TASKBOARD_PORT || "47823", "CODEX_TASKBOARD_PORT");
 const cdpPort = parsePort(process.env.CODEX_TASKBOARD_CODEX_PORT || "9231", "CODEX_TASKBOARD_CODEX_PORT");
+const launchLockPort = resolveLaunchLockPort(
+  process.env.CODEX_TASKBOARD_LAUNCH_LOCK_PORT,
+  port,
+  cdpPort,
+);
 const expectedOrigin = `http://${host}:${port}`;
 
 if (host !== "127.0.0.1") {
@@ -36,6 +40,25 @@ function parsePort(value, name) {
   return parsed;
 }
 
+function resolveLaunchLockPort(value, servicePort, browserPort) {
+  if (servicePort === browserPort) {
+    throw new Error("CODEX_TASKBOARD_PORT must differ from CODEX_TASKBOARD_CODEX_PORT");
+  }
+  let resolved;
+  if (value) {
+    resolved = parsePort(value, "CODEX_TASKBOARD_LAUNCH_LOCK_PORT");
+  } else {
+    resolved = servicePort === 65_535 ? 1 : servicePort + 1;
+    if (resolved === browserPort) resolved = resolved === 65_535 ? 1 : resolved + 1;
+  }
+  if (resolved === servicePort || resolved === browserPort) {
+    throw new Error(
+      "CODEX_TASKBOARD_LAUNCH_LOCK_PORT must differ from CODEX_TASKBOARD_PORT and CODEX_TASKBOARD_CODEX_PORT",
+    );
+  }
+  return resolved;
+}
+
 function processIsAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -47,15 +70,36 @@ function processIsAlive(pid) {
 }
 
 async function processDetails(pid) {
-  const [{ stdout: command }, { stdout: cwdOutput }] = await Promise.all([
-    execFile("/bin/ps", ["-p", String(pid), "-o", "command="]),
-    execFile("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]),
-  ]);
-  const cwd = cwdOutput
-    .split(/\r?\n/)
-    .find((line) => line.startsWith("n"))
-    ?.slice(1);
+  const commandPromise = execFile("/bin/ps", ["-p", String(pid), "-o", "command="]);
+  const cwdPromise = process.platform === "linux"
+    ? readlink(`/proc/${pid}/cwd`)
+    : execFile(
+      process.platform === "darwin" ? "/usr/sbin/lsof" : "/usr/bin/lsof",
+      ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+    ).then(({ stdout }) => stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("n"))
+      ?.slice(1));
+  const [{ stdout: command }, cwd] = await Promise.all([commandPromise, cwdPromise]);
   return { command: command.trim(), cwd: cwd ? path.resolve(cwd) : null };
+}
+
+async function bindLaunchLock() {
+  const server = net.createServer((socket) => socket.destroy());
+  server.unref();
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      resolve(server);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen({ host, port: launchLockPort, exclusive: true });
+  });
 }
 
 function metadataUrl(runtimeUrl) {
@@ -99,7 +143,7 @@ async function inspectRuntime() {
     details.cwd !== projectRoot
     || !details.command.includes("scripts/codex-injector.mjs")
   ) {
-    return { state: "conflict", reason: "the runtime descriptor belongs to another launcher" };
+    return { state: "stale" };
   }
 
   let runtimeUrl;
@@ -156,80 +200,38 @@ async function portIsOpen() {
 
 async function acquireLock() {
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  try {
+    return await bindLaunchLock();
+  } catch (error) {
+    if (error?.code !== "EADDRINUSE") throw error;
+  }
+
+  for (let wait = 0; wait < 40; wait += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const runtime = await inspectRuntime();
+    if (runtime.state === "active") {
+      requestOpen(runtime);
+      return null;
+    }
     try {
-      const handle = await open(lockFile, "wx", 0o600);
-      await handle.writeFile(`${process.pid}\n`, "utf8");
-      return handle;
+      return await bindLaunchLock();
     } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      let owner = null;
-      for (let readAttempt = 0; readAttempt < 20; readAttempt += 1) {
-        try {
-          const source = (await readFile(lockFile, "utf8")).trim();
-          if (/^[1-9]\d*$/.test(source)) {
-            owner = Number(source);
-            break;
-          }
-        } catch (readError) {
-          if (readError?.code === "ENOENT") break;
-          throw readError;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (owner === null) {
-        throw new Error("Codex 全业务任务中心的启动锁正在初始化，未改动现有进程，请稍后再试");
-      }
-      if (processIsAlive(owner)) {
-        for (let wait = 0; wait < 40; wait += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          const runtime = await inspectRuntime();
-          if (runtime.state === "active") {
-            requestOpen(runtime);
-            return null;
-          }
-        }
-        throw new Error("Codex 全业务任务中心正在启动，请稍后再试");
-      }
-      let recoveryHandle;
-      try {
-        recoveryHandle = await open(recoveryLockFile, "wx", 0o600);
-        await recoveryHandle.writeFile(`${process.pid}\n`, "utf8");
-      } catch (recoveryError) {
-        if (recoveryError?.code === "EEXIST") {
-          throw new Error("Codex 全业务任务中心正在恢复上次启动，未改动现有进程，请稍后再试");
-        }
-        throw recoveryError;
-      }
-      try {
-        const confirmedSource = (await readFile(lockFile, "utf8")).trim();
-        const confirmedOwner = /^[1-9]\d*$/.test(confirmedSource)
-          ? Number(confirmedSource)
-          : null;
-        if (confirmedOwner !== owner || processIsAlive(confirmedOwner)) continue;
-        await unlink(lockFile);
-      } finally {
-        await recoveryHandle.close();
-        try {
-          await unlink(recoveryLockFile);
-        } catch (cleanupError) {
-          if (cleanupError?.code !== "ENOENT") throw cleanupError;
-        }
-      }
+      if (error?.code !== "EADDRINUSE") throw error;
     }
   }
-  throw new Error("Cannot acquire the Business OS launcher lock");
+  throw new Error(
+    `Codex 全业务任务中心正在启动，或本机协调端口 ${launchLockPort} 已被其他程序占用；未改动现有进程`,
+  );
 }
 
-async function releaseLock(handle) {
-  if (!handle) return;
-  await handle.close();
-  try {
-    const owner = Number((await readFile(lockFile, "utf8")).trim());
-    if (owner === process.pid) await unlink(lockFile);
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
+async function releaseLock(server) {
+  if (!server?.listening) return;
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 async function main() {
@@ -293,7 +295,19 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`Business OS launcher failed: ${error.message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === modulePath) {
+  main().catch((error) => {
+    process.stderr.write(`Business OS launcher failed: ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  acquireLock,
+  bindLaunchLock,
+  inspectRuntime,
+  launchLockPort,
+  processDetails,
+  releaseLock,
+  resolveLaunchLockPort,
+};

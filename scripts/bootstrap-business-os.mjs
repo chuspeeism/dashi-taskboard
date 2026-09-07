@@ -216,6 +216,7 @@ function inspectExistingProjects(projects, specs) {
   const existingById = new Map(projects.map((project) => [project.id, project]));
   const create = [];
   const reuse = [];
+  const update = [];
   for (const spec of specs) {
     const samePath = projects.filter((project) => (
       project.workspacePath
@@ -233,7 +234,10 @@ function inspectExistingProjects(projects, specs) {
     }
     const mismatches = [];
     if (existing.name !== spec.name) mismatches.push(`name=${JSON.stringify(existing.name)}`);
-    if (existing.area !== spec.area) mismatches.push(`area=${JSON.stringify(existing.area)}`);
+    const needsAreaBackfill = existing.area === null;
+    if (!needsAreaBackfill && existing.area !== spec.area) {
+      mismatches.push(`area=${JSON.stringify(existing.area)}`);
+    }
     if (normalizedPath(existing.workspacePath ?? "") !== normalizedPath(spec.workspacePath)) {
       mismatches.push(`workspacePath=${JSON.stringify(existing.workspacePath)}`);
     }
@@ -245,9 +249,10 @@ function inspectExistingProjects(projects, specs) {
     if (samePath.length !== 1 || samePath[0].id !== spec.id) {
       throw new Error(`${spec.name}: duplicate Taskboard workspace mappings detected`);
     }
-    reuse.push(spec);
+    if (needsAreaBackfill) update.push(spec);
+    else reuse.push(spec);
   }
-  return { create, reuse };
+  return { create, reuse, update };
 }
 
 async function ensureProjectReadme(baseUrl, spec, dryRun, result) {
@@ -304,7 +309,11 @@ async function main() {
     taskboardUrl: baseUrl.origin,
     inboxProjectId: "local",
     workspacesMatched: specs.length,
-    projects: { created: [], reused: projectPlan.reuse.map((spec) => spec.id) },
+    projects: {
+      created: [],
+      reused: projectPlan.reuse.map((spec) => spec.id),
+      updated: [],
+    },
     readmes: { created: [], reused: [], preserved: [] },
     warnings: [],
     imported: { historicalTasks: 0, conversations: 0, attachments: 0, businessFiles: 0 },
@@ -320,6 +329,15 @@ async function main() {
       });
     }
     result.projects.created.push(spec.id);
+  }
+
+  for (const spec of projectPlan.update) {
+    if (!options.dryRun) {
+      await requestJson(baseUrl, "PATCH", `api/projects/${encodeURIComponent(spec.id)}`, {
+        area: spec.area,
+      });
+    }
+    result.projects.updated.push(spec.id);
   }
 
   const inboxSpec = { id: "local", name: "收件箱", area: "收件箱", workspacePath: null };
@@ -343,7 +361,7 @@ async function main() {
     `Business OS V0.1 bootstrap ${mode}`,
     `Taskboard: ${baseUrl.origin}`,
     `Codex workspaces matched: ${result.workspacesMatched}`,
-    `Projects: ${result.projects.created.length} create, ${result.projects.reused.length} reuse`,
+    `Projects: ${result.projects.created.length} create, ${result.projects.updated.length} update, ${result.projects.reused.length} reuse`,
     `Project READMEs: ${result.readmes.created.length} create, ${result.readmes.reused.length} reuse, ${result.readmes.preserved.length} preserve`,
     "Imported historical tasks/conversations/attachments/business files: 0/0/0/0",
     ...result.warnings.map((warning) => `Warning: ${warning}`),
