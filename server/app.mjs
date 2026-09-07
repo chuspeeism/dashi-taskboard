@@ -380,7 +380,7 @@ function parseDevelopmentContext(value) {
 
 function parseProjectCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
+  assertAllowedKeys(body, new Set(["id", "name", "area", "workspacePath"]));
   const name = stringField(body.name, "name", { required: true, maxLength: 120 });
   const id = validateProjectId(body.id ?? slugify(name));
   if (!id) {
@@ -393,7 +393,8 @@ function parseProjectCreate(body) {
   if (workspacePath?.includes("\0")) {
     throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
   }
-  return { id, name, workspacePath };
+  const area = stringField(body.area ?? null, "area", { nullable: true, maxLength: 120 }) || null;
+  return { id, name, area, workspacePath };
 }
 
 function parseProjectReadmeSave(body) {

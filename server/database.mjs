@@ -170,6 +170,7 @@ function projectFromRow(row) {
   return {
     id: row.id,
     name: row.name,
+    area: row.area,
     workspacePath: row.workspace_path,
     source: row.id === JIRA_PROJECT_ID ? "jira" : "local",
     labels: JSON.parse(row.labels),
@@ -264,6 +265,7 @@ export class TaskboardDatabase {
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        area TEXT,
         workspace_path TEXT,
         labels TEXT NOT NULL DEFAULT '${DEFAULT_PROJECT_LABELS_JSON}',
         next_task_number INTEGER NOT NULL DEFAULT 1 CHECK (next_task_number > 0),
@@ -461,6 +463,9 @@ export class TaskboardDatabase {
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
       this.database.exec("ALTER TABLE projects ADD COLUMN workspace_path TEXT");
+    }
+    if (!projectColumns.some((column) => column.name === "area")) {
+      this.database.exec("ALTER TABLE projects ADD COLUMN area TEXT");
     }
 
     const aiChatThreadColumns = this.database.prepare("PRAGMA table_info(ai_chat_threads)").all();
@@ -896,6 +901,7 @@ export class TaskboardDatabase {
       SELECT
         projects.id,
         projects.name,
+        projects.area,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -908,6 +914,7 @@ export class TaskboardDatabase {
       GROUP BY
         projects.id,
         projects.name,
+        projects.area,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -921,11 +928,12 @@ export class TaskboardDatabase {
     try {
       this.database.prepare(`
         INSERT INTO projects (
-          id, name, workspace_path, labels, next_task_number, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 1, ?, ?)
+          id, name, area, workspace_path, labels, next_task_number, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
       `).run(
         input.id,
         input.name,
+        input.area ?? null,
         input.workspacePath,
         DEFAULT_PROJECT_LABELS_JSON,
         timestamp,
@@ -1175,6 +1183,7 @@ export class TaskboardDatabase {
       SELECT
         projects.id,
         projects.name,
+        projects.area,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -1188,6 +1197,7 @@ export class TaskboardDatabase {
       GROUP BY
         projects.id,
         projects.name,
+        projects.area,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
