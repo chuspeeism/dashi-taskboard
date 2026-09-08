@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import "./DashboardView.css";
 import dueDoneIcon from "../assets/figma-taskboard/dashboard-due-done.svg";
@@ -163,24 +163,19 @@ function shortDate(value: string, locale: string) {
     .format(new Date(`${value}T12:00:00`));
 }
 
-export function DashboardView({
+function DashboardSummary({
   projectId,
-  projectCreatedAt,
-  isAllProjects,
-  tasks,
-  presentations,
-  currentUser,
+  summary,
+  summaryReady,
   animateSummary,
   onSummaryAnimationStart,
-  onOpenTask,
-  onOpenConversation,
-}: DashboardViewProps) {
-  const { language, locale, text } = useTaskboardI18n();
-  const [projectSummary, setProjectSummary] = useState<ProjectSummary | null>(null);
-  const [summaryLoadFailed, setSummaryLoadFailed] = useState(false);
+}: Pick<DashboardViewProps, "projectId" | "animateSummary" | "onSummaryAnimationStart"> & {
+  summary: string;
+  summaryReady: boolean;
+}) {
+  const { text } = useTaskboardI18n();
   const [displayedSummary, setDisplayedSummary] = useState("");
   const [summaryTyping, setSummaryTyping] = useState(true);
-  const [progressHoverIndex, setProgressHoverIndex] = useState<number | null>(null);
   const [animateSummaryOnMount] = useState(animateSummary);
   const summaryAnimationStartedRef = useRef(false);
   const summaryTypedRef = useRef(false);
@@ -190,273 +185,6 @@ export function DashboardView({
     summaryAnimationStartedRef.current = true;
     onSummaryAnimationStart(projectId);
   }, [animateSummaryOnMount, onSummaryAnimationStart, projectId]);
-
-  useEffect(() => {
-    if (isAllProjects) {
-      setProjectSummary(null);
-      setSummaryLoadFailed(false);
-      return undefined;
-    }
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const controller = new AbortController();
-    setProjectSummary(null);
-    setSummaryLoadFailed(false);
-
-    async function loadSummary() {
-      let delay = 60_000;
-      try {
-        const next = await getProjectSummary(projectId, controller.signal);
-        if (disposed) return;
-        setProjectSummary(next);
-        setSummaryLoadFailed(false);
-        if (next.refreshing) delay = 2_000;
-      } catch (error) {
-        if (disposed || (error instanceof Error && error.name === "AbortError")) return;
-        setSummaryLoadFailed(true);
-      }
-      if (!disposed) timer = setTimeout(loadSummary, delay);
-    }
-
-    void loadSummary();
-    return () => {
-      disposed = true;
-      controller.abort();
-      if (timer) clearTimeout(timer);
-    };
-  }, [isAllProjects, projectId]);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayValue = today.getTime();
-  const rangeEnd = new Date(todayValue);
-  rangeEnd.setMonth(rangeEnd.getMonth() + 3);
-  const rangeEndValue = rangeEnd.getTime();
-  const upcomingEnd = todayValue + 14 * 86_400_000;
-  const activeTasks = tasks.filter((task) => task.status !== "done" && task.status !== "canceled");
-  const completedTasks = tasks.filter((task) => task.status === "done");
-  const overdueTasks = activeTasks.filter((task) => task.dueDate && dayValue(task.dueDate) < todayValue);
-  const runningTasks = tasks.filter((task) => presentations[task.id]?.processing.running);
-  const upcomingTasks = activeTasks
-    .filter((task) => task.dueDate && dayValue(task.dueDate) <= upcomingEnd)
-    .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? ""))
-    .slice(0, 5);
-  const completionRate = tasks.length
-    ? Math.round((completedTasks.length / tasks.length) * 100)
-    : 0;
-  const aggregateCreatedAt = isAllProjects
-    ? tasks.reduce<string | null>((earliest, task) => (
-        !earliest || task.createdAt < earliest ? task.createdAt : earliest
-      ), null)
-    : null;
-  const progressData = buildProgressData(
-    tasks,
-    todayValue,
-    projectCreatedAt ?? aggregateCreatedAt,
-  );
-  const progressChart = (() => {
-    const left = 0;
-    const right = 426;
-    const top = 28;
-    const bottom = 227;
-    const currentX = 294;
-    const valueMaximum = Math.max(1, progressData.scope);
-    const y = (value: number) => bottom - (value / valueMaximum) * (bottom - top);
-    const points = progressData.points.map((point, index) => ({
-      ...point,
-      x: left + ((currentX - left) * index) / (progressData.points.length - 1),
-    }));
-    const path = (key: "scope" | "started" | "completed") => points
-      .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${y(point[key]).toFixed(2)}`)
-      .join(" ");
-    const completedPath = path("completed");
-    const forecast = progressData.forecast
-      ? {
-          optimisticX: currentX + ((right - currentX)
-            * (progressData.forecast.optimisticAt - todayValue))
-            / (rangeEndValue - todayValue),
-          conservativeX: currentX + ((right - currentX)
-            * (progressData.forecast.conservativeAt - todayValue))
-            / (rangeEndValue - todayValue),
-        }
-      : null;
-    return {
-      left,
-      right,
-      top,
-      bottom,
-      currentX,
-      y,
-      points,
-      scopePath: `${path("scope")} L${right} ${y(progressData.scope).toFixed(2)}`,
-      startedPath: path("started"),
-      completedPath,
-      completedArea: `${completedPath} L${currentX} ${bottom} L${left} ${bottom} Z`,
-      forecast,
-      maximumCompletions: Math.max(1, ...progressData.points.map((point) => point.completions)),
-    };
-  })();
-  const hoveredProgressPoint = progressHoverIndex === null
-    ? null
-    : progressChart.points[progressHoverIndex];
-
-  const roleContributionMap = new Map<string, { actor: Task["assignee"]; count: number }>();
-  for (const task of tasks) {
-    const key = `${task.assignee.type}:${task.assignee.id}`;
-    const current = roleContributionMap.get(key);
-    roleContributionMap.set(key, {
-      actor: task.assignee,
-      count: (current?.count ?? 0) + (task.status === "done" ? 1 : 0),
-    });
-  }
-  const roleContributions = [...roleContributionMap.values()]
-    .sort((left, right) => right.count - left.count);
-  const completedTotal = Math.max(1, completedTasks.length);
-
-  const priorityCounts = PRIORITIES.map((priority) => ({
-    priority,
-    label: taskPriorityLabel(language, priority),
-    count: tasks.filter((task) => task.priority === priority).length,
-  }));
-
-  const labelCountMap = new Map<string, number>();
-  for (const task of tasks) {
-    for (const label of task.labels) {
-      labelCountMap.set(label, (labelCountMap.get(label) ?? 0) + 1);
-    }
-  }
-  const labelCounts = [...labelCountMap.entries()]
-    .map(([label, count]) => ({
-      label,
-      count,
-      sortName: labelPresentation(label).name,
-      presentation: labelPresentation(label, language),
-    }))
-    .sort((left, right) => (
-      right.count - left.count
-      || left.sortName.localeCompare(right.sortName)
-    ));
-  const totalLabelAssignments = Math.max(
-    1,
-    labelCounts.reduce((total, item) => total + item.count, 0),
-  );
-  const visibleLabelCounts = (labelCounts.length > 12
-    ? [
-        ...labelCounts.slice(0, 11),
-        {
-          label: "__other__",
-          count: labelCounts.slice(11).reduce((total, item) => total + item.count, 0),
-          presentation: {
-            ...labelPresentation("其他"),
-            name: text(`其他（${labelCounts.length - 11}个）`, `Other (${labelCounts.length - 11})`),
-          },
-        },
-      ]
-    : labelCounts
-  ).map((item, index) => ({
-    ...item,
-    color: item.label === "__other__" ? "var(--dashboard-other-label-color)" : LABEL_COLORS[index % LABEL_COLORS.length],
-  }));
-  const maximumVisibleLabelCount = Math.max(1, ...visibleLabelCounts.map((item) => item.count));
-
-  const activityByDay = new Map<string, number>();
-  for (const task of tasks) {
-    const key = dateKey(new Date(task.activityUpdatedAt));
-    activityByDay.set(key, (activityByDay.get(key) ?? 0) + 1);
-  }
-  const contributionStart = new Date(todayValue);
-  contributionStart.setDate(contributionStart.getDate() - contributionStart.getDay() - 51 * 7);
-  const contributionWeeks = Array.from({ length: 52 }, (_, weekIndex) => (
-    Array.from({ length: 7 }, (_, dayIndex) => {
-      const date = new Date(contributionStart);
-      date.setDate(date.getDate() + weekIndex * 7 + dayIndex);
-      const key = dateKey(date);
-      return {
-        date,
-        key,
-        count: activityByDay.get(key) ?? 0,
-        future: date.getTime() > todayValue,
-      };
-    })
-  ));
-  const contributionMaximum = Math.max(1, ...contributionWeeks.flat().map((day) => day.count));
-  const monthFormatter = new Intl.DateTimeFormat(locale, { month: "short" });
-  const contributionDateFormatter = new Intl.DateTimeFormat(locale, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  const monthMarkers = contributionWeeks.flatMap((week, weekIndex) => {
-    const firstDay = week.find((day) => day.date.getDate() === 1);
-    return firstDay ? [{ weekIndex, label: monthFormatter.format(firstDay.date) }] : [];
-  });
-  if (monthMarkers[0]?.weekIndex !== 0) {
-    monthMarkers.unshift({ weekIndex: 0, label: monthFormatter.format(contributionStart) });
-  }
-
-  const attentionItems = activeTasks
-    .filter((task) => task.status === "blocked" || presentations[task.id]?.unread)
-    .sort((left, right) => {
-      const leftUnread = presentations[left.id]?.unread ? 1 : 0;
-      const rightUnread = presentations[right.id]?.unread ? 1 : 0;
-      return rightUnread - leftUnread
-        || right.activityUpdatedAt.localeCompare(left.activityUpdatedAt);
-    })
-    .slice(0, 5);
-
-  const metrics = [
-    {
-      label: taskStatusLabel(language, "in_progress"),
-      value: tasks.filter((task) => task.status === "in_progress").length,
-      tone: "progress",
-    },
-    {
-      label: taskStatusLabel(language, "in_review"),
-      value: tasks.filter((task) => task.status === "in_review").length,
-      tone: "review",
-    },
-    {
-      label: taskStatusLabel(language, "blocked"),
-      value: tasks.filter((task) => task.status === "blocked").length,
-      tone: "blocked",
-    },
-    { label: text("已逾期", "Overdue"), value: overdueTasks.length, tone: "overdue" },
-    {
-      label: taskStatusLabel(language, "backlog"),
-      value: tasks.filter((task) => task.status === "backlog").length,
-      tone: "backlog",
-    },
-  ];
-
-  const summaryBody = isAllProjects
-    ? text(
-        `所有项目共有 ${tasks.length} 个议题，${completedTasks.length} 个已完成，${activeTasks.length} 个尚未结束；当前 ${tasks.filter((task) => task.status === "blocked").length} 个遇到阻碍，${overdueTasks.length} 个已逾期。`,
-        `Across all projects, ${tasks.length} issues are tracked: ${completedTasks.length} completed and ${activeTasks.length} still open; ${tasks.filter((task) => task.status === "blocked").length} are blocked and ${overdueTasks.length} overdue.`,
-      )
-    : projectSummary?.summary
-      ?? (projectSummary?.refreshing
-        ? text(
-            "Codex 正在整理当前项目的进展、风险和下一步重点…",
-            "Codex is reviewing the project's progress, risks, and next steps…",
-          )
-        : summaryLoadFailed || projectSummary?.error
-          ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
-          : text(
-              "Codex 正在整理当前项目的进展、风险和下一步重点…",
-              "Codex is reviewing the project's progress, risks, and next steps…",
-            ));
-  const hour = new Date().getHours();
-  const greeting = hour < 12
-    ? text("上午好", "Good morning")
-    : hour < 18
-      ? text("下午好", "Good afternoon")
-      : text("晚上好", "Good evening");
-  const summaryDate = new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" }).format(today);
-  const summary = text(
-    `${greeting}，${currentUser.name}，今天是${summaryDate}，${summaryBody}`,
-    `${greeting}, ${currentUser.name}. Today is ${summaryDate}. ${summaryBody}`,
-  );
-  const summaryReady = isAllProjects || projectSummary !== null || summaryLoadFailed;
 
   useEffect(() => {
     if (!summaryReady) {
@@ -502,6 +230,490 @@ export function DashboardView({
   }, [animateSummaryOnMount, projectId, summary, summaryReady]);
 
   return (
+    <section className="dashboard-codex-summary" aria-label={text("Codex 项目总结", "Codex project summary")}>
+      <div className="dashboard-summary-bubble">
+        <p
+          className={summaryTyping ? "is-typing" : undefined}
+          aria-label={summaryReady ? summary : text("Codex 正在整理项目总结", "Codex is preparing the project summary")}
+        >{displayedSummary}</p>
+      </div>
+      <img className="dashboard-codex-mark" src="codex-agent-logo.png" alt="" aria-hidden="true" />
+    </section>
+  );
+}
+
+function DashboardProgressChart({ progressData, todayValue }: {
+  progressData: ReturnType<typeof buildProgressData>;
+  todayValue: number;
+}) {
+  const { locale, text } = useTaskboardI18n();
+  const [progressHoverIndex, setProgressHoverIndex] = useState<number | null>(null);
+  const rangeEnd = new Date(todayValue);
+  rangeEnd.setMonth(rangeEnd.getMonth() + 3);
+  const rangeEndValue = rangeEnd.getTime();
+  const progressChart = useMemo(() => {
+    const left = 0;
+    const right = 426;
+    const top = 28;
+    const bottom = 227;
+    const currentX = 294;
+    const valueMaximum = Math.max(1, progressData.scope);
+    const y = (value: number) => bottom - (value / valueMaximum) * (bottom - top);
+    const points = progressData.points.map((point, index) => ({
+      ...point,
+      x: left + ((currentX - left) * index) / (progressData.points.length - 1),
+    }));
+    const path = (key: "scope" | "started" | "completed") => points
+      .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${y(point[key]).toFixed(2)}`)
+      .join(" ");
+    const completedPath = path("completed");
+    const forecast = progressData.forecast
+      ? {
+          optimisticX: currentX + ((right - currentX)
+            * (progressData.forecast.optimisticAt - todayValue))
+            / (rangeEndValue - todayValue),
+          conservativeX: currentX + ((right - currentX)
+            * (progressData.forecast.conservativeAt - todayValue))
+            / (rangeEndValue - todayValue),
+        }
+      : null;
+    return {
+      left,
+      right,
+      top,
+      bottom,
+      currentX,
+      y,
+      points,
+      scopePath: `${path("scope")} L${right} ${y(progressData.scope).toFixed(2)}`,
+      startedPath: path("started"),
+      completedPath,
+      completedArea: `${completedPath} L${currentX} ${bottom} L${left} ${bottom} Z`,
+      forecast,
+      maximumCompletions: Math.max(1, ...progressData.points.map((point) => point.completions)),
+    };
+  }, [progressData, rangeEndValue, todayValue]);
+  const hoveredProgressPoint = progressHoverIndex === null
+    ? null
+    : progressChart.points[progressHoverIndex];
+
+  return (
+    <section className="dashboard-panel dashboard-tertiary-panel dashboard-progress-panel">
+      <header className="dashboard-progress-header">
+        <div className="dashboard-progress-title">
+          <span>{text("累计进度", "Cumulative progress")}</span>
+        </div>
+        <div className="dashboard-progress-legend">
+          <span className="tone-scope"><i />{text("范围", "Scope")} <strong>{progressData.scope}</strong></span>
+          <span className="tone-started"><i />{text("已开始", "Started")} <strong>{progressData.started}</strong></span>
+          <span className="tone-completed"><i />{text("已完成", "Completed")} <strong>{progressData.completed}</strong></span>
+        </div>
+      </header>
+      <div className="dashboard-progress-body">
+        <svg
+          className="dashboard-progress-chart"
+          viewBox="0 0 426 272"
+          role="img"
+          aria-label={text(
+            `项目累计进度：范围 ${progressData.scope}，已开始 ${progressData.started}，已完成 ${progressData.completed}`,
+            `Cumulative project progress: scope ${progressData.scope}, started ${progressData.started}, completed ${progressData.completed}`,
+          )}
+        >
+          <defs>
+            <linearGradient id="dashboard-progress-area" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#22b889" stopOpacity=".18" />
+              <stop offset="1" stopColor="#22b889" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="dashboard-progress-forecast-area" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#22b889" stopOpacity=".11" />
+              <stop offset="1" stopColor="#22b889" stopOpacity=".025" />
+            </linearGradient>
+          </defs>
+
+          <line
+            className="dashboard-progress-baseline"
+            x1={progressChart.left}
+            y1={progressChart.bottom}
+            x2={progressChart.right}
+            y2={progressChart.bottom}
+          />
+          <path className="dashboard-progress-completed-area" d={progressChart.completedArea} />
+          {progressChart.forecast ? (
+            <path
+              className="dashboard-progress-forecast-area"
+              d={`M${progressChart.currentX} ${progressChart.y(progressData.completed)} L${progressChart.forecast.optimisticX} ${progressChart.y(progressData.scope)} L${progressChart.forecast.conservativeX} ${progressChart.y(progressData.scope)} Z`}
+            />
+          ) : null}
+          <path className="dashboard-progress-line tone-scope" d={progressChart.scopePath} />
+          <path className="dashboard-progress-line tone-started" d={progressChart.startedPath} />
+          <path className="dashboard-progress-line tone-completed" d={progressChart.completedPath} />
+          {progressChart.forecast ? (
+            <>
+              <path
+                className="dashboard-progress-projection"
+                d={`M${progressChart.currentX} ${progressChart.y(progressData.completed)} L${progressChart.forecast.optimisticX} ${progressChart.y(progressData.scope)}`}
+              />
+              <path
+                className="dashboard-progress-projection"
+                d={`M${progressChart.currentX} ${progressChart.y(progressData.completed)} L${progressChart.forecast.conservativeX} ${progressChart.y(progressData.scope)}`}
+              />
+            </>
+          ) : null}
+
+          {progressChart.points.slice(1).map((point, index) => {
+            if (!point.completions) return null;
+            const width = 4;
+            const height = 8 + (point.completions / progressChart.maximumCompletions) * 20;
+            return (
+              <rect
+                className="dashboard-progress-delivery-bar"
+                x={point.x - width / 2}
+                y={progressChart.bottom - height}
+                width={width}
+                height={height}
+                rx="2"
+                key={`${point.timestamp}-${index}`}
+              />
+            );
+          })}
+
+          <line
+            className="dashboard-progress-now-line"
+            x1={progressChart.currentX}
+            y1={progressChart.top - 4}
+            x2={progressChart.currentX}
+            y2={progressChart.bottom + 7}
+          />
+          <circle className="dashboard-progress-point tone-scope" cx={progressChart.currentX} cy={progressChart.y(progressData.scope)} r="4" />
+          <circle className="dashboard-progress-point tone-started" cx={progressChart.currentX} cy={progressChart.y(progressData.completed + progressData.started)} r="4" />
+          <circle className="dashboard-progress-point tone-completed" cx={progressChart.currentX} cy={progressChart.y(progressData.completed)} r="4" />
+
+          {hoveredProgressPoint ? (
+            <>
+              <line
+                className="dashboard-progress-hover-line"
+                x1={hoveredProgressPoint.x}
+                y1={progressChart.top - 2}
+                x2={hoveredProgressPoint.x}
+                y2={progressChart.bottom + 5}
+              />
+              <g
+                className="dashboard-progress-tooltip"
+                transform={`translate(${hoveredProgressPoint.x > progressChart.right - 172 ? hoveredProgressPoint.x - 172 : hoveredProgressPoint.x + 10} 8)`}
+              >
+                <rect width="162" height="80" rx="9" />
+                <text className="dashboard-progress-tooltip-date" x="12" y="20">
+                  {chartDate(hoveredProgressPoint.timestamp, locale)}
+                </text>
+                <text x="12" y="40">{text("范围", "Scope")} {hoveredProgressPoint.scope}</text>
+                <text x="12" y="58">{text("已开始", "Started")} {Math.max(0, hoveredProgressPoint.started - hoveredProgressPoint.completed)}</text>
+                <text x="88" y="58">{text("已完成", "Completed")} {hoveredProgressPoint.completed}</text>
+                <text className="dashboard-progress-tooltip-delta" x="88" y="40">
+                  Δ {hoveredProgressPoint.scope - (progressChart.points[Math.max(0, progressHoverIndex! - 1)]?.scope ?? hoveredProgressPoint.scope)}
+                </text>
+              </g>
+            </>
+          ) : null}
+
+          {progressChart.points.map((point, index) => {
+            const hitWidth = (progressChart.currentX - progressChart.left) / (progressChart.points.length - 1);
+            return (
+              <rect
+                className="dashboard-progress-hitbox"
+                x={Math.max(progressChart.left, point.x - hitWidth / 2)}
+                y={progressChart.top - 6}
+                width={index === 0 || index === progressChart.points.length - 1 ? hitWidth / 2 : hitWidth}
+                height={progressChart.bottom - progressChart.top + 16}
+                fill="transparent"
+                role="button"
+                tabIndex={0}
+                aria-label={text(
+                  `${chartDate(point.timestamp, locale)}：范围 ${point.scope}，已开始 ${Math.max(0, point.started - point.completed)}，已完成 ${point.completed}`,
+                  `${chartDate(point.timestamp, locale)}: scope ${point.scope}, started ${Math.max(0, point.started - point.completed)}, completed ${point.completed}`,
+                )}
+                onMouseEnter={() => setProgressHoverIndex(index)}
+                onMouseLeave={() => setProgressHoverIndex(null)}
+                onFocus={() => setProgressHoverIndex(index)}
+                onBlur={() => setProgressHoverIndex(null)}
+                onClick={() => setProgressHoverIndex(index)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") setProgressHoverIndex(index);
+                }}
+                key={`${point.timestamp}-${index}`}
+              />
+            );
+          })}
+
+          <text className="dashboard-progress-axis-label" x={progressChart.left} y="260">
+            {chartDate(progressChart.points[0].timestamp, locale)}
+          </text>
+          <text className="dashboard-progress-axis-label is-current" x={progressChart.currentX} y="260" textAnchor="middle">
+            {chartDate(todayValue, locale)}
+          </text>
+          <text className="dashboard-progress-axis-label" x={progressChart.right} y="260" textAnchor="end">
+            {chartDate(rangeEndValue, locale, todayValue)}
+          </text>
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+export function DashboardView({
+  projectId,
+  projectCreatedAt,
+  isAllProjects,
+  tasks,
+  presentations,
+  currentUser,
+  animateSummary,
+  onSummaryAnimationStart,
+  onOpenTask,
+  onOpenConversation,
+}: DashboardViewProps) {
+  const { language, locale, text } = useTaskboardI18n();
+  const [projectSummary, setProjectSummary] = useState<ProjectSummary | null>(null);
+  const [summaryLoadFailed, setSummaryLoadFailed] = useState(false);
+  useEffect(() => {
+    if (isAllProjects) {
+      setProjectSummary(null);
+      setSummaryLoadFailed(false);
+      return undefined;
+    }
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    setProjectSummary(null);
+    setSummaryLoadFailed(false);
+
+    async function loadSummary() {
+      let delay = 60_000;
+      try {
+        const next = await getProjectSummary(projectId, controller.signal);
+        if (disposed) return;
+        setProjectSummary(next);
+        setSummaryLoadFailed(false);
+        if (next.refreshing) delay = 2_000;
+      } catch (error) {
+        if (disposed || (error instanceof Error && error.name === "AbortError")) return;
+        setSummaryLoadFailed(true);
+      }
+      if (!disposed) timer = setTimeout(loadSummary, delay);
+    }
+
+    void loadSummary();
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [isAllProjects, projectId]);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayValue = today.getTime();
+
+  const {
+    activeTasks, completedTasks, overdueTasks, upcomingTasks, completionRate,
+    roleContributions, completedTotal, priorityCounts, labelCounts, totalLabelAssignments,
+    visibleLabelCounts, maximumVisibleLabelCount, contributionWeeks, contributionMaximum,
+    contributionDateFormatter, monthMarkers, metrics,
+  } = useMemo(() => {
+    const upcomingEnd = todayValue + 14 * 86_400_000;
+    const activeTasks = tasks.filter((task) => task.status !== "done" && task.status !== "canceled");
+    const completedTasks = tasks.filter((task) => task.status === "done");
+    const overdueTasks = activeTasks.filter((task) => task.dueDate && dayValue(task.dueDate) < todayValue);
+    const upcomingTasks = activeTasks
+      .filter((task) => task.dueDate && dayValue(task.dueDate) <= upcomingEnd)
+      .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? ""))
+      .slice(0, 5);
+    const completionRate = tasks.length
+      ? Math.round((completedTasks.length / tasks.length) * 100)
+      : 0;
+    const roleContributionMap = new Map<string, { actor: Task["assignee"]; count: number }>();
+    for (const task of tasks) {
+      const key = `${task.assignee.type}:${task.assignee.id}`;
+      const current = roleContributionMap.get(key);
+      roleContributionMap.set(key, {
+        actor: task.assignee,
+        count: (current?.count ?? 0) + (task.status === "done" ? 1 : 0),
+      });
+    }
+    const roleContributions = [...roleContributionMap.values()]
+      .sort((left, right) => right.count - left.count);
+    const completedTotal = Math.max(1, completedTasks.length);
+
+    const priorityCounts = PRIORITIES.map((priority) => ({
+      priority,
+      label: taskPriorityLabel(language, priority),
+      count: tasks.filter((task) => task.priority === priority).length,
+    }));
+
+    const labelCountMap = new Map<string, number>();
+    for (const task of tasks) {
+      for (const label of task.labels) {
+        labelCountMap.set(label, (labelCountMap.get(label) ?? 0) + 1);
+      }
+    }
+    const labelCounts = [...labelCountMap.entries()]
+      .map(([label, count]) => ({
+        label,
+        count,
+        sortName: labelPresentation(label).name,
+        presentation: labelPresentation(label, language),
+      }))
+      .sort((left, right) => (
+        right.count - left.count
+        || left.sortName.localeCompare(right.sortName)
+      ));
+    const totalLabelAssignments = Math.max(
+      1,
+      labelCounts.reduce((total, item) => total + item.count, 0),
+    );
+    const visibleLabelCounts = (labelCounts.length > 12
+      ? [
+          ...labelCounts.slice(0, 11),
+          {
+            label: "__other__",
+            count: labelCounts.slice(11).reduce((total, item) => total + item.count, 0),
+            presentation: {
+              ...labelPresentation("其他"),
+              name: text(`其他（${labelCounts.length - 11}个）`, `Other (${labelCounts.length - 11})`),
+            },
+          },
+        ]
+      : labelCounts
+    ).map((item, index) => ({
+      ...item,
+      color: item.label === "__other__" ? "var(--dashboard-other-label-color)" : LABEL_COLORS[index % LABEL_COLORS.length],
+    }));
+    const maximumVisibleLabelCount = Math.max(1, ...visibleLabelCounts.map((item) => item.count));
+
+    const activityByDay = new Map<string, number>();
+    for (const task of tasks) {
+      const key = dateKey(new Date(task.activityUpdatedAt));
+      activityByDay.set(key, (activityByDay.get(key) ?? 0) + 1);
+    }
+    const contributionStart = new Date(todayValue);
+    contributionStart.setDate(contributionStart.getDate() - contributionStart.getDay() - 51 * 7);
+    const contributionWeeks = Array.from({ length: 52 }, (_, weekIndex) => (
+      Array.from({ length: 7 }, (_, dayIndex) => {
+        const date = new Date(contributionStart);
+        date.setDate(date.getDate() + weekIndex * 7 + dayIndex);
+        const key = dateKey(date);
+        return {
+          date,
+          key,
+          count: activityByDay.get(key) ?? 0,
+          future: date.getTime() > todayValue,
+        };
+      })
+    ));
+    const contributionMaximum = Math.max(1, ...contributionWeeks.flat().map((day) => day.count));
+    const monthFormatter = new Intl.DateTimeFormat(locale, { month: "short" });
+    const contributionDateFormatter = new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    const monthMarkers = contributionWeeks.flatMap((week, weekIndex) => {
+      const firstDay = week.find((day) => day.date.getDate() === 1);
+      return firstDay ? [{ weekIndex, label: monthFormatter.format(firstDay.date) }] : [];
+    });
+    if (monthMarkers[0]?.weekIndex !== 0) {
+      monthMarkers.unshift({ weekIndex: 0, label: monthFormatter.format(contributionStart) });
+    }
+
+    const metrics = [
+      {
+        label: taskStatusLabel(language, "in_progress"),
+        value: tasks.filter((task) => task.status === "in_progress").length,
+        tone: "progress",
+      },
+      {
+        label: taskStatusLabel(language, "in_review"),
+        value: tasks.filter((task) => task.status === "in_review").length,
+        tone: "review",
+      },
+      {
+        label: taskStatusLabel(language, "blocked"),
+        value: tasks.filter((task) => task.status === "blocked").length,
+        tone: "blocked",
+      },
+      { label: text("已逾期", "Overdue"), value: overdueTasks.length, tone: "overdue" },
+      {
+        label: taskStatusLabel(language, "backlog"),
+        value: tasks.filter((task) => task.status === "backlog").length,
+        tone: "backlog",
+      },
+    ];
+
+    return {
+      activeTasks, completedTasks, overdueTasks, upcomingTasks, completionRate,
+      roleContributions, completedTotal, priorityCounts, labelCounts, totalLabelAssignments,
+      visibleLabelCounts, maximumVisibleLabelCount, contributionWeeks, contributionMaximum,
+      contributionDateFormatter, monthMarkers, metrics,
+    };
+  }, [language, locale, tasks, text, todayValue]);
+
+  const progressData = useMemo(() => {
+    const aggregateCreatedAt = isAllProjects
+      ? tasks.reduce<string | null>((earliest, task) => (
+          !earliest || task.createdAt < earliest ? task.createdAt : earliest
+        ), null)
+      : null;
+    return buildProgressData(
+      tasks,
+      todayValue,
+      projectCreatedAt ?? aggregateCreatedAt,
+    );
+  }, [isAllProjects, projectCreatedAt, tasks, todayValue]);
+
+  const runningTasks = useMemo(() => tasks.filter(
+    (task) => presentations[task.id]?.processing.running,
+  ), [presentations, tasks]);
+
+  const attentionItems = useMemo(() => activeTasks
+    .filter((task) => task.status === "blocked" || presentations[task.id]?.unread)
+    .sort((left, right) => {
+      const leftUnread = presentations[left.id]?.unread ? 1 : 0;
+      const rightUnread = presentations[right.id]?.unread ? 1 : 0;
+      return rightUnread - leftUnread
+        || right.activityUpdatedAt.localeCompare(left.activityUpdatedAt);
+    })
+    .slice(0, 5), [activeTasks, presentations]);
+
+  const summaryBody = isAllProjects
+    ? text(
+        `所有项目共有 ${tasks.length} 个议题，${completedTasks.length} 个已完成，${activeTasks.length} 个尚未结束；当前 ${tasks.filter((task) => task.status === "blocked").length} 个遇到阻碍，${overdueTasks.length} 个已逾期。`,
+        `Across all projects, ${tasks.length} issues are tracked: ${completedTasks.length} completed and ${activeTasks.length} still open; ${tasks.filter((task) => task.status === "blocked").length} are blocked and ${overdueTasks.length} overdue.`,
+      )
+    : projectSummary?.summary
+      ?? (projectSummary?.refreshing
+        ? text(
+            "Codex 正在整理当前项目的进展、风险和下一步重点…",
+            "Codex is reviewing the project's progress, risks, and next steps…",
+          )
+        : summaryLoadFailed || projectSummary?.error
+          ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
+          : text(
+              "Codex 正在整理当前项目的进展、风险和下一步重点…",
+              "Codex is reviewing the project's progress, risks, and next steps…",
+            ));
+  const hour = new Date().getHours();
+  const greeting = hour < 12
+    ? text("上午好", "Good morning")
+    : hour < 18
+      ? text("下午好", "Good afternoon")
+      : text("晚上好", "Good evening");
+  const summaryDate = new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" }).format(today);
+  const summary = text(
+    `${greeting}，${currentUser.name}，今天是${summaryDate}，${summaryBody}`,
+    `${greeting}, ${currentUser.name}. Today is ${summaryDate}. ${summaryBody}`,
+  );
+  const summaryReady = isAllProjects || projectSummary !== null || summaryLoadFailed;
+
+  return (
     <div className="dashboard-view">
       <div className="dashboard-content">
         <div className="dashboard-overview">
@@ -516,15 +728,13 @@ export function DashboardView({
             </div>
           </header>
 
-          <section className="dashboard-codex-summary" aria-label={text("Codex 项目总结", "Codex project summary")}>
-            <div className="dashboard-summary-bubble">
-              <p
-                className={summaryTyping ? "is-typing" : undefined}
-                aria-label={summaryReady ? summary : text("Codex 正在整理项目总结", "Codex is preparing the project summary")}
-              >{displayedSummary}</p>
-            </div>
-            <img className="dashboard-codex-mark" src="codex-agent-logo.png" alt="" aria-hidden="true" />
-          </section>
+          <DashboardSummary
+            projectId={projectId}
+            summary={summary}
+            summaryReady={summaryReady}
+            animateSummary={animateSummary}
+            onSummaryAnimationStart={onSummaryAnimationStart}
+          />
         </div>
 
         <div className="dashboard-metrics">
@@ -759,164 +969,7 @@ export function DashboardView({
             )}
           </section>
 
-          <section className="dashboard-panel dashboard-tertiary-panel dashboard-progress-panel">
-          <header className="dashboard-progress-header">
-            <div className="dashboard-progress-title">
-              <span>{text("优先级", "Priority")}</span>
-            </div>
-            <div className="dashboard-progress-legend">
-              <span className="tone-scope"><i />{text("范围", "Scope")} <strong>{progressData.scope}</strong></span>
-              <span className="tone-started"><i />{text("已开始", "Started")} <strong>{progressData.started}</strong></span>
-              <span className="tone-completed"><i />{text("已完成", "Completed")} <strong>{progressData.completed}</strong></span>
-            </div>
-          </header>
-          <div className="dashboard-progress-body">
-            <svg
-              className="dashboard-progress-chart"
-              viewBox="0 0 426 272"
-              role="img"
-              aria-label={text(
-                `项目累计进度：范围 ${progressData.scope}，已开始 ${progressData.started}，已完成 ${progressData.completed}`,
-                `Cumulative project progress: scope ${progressData.scope}, started ${progressData.started}, completed ${progressData.completed}`,
-              )}
-            >
-              <defs>
-                <linearGradient id="dashboard-progress-area" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stopColor="#22b889" stopOpacity=".18" />
-                  <stop offset="1" stopColor="#22b889" stopOpacity="0" />
-                </linearGradient>
-                <linearGradient id="dashboard-progress-forecast-area" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0" stopColor="#22b889" stopOpacity=".11" />
-                  <stop offset="1" stopColor="#22b889" stopOpacity=".025" />
-                </linearGradient>
-              </defs>
-
-              <line
-                className="dashboard-progress-baseline"
-                x1={progressChart.left}
-                y1={progressChart.bottom}
-                x2={progressChart.right}
-                y2={progressChart.bottom}
-              />
-              <path className="dashboard-progress-completed-area" d={progressChart.completedArea} />
-              {progressChart.forecast ? (
-                <path
-                  className="dashboard-progress-forecast-area"
-                  d={`M${progressChart.currentX} ${progressChart.y(progressData.completed)} L${progressChart.forecast.optimisticX} ${progressChart.y(progressData.scope)} L${progressChart.forecast.conservativeX} ${progressChart.y(progressData.scope)} Z`}
-                />
-              ) : null}
-              <path className="dashboard-progress-line tone-scope" d={progressChart.scopePath} />
-              <path className="dashboard-progress-line tone-started" d={progressChart.startedPath} />
-              <path className="dashboard-progress-line tone-completed" d={progressChart.completedPath} />
-              {progressChart.forecast ? (
-                <>
-                  <path
-                    className="dashboard-progress-projection"
-                    d={`M${progressChart.currentX} ${progressChart.y(progressData.completed)} L${progressChart.forecast.optimisticX} ${progressChart.y(progressData.scope)}`}
-                  />
-                  <path
-                    className="dashboard-progress-projection"
-                    d={`M${progressChart.currentX} ${progressChart.y(progressData.completed)} L${progressChart.forecast.conservativeX} ${progressChart.y(progressData.scope)}`}
-                  />
-                </>
-              ) : null}
-
-              {progressChart.points.slice(1).map((point, index) => {
-                if (!point.completions) return null;
-                const width = 4;
-                const height = 8 + (point.completions / progressChart.maximumCompletions) * 20;
-                return (
-                  <rect
-                    className="dashboard-progress-delivery-bar"
-                    x={point.x - width / 2}
-                    y={progressChart.bottom - height}
-                    width={width}
-                    height={height}
-                    rx="2"
-                    key={`${point.timestamp}-${index}`}
-                  />
-                );
-              })}
-
-              <line
-                className="dashboard-progress-now-line"
-                x1={progressChart.currentX}
-                y1={progressChart.top - 4}
-                x2={progressChart.currentX}
-                y2={progressChart.bottom + 7}
-              />
-              <circle className="dashboard-progress-point tone-scope" cx={progressChart.currentX} cy={progressChart.y(progressData.scope)} r="4" />
-              <circle className="dashboard-progress-point tone-started" cx={progressChart.currentX} cy={progressChart.y(progressData.completed + progressData.started)} r="4" />
-              <circle className="dashboard-progress-point tone-completed" cx={progressChart.currentX} cy={progressChart.y(progressData.completed)} r="4" />
-
-              {hoveredProgressPoint ? (
-                <>
-                  <line
-                    className="dashboard-progress-hover-line"
-                    x1={hoveredProgressPoint.x}
-                    y1={progressChart.top - 2}
-                    x2={hoveredProgressPoint.x}
-                    y2={progressChart.bottom + 5}
-                  />
-                  <g
-                    className="dashboard-progress-tooltip"
-                    transform={`translate(${hoveredProgressPoint.x > progressChart.right - 172 ? hoveredProgressPoint.x - 172 : hoveredProgressPoint.x + 10} 8)`}
-                  >
-                    <rect width="162" height="80" rx="9" />
-                    <text className="dashboard-progress-tooltip-date" x="12" y="20">
-                      {chartDate(hoveredProgressPoint.timestamp, locale)}
-                    </text>
-                    <text x="12" y="40">{text("范围", "Scope")} {hoveredProgressPoint.scope}</text>
-                    <text x="12" y="58">{text("已开始", "Started")} {Math.max(0, hoveredProgressPoint.started - hoveredProgressPoint.completed)}</text>
-                    <text x="88" y="58">{text("已完成", "Completed")} {hoveredProgressPoint.completed}</text>
-                    <text className="dashboard-progress-tooltip-delta" x="88" y="40">
-                      Δ {hoveredProgressPoint.scope - (progressChart.points[Math.max(0, progressHoverIndex! - 1)]?.scope ?? hoveredProgressPoint.scope)}
-                    </text>
-                  </g>
-                </>
-              ) : null}
-
-              {progressChart.points.map((point, index) => {
-                const hitWidth = (progressChart.currentX - progressChart.left) / (progressChart.points.length - 1);
-                return (
-                  <rect
-                    className="dashboard-progress-hitbox"
-                    x={Math.max(progressChart.left, point.x - hitWidth / 2)}
-                    y={progressChart.top - 6}
-                    width={index === 0 || index === progressChart.points.length - 1 ? hitWidth / 2 : hitWidth}
-                    height={progressChart.bottom - progressChart.top + 16}
-                    fill="transparent"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={text(
-                      `${chartDate(point.timestamp, locale)}：范围 ${point.scope}，已开始 ${Math.max(0, point.started - point.completed)}，已完成 ${point.completed}`,
-                      `${chartDate(point.timestamp, locale)}: scope ${point.scope}, started ${Math.max(0, point.started - point.completed)}, completed ${point.completed}`,
-                    )}
-                    onMouseEnter={() => setProgressHoverIndex(index)}
-                    onMouseLeave={() => setProgressHoverIndex(null)}
-                    onFocus={() => setProgressHoverIndex(index)}
-                    onBlur={() => setProgressHoverIndex(null)}
-                    onClick={() => setProgressHoverIndex(index)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") setProgressHoverIndex(index);
-                    }}
-                    key={`${point.timestamp}-${index}`}
-                  />
-                );
-              })}
-
-              <text className="dashboard-progress-axis-label" x={progressChart.left} y="260">
-                {chartDate(progressChart.points[0].timestamp, locale)}
-              </text>
-              <text className="dashboard-progress-axis-label is-current" x={progressChart.currentX} y="260" textAnchor="middle">
-                {chartDate(todayValue, locale)}
-              </text>
-              <text className="dashboard-progress-axis-label" x={progressChart.right} y="260" textAnchor="end">
-                {chartDate(rangeEndValue, locale, todayValue)}
-              </text>
-            </svg>
-          </div>
-          </section>
+          <DashboardProgressChart progressData={progressData} todayValue={todayValue} />
         </div>
       </div>
     </div>
