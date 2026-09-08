@@ -1,4 +1,5 @@
 import { ApiError } from "../shared/api-fields.mjs";
+import { taskRelationsQuery, taskRelationsFromRows } from "../shared/task-relations.mjs";
 import {
   commentConversationTitle,
   threadBindingFromRow,
@@ -1697,15 +1698,23 @@ export class TaskboardDatabase {
         id
     `;
     const rows = this.database.prepare(sql).all(...values);
+    const relationsByTask = this.#taskRelationsForTasks(rows.map((row) => row.id));
     const commentsByTask = this.#commentsForTaskActivity(rows.map((row) => row.id));
     const activitiesByTask = this.#activitiesForTasks(rows.map((row) => row.id));
     const previewImagesByTask = this.#taskPreviewImages(rows.map((row) => row.id));
     return rows.map((row) => attachTaskActivity(
-      this.#taskWithRelations(row),
+      this.#taskWithRelations(row, relationsByTask.get(row.id)),
       commentsByTask.get(row.id) ?? [],
       activitiesByTask.get(row.id) ?? [],
       previewImagesByTask.get(row.id) ?? null,
     ));
+  }
+
+  getTaskSource(id) {
+    const row = this.database.prepare(
+      "SELECT external_source FROM tasks WHERE id = ? OR identifier = ?",
+    ).get(id, id);
+    return row ? (row.external_source === "jira" ? "jira" : "local") : null;
   }
 
   getTask(id) {
@@ -1882,7 +1891,7 @@ export class TaskboardDatabase {
   }
 
   updateTask(id, version, changes, threadId, threadBinding, actor) {
-    const current = this.#requireTask(id);
+    const current = this.#requireTaskRecord(id);
     this.#requireVersion(current, version);
     const activityChanges = taskFieldChanges(current, changes);
     const targetProject = Object.hasOwn(changes, "projectId")
@@ -2336,23 +2345,24 @@ export class TaskboardDatabase {
   }
 
   listComments(taskId) {
-    const task = this.#requireTask(taskId);
-    return this.database.prepare(`
+    const task = this.#requireTaskRecord(taskId);
+    const rows = this.database.prepare(`
       SELECT * FROM comments
       WHERE task_id = ?
       ORDER BY created_at, id
-    `).all(task.id).map((row) => this.#commentWithAttachments(row));
+    `).all(task.id);
+    return this.#commentsWithAttachments(rows);
   }
 
   listCommentsAfter(taskId, after) {
-    const task = this.#requireTask(taskId);
-    return this.database.prepare(`
+    const task = this.#requireTaskRecord(taskId);
+    const rows = this.database.prepare(`
       SELECT * FROM comments
       WHERE task_id = ?
         AND change_revision > ?
       ORDER BY change_revision
-    `).all(task.id, after.revision)
-      .map((row) => this.#commentWithAttachments(row));
+    `).all(task.id, after.revision);
+    return this.#commentsWithAttachments(rows);
   }
 
   createComment(taskId, input) {
@@ -2529,10 +2539,28 @@ export class TaskboardDatabase {
     return attachment;
   }
 
-  #commentWithAttachments(row) {
+  #commentWithAttachments(row, attachments = this.#attachmentsForComment(row.id)) {
     const comment = commentFromRow(row);
-    comment.attachments = this.#attachmentsForComment(comment.id);
+    comment.attachments = attachments;
     return comment;
+  }
+
+  #commentsWithAttachments(rows) {
+    const attachmentsByComment = new Map(rows.map((row) => [row.id, []]));
+    const commentIds = rows.map((row) => row.id);
+    for (let offset = 0; offset < commentIds.length; offset += 400) {
+      const chunk = commentIds.slice(offset, offset + 400);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const attachments = this.database.prepare(`
+        SELECT * FROM attachments
+        WHERE comment_id IN (${placeholders})
+        ORDER BY comment_id, created_at, id
+      `).all(...chunk);
+      for (const attachment of attachments) {
+        attachmentsByComment.get(attachment.comment_id).push(attachmentFromRow(attachment));
+      }
+    }
+    return rows.map((row) => this.#commentWithAttachments(row, attachmentsByComment.get(row.id)));
   }
 
   #aiChatThreadWithCurrentRun(row) {
@@ -2646,60 +2674,22 @@ export class TaskboardDatabase {
     `).get().value;
   }
 
-  #taskWithRelations(row) {
+  #taskRelationsForTasks(taskIds) {
+    const relationsByTask = new Map();
+    for (let offset = 0; offset < taskIds.length; offset += 400) {
+      const chunk = taskIds.slice(offset, offset + 400);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.database.prepare(taskRelationsQuery(placeholders)).all(...chunk);
+      for (const [taskId, relations] of taskRelationsFromRows(chunk, rows, taskRelationSummaryFromRow)) {
+        relationsByTask.set(taskId, relations);
+      }
+    }
+    return relationsByTask;
+  }
+
+  #taskWithRelations(row, relations = this.#taskRelationsForTasks([row.id]).get(row.id)) {
     const task = taskFromRow(row);
-    const parent = this.database.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.source_task_id
-      WHERE task_relations.relation_type = 'parent'
-        AND task_relations.target_task_id = ?
-    `).get(task.id);
-    const subIssues = this.database.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.target_task_id
-      WHERE task_relations.relation_type = 'parent'
-        AND task_relations.source_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).all(task.id);
-    const blockedBy = this.database.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.source_task_id
-      WHERE task_relations.relation_type = 'blocks'
-        AND task_relations.target_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).all(task.id);
-    const blocks = this.database.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.target_task_id
-      WHERE task_relations.relation_type = 'blocks'
-        AND task_relations.source_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).all(task.id);
-    const related = this.database.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = CASE
-        WHEN task_relations.source_task_id = ? THEN task_relations.target_task_id
-        ELSE task_relations.source_task_id
-      END
-      WHERE task_relations.relation_type = 'related'
-        AND (
-          task_relations.source_task_id = ?
-          OR task_relations.target_task_id = ?
-        )
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).all(task.id, task.id, task.id);
-    task.relations = {
-      parent: parent ? taskRelationSummaryFromRow(parent) : null,
-      subIssues: subIssues.map(taskRelationSummaryFromRow),
-      blockedBy: blockedBy.map(taskRelationSummaryFromRow),
-      blocks: blocks.map(taskRelationSummaryFromRow),
-      related: related.map(taskRelationSummaryFromRow),
-    };
+    task.relations = relations;
     return task;
   }
 
@@ -2792,6 +2782,14 @@ export class TaskboardDatabase {
     }
   }
 
+  #requireTaskRecord(id) {
+    const row = this.database.prepare("SELECT * FROM tasks WHERE id = ? OR identifier = ?").get(id, id);
+    if (!row) {
+      throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+    }
+    return taskFromRow(row);
+  }
+
   #requireTask(id) {
     const task = this.getTask(id);
     if (!task) {
@@ -2827,10 +2825,7 @@ export class TaskboardDatabase {
   }
 
   #throwMissingOrConflict(id, expectedVersion) {
-    const task = this.getTask(id);
-    if (!task) {
-      throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
-    }
+    const task = this.#requireTaskRecord(id);
     throw new ApiError(409, "VERSION_CONFLICT", "Task was changed by another client", {
       expectedVersion,
       actualVersion: task.version,
