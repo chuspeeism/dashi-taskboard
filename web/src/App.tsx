@@ -147,6 +147,7 @@ import { createRevisionPoller, createRevisionWebSocketClient, getRevisionPolling
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
+type Palette = "cobalt" | "aubergine" | "alpine" | "carbon";
 type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt";
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number; scrollLeft: number }
@@ -394,6 +395,15 @@ function getInitialTheme(): Theme {
     if (isTheme(stored)) return stored;
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function isPalette(value: unknown): value is Palette {
+  return value === "cobalt" || value === "aubergine" || value === "alpine" || value === "carbon";
+}
+
+function getInitialPalette(): Palette {
+  const stored = taskboardStorage.getItem("taskboard.palette");
+  return isPalette(stored) ? stored : "carbon";
 }
 
 function readDeviceWorkspacePaths(): Record<string, string> {
@@ -711,6 +721,7 @@ export function App() {
   const embedded = host === "codex" || host === "workbuddy" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [palette, setPalette] = useState<Palette>(getInitialPalette);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const language = resolveTaskboardLanguage(
     hostContext?.language ?? query.get("lang") ?? navigator.language,
@@ -1652,6 +1663,11 @@ export function App() {
     document.documentElement.dataset.embedded = String(embedded);
     document.documentElement.style.colorScheme = theme;
   }, [embedded, theme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette;
+    taskboardStorage.setItem("taskboard.palette", palette);
+  }, [palette]);
 
   useEffect(() => {
     if (embedded && window.parent !== window) return;
@@ -3501,6 +3517,21 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
+            <label className="palette-control">
+              <span className="sr-only">{text("界面配色", "Interface palette")}</span>
+              <i aria-hidden="true" />
+              <select
+                aria-label={text("界面配色", "Interface palette")}
+                title={text("界面配色", "Interface palette")}
+                value={palette}
+                onChange={(event) => setPalette(event.target.value as Palette)}
+              >
+                <option value="cobalt">Cobalt Ember</option>
+                <option value="aubergine">Plum Voltage</option>
+                <option value="alpine">Alpine Copper</option>
+                <option value="carbon">Carbon Black</option>
+              </select>
+            </label>
             {selectedProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
