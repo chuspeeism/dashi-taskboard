@@ -1,10 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use base64::Engine;
 #[cfg(target_os = "macos")]
 use dispatch2::{run_on_main, MainThreadBound};
-use futures_util::{future::{BoxFuture, Shared}, FutureExt, StreamExt};
-use minisign_verify::{PublicKey, Signature};
+use futures_util::{future::{BoxFuture, Shared}, FutureExt};
 #[cfg(target_os = "macos")]
 use objc2::{
     define_class, msg_send,
@@ -19,7 +17,6 @@ use objc2_app_kit::{
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSObject, NSSize, NSString};
-use reqwest::header::{HeaderValue, ACCEPT};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "macos")]
@@ -2034,96 +2031,6 @@ async fn check_for_startup_update(
     Ok(update)
 }
 
-async fn download_update<C: FnMut(usize, Option<u64>), D: FnOnce()>(
-    app: &AppHandle,
-    update: &Update,
-    cancel_requested: &AtomicBool,
-    mut on_chunk: C,
-    on_download_finish: D,
-) -> Result<Option<Vec<u8>>, String> {
-    let pubkey = app
-        .config()
-        .plugins
-        .0
-        .get("updater")
-        .and_then(|value| value.get("pubkey"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or("Updater public key is unavailable")?;
-    let mut headers = update.headers.clone();
-    if !headers.contains_key(ACCEPT) {
-        headers.insert(ACCEPT, HeaderValue::from_static("application/octet-stream"));
-    }
-    let mut request = reqwest::Client::builder().user_agent("tauri-plugin-updater/2.10.1");
-    if let Some(timeout) = update.timeout {
-        request = request.timeout(timeout);
-    }
-    if update.no_proxy {
-        request = request.no_proxy();
-    } else if let Some(proxy) = &update.proxy {
-        request =
-            request.proxy(reqwest::Proxy::all(proxy.as_str()).map_err(|error| error.to_string())?);
-    }
-    let response = request
-        .build()
-        .map_err(|error| error.to_string())?
-        .get(update.download_url.clone())
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Download request failed with status: {}",
-            response.status()
-        ));
-    }
-    let content_length = response
-        .headers()
-        .get("Content-Length")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse().ok());
-    let mut buffer = Vec::new();
-    let mut stream = response.bytes_stream();
-    loop {
-        if cancel_requested.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        let Some(chunk) = stream.next().await else {
-            break;
-        };
-        let chunk = chunk.map_err(|error| error.to_string())?;
-        if cancel_requested.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        on_chunk(chunk.len(), content_length);
-        if cancel_requested.load(Ordering::SeqCst) {
-            return Ok(None);
-        }
-        buffer.extend_from_slice(&chunk);
-    }
-    if cancel_requested.load(Ordering::SeqCst) {
-        return Ok(None);
-    }
-    on_download_finish();
-    if cancel_requested.load(Ordering::SeqCst) {
-        return Ok(None);
-    }
-    let pubkey = base64::engine::general_purpose::STANDARD
-        .decode(pubkey)
-        .map_err(|error| error.to_string())?;
-    let pubkey = std::str::from_utf8(&pubkey).map_err(|error| error.to_string())?;
-    let pubkey = PublicKey::decode(pubkey).map_err(|error| error.to_string())?;
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(&update.signature)
-        .map_err(|error| error.to_string())?;
-    let signature = std::str::from_utf8(&signature).map_err(|error| error.to_string())?;
-    let signature = Signature::decode(signature).map_err(|error| error.to_string())?;
-    pubkey
-        .verify(&buffer, &signature, true)
-        .map_err(|error| error.to_string())?;
-    Ok(Some(buffer))
-}
-
 async fn prepare_update(
     app: &AppHandle,
     state: &Arc<LauncherState>,
@@ -2139,7 +2046,6 @@ async fn prepare_update(
         snapshot.update_message = format!("正在下载 {update_version}…");
         snapshot.update_available = true;
     });
-    let cancel_requested = AtomicBool::new(false);
     let progress_app = app.clone();
     let progress_state = Arc::clone(state);
     let progress_version = update_version.clone();
@@ -2149,10 +2055,7 @@ async fn prepare_update(
     let finish_dialog = Arc::clone(dialog);
     let mut downloaded = 0_u64;
     let mut displayed_progress = None;
-    let bytes = download_update(
-        app,
-        update,
-        &cancel_requested,
+    let bytes = update.download(
         move |chunk_length, content_length| {
             downloaded = downloaded.saturating_add(chunk_length as u64);
             let progress = content_length.filter(|total| *total > 0).map(|total| {
@@ -2186,8 +2089,8 @@ async fn prepare_update(
             }
         },
     )
-    .await?
-    .ok_or_else(|| "Update download was cancelled".to_string())?;
+    .await
+    .map_err(|error| error.to_string())?;
 
     append_log(
         state,
