@@ -325,12 +325,21 @@ function eventHasAttachments(event: AiChatEvent): boolean {
   return Array.isArray(event.data?.attachments) && event.data.attachments.length > 0;
 }
 
-function serializeComposer(root: HTMLElement): ComposerFragment {
-  let message = "";
-  const skillIds: string[] = [];
-  const references: Array<ComposerStableReference | null> = [];
+function readComposer(root: HTMLElement): {
+  fragment: ComposerFragment;
+  document: ComposerDraftDocument;
+} {
+  const nodes: Array<{
+    node: ComposerDraftNode;
+    skillId?: string;
+    reference?: ComposerStableReference | null;
+  }> = [];
   const appendText = (value: string) => {
-    message += value.replaceAll("\u200B", "");
+    const text = value.replaceAll("\u200B", "");
+    if (!text) return;
+    const previous = nodes.at(-1)?.node;
+    if (previous?.type === "text") previous.text += text;
+    else nodes.push({ node: { type: "text", text } });
   };
   const visit = (node: Node) => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -341,63 +350,23 @@ function serializeComposer(root: HTMLElement): ComposerFragment {
     const stableId = node.dataset.composerStableId ?? node.dataset.skillId;
     const skillId = stableId ?? node.dataset.composerCandidateRef;
     if (skillId) {
-      message += SKILL_MARKER;
-      skillIds.push(skillId);
       const referenceKey = node.dataset.composerReferenceKey;
       const kind = node.dataset.composerKind === "agent" ? "agent" : "skill";
-      references.push(stableId && referenceKey ? composerStableReference(
-        kind,
-        stableId,
-        node.dataset.composerLabel ?? stableId,
-        referenceKey,
-        node.dataset.composerMarkdown,
-      ) : null);
-      return;
-    }
-    if (node.tagName === "BR") {
-      message += "\n";
-      return;
-    }
-    const isBlock = node.tagName === "DIV" || node.tagName === "P";
-    if (isBlock && message && !message.endsWith("\n")) message += "\n";
-    for (const child of node.childNodes) visit(child);
-    if (isBlock && node.nextSibling && !message.endsWith("\n")) message += "\n";
-  };
-  for (const child of root.childNodes) visit(child);
-  return { message, skillIds, references };
-}
-
-function serializeComposerDocumentFromDom(
-  root: HTMLElement,
-): ComposerDraftDocument {
-  const nodes: ComposerDraftNode[] = [];
-  const appendText = (value: string) => {
-    const text = value.replaceAll("\u200B", "");
-    if (!text) return;
-    const previous = nodes.at(-1);
-    if (previous?.type === "text") previous.text += text;
-    else nodes.push({ type: "text", text });
-  };
-  const visit = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      appendText(node.textContent ?? "");
-      return;
-    }
-    if (!(node instanceof HTMLElement)) return;
-    if (node.dataset.composerReferenceKey) {
+      const label = node.dataset.composerLabel ?? "";
       nodes.push({
-        type: "persistedReference",
-        referenceKind: node.dataset.composerKind === "agent" ? "agent" : "skill",
-        referenceKey: node.dataset.composerReferenceKey,
-        label: node.dataset.composerLabel ?? "",
-      });
-      return;
-    }
-    if (node.dataset.composerCandidateRef) {
-      nodes.push({
-          type: node.dataset.composerKind === "agent" ? "agent" : "skill",
-          candidateRef: node.dataset.composerCandidateRef,
-          label: node.dataset.composerLabel ?? "",
+        node: referenceKey ? {
+          type: "persistedReference", referenceKind: kind, referenceKey, label,
+        } : {
+          type: kind, candidateRef: node.dataset.composerCandidateRef ?? skillId, label,
+        },
+        skillId,
+        reference: stableId && referenceKey ? composerStableReference(
+          kind,
+          stableId,
+          node.dataset.composerLabel ?? stableId,
+          referenceKey,
+          node.dataset.composerMarkdown,
+        ) : null,
       });
       return;
     }
@@ -406,22 +375,34 @@ function serializeComposerDocumentFromDom(
       return;
     }
     const isBlock = node.tagName === "DIV" || node.tagName === "P";
-    const previousText = nodes.at(-1);
+    const previous = nodes.at(-1)?.node;
     if (
-      isBlock
-      && nodes.length > 0
-      && !(previousText?.type === "text" && previousText.text.endsWith("\n"))
+      isBlock && previous
+      && !(previous.type === "text" && previous.text.endsWith("\n"))
     ) appendText("\n");
     for (const child of node.childNodes) visit(child);
-    const finalText = nodes.at(-1);
+    const final = nodes.at(-1)?.node;
     if (
-      isBlock
-      && node.nextSibling
-      && !(finalText?.type === "text" && finalText.text.endsWith("\n"))
+      isBlock && node.nextSibling
+      && !(final?.type === "text" && final.text.endsWith("\n"))
     ) appendText("\n");
   };
   for (const child of root.childNodes) visit(child);
-  return { version: 1, nodes };
+
+  let message = "";
+  const skillIds: string[] = [];
+  const references: Array<ComposerStableReference | null> = [];
+  const document: ComposerDraftDocument = { version: 1, nodes: [] };
+  for (const { node, skillId, reference } of nodes) {
+    document.nodes.push(node);
+    if (node.type === "text") message += node.text;
+    else if (skillId) {
+      message += SKILL_MARKER;
+      skillIds.push(skillId);
+      references.push(reference ?? null);
+    }
+  }
+  return { fragment: { message, skillIds, references }, document };
 }
 
 function selectedComposerFragment(root: HTMLElement): {
@@ -454,7 +435,7 @@ function selectedComposerFragment(root: HTMLElement): {
   if (endSkill) copyRange.setEndAfter(endSkill);
   const wrapper = root.ownerDocument.createElement("div");
   wrapper.append(copyRange.cloneContents());
-  const fragment = serializeComposer(wrapper);
+  const { fragment } = readComposer(wrapper);
   return fragment.message ? { ...fragment, range: copyRange } : null;
 }
 
@@ -1270,6 +1251,7 @@ export function AiChat({
   const [catalogLoadedProjectId, setCatalogLoadedProjectId] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<AiChatError | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<AiChatError | null>(null);
   const [draft, setDraft] = useState("");
   const [requestedComposerText, setRequestedComposerText] = useState<string | null>(null);
@@ -1651,15 +1633,17 @@ export function AiChat({
     catalogCodexProjectIdentity?.workspacePath,
   ]);
 
+  const composerQueryTrigger = composerQueryState?.trigger;
+  const composerQueryText = composerQueryState?.query;
   const composerRequestQuery = useMemo(() => {
-    if (!composerQueryState) return "";
-    const escapedTrigger = composerQueryState.trigger === "/" ? "\\/" : "@";
+    if (!composerQueryTrigger) return "";
+    const escapedTrigger = composerQueryTrigger === "/" ? "\\/" : "@";
     const match = new RegExp(`(?:^|\\s)${escapedTrigger}([^\\s@/]*)$`).exec(draft);
-    return match?.[1] ?? composerQueryState.query;
-  }, [composerQueryState, draft]);
+    return match?.[1] ?? composerQueryText ?? "";
+  }, [composerQueryTrigger, composerQueryText, draft]);
 
   useEffect(() => {
-    if (!composerQueryState) {
+    if (!composerQueryTrigger) {
       setComposerCandidates(null);
       setComposerCandidatesLoading(false);
       setComposerCandidatesError(null);
@@ -1673,7 +1657,7 @@ export function AiChat({
       ...(catalogProjectId ? { projectId: catalogProjectId } : {}),
       ...(selectedThreadId ? { threadId: selectedThreadId } : {}),
       ...(!selectedThreadId && catalogCodexProjectIdentity ? catalogCodexProjectIdentity : {}),
-      trigger: composerQueryState.trigger,
+      trigger: composerQueryTrigger,
       query: composerRequestQuery,
     }, controller.signal).then(
       (next) => {
@@ -1697,7 +1681,7 @@ export function AiChat({
     catalogCodexProjectIdentity?.codexProjectId,
     catalogCodexProjectIdentity?.codexProjectKind,
     catalogCodexProjectIdentity?.workspacePath,
-    composerQueryState,
+    composerQueryTrigger,
     composerRequestQuery,
     selectedThreadId,
   ]);
@@ -1767,6 +1751,7 @@ export function AiChat({
     selectedThreadId && deletingThreadId === selectedThreadId,
   );
   const sendBlocked = loading
+    || sending
     || settingsSaving
     || composerBlocked
     || Boolean(selectedThreadId && !snapshot);
@@ -1815,11 +1800,13 @@ export function AiChat({
     if (attachmentBlocked) setAttachmentDragActive(false);
   }, [attachmentBlocked]);
 
-  function resetComposer() {
+  function resetComposer(submittedAttachmentIds?: ReadonlySet<string>) {
     editorRef.current?.replaceChildren();
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     setDraft("");
-    setAttachments([]);
+    setAttachments((current) => submittedAttachmentIds
+      ? current.filter((attachment) => !submittedAttachmentIds.has(attachment.id))
+      : []);
     setSkillIds([]);
     setComposerSkillTokens([]);
     setComposerQueryState(null);
@@ -2092,7 +2079,7 @@ export function AiChat({
   function syncComposerState() {
     const editor = editorRef.current;
     if (!editor) return;
-    const next = serializeComposer(editor);
+    const { fragment: next } = readComposer(editor);
     setDraft(next.message);
     setSkillIds(next.skillIds);
     setComposerSkillTokens((current) => current.filter((token) => editor.contains(token.element)));
@@ -2234,6 +2221,11 @@ export function AiChat({
 
     const lastNode = content.lastChild;
     range.deleteContents();
+    if (editor.innerHTML === "<br>") {
+      editor.replaceChildren();
+      range.selectNodeContents(editor);
+      range.collapse(true);
+    }
     range.insertNode(content);
     if (lastNode.nodeType === Node.TEXT_NODE) {
       range.setStart(lastNode, lastNode.textContent?.length ?? 0);
@@ -2338,10 +2330,13 @@ export function AiChat({
   ) {
     if (sendBlocked) return;
     if (boundSkillIds === undefined && slashQueryBlocked) return;
+    const submittedEditor = editorRef.current;
+    const submittedComposer = submittedEditor ? readComposer(submittedEditor) : null;
+    const submittedDocument = JSON.stringify(submittedComposer?.document);
     const trimmed = message.trim();
     const submittedSkillIds = boundSkillIds ?? [...realSkillIdsForMessage()];
     let currentComposerDocument = boundComposerDocument
-      ?? (editorRef.current ? serializeComposerDocumentFromDom(editorRef.current) : undefined);
+      ?? submittedComposer?.document;
     let currentComposerRevision = boundComposerRevision ?? composerRevision ?? undefined;
     const hasPersistedReference = currentComposerDocument
       ? hasPersistedComposerReference(currentComposerDocument)
@@ -2392,9 +2387,13 @@ export function AiChat({
       contentType: attachment.contentType,
       dataBase64: attachment.dataBase64,
     }));
+    const submittedAttachmentIds = new Set(attachments.filter((attachment) => (
+      messageAttachments.some((submitted) => submitted.filename === attachment.filename
+        && submitted.contentType === attachment.contentType
+        && submitted.dataBase64 === attachment.dataBase64)
+    )).map((attachment) => attachment.id));
     if (!trimmed && messageAttachments.length === 0) return;
     let thread = snapshot?.thread ?? null;
-    const creatingThread = !thread;
     const messageSandbox = thread?.sandbox ?? draftSandbox;
     if (needsDangerConfirmation(messageSandbox, dangerConfirmed)) {
       setPendingDangerInput({
@@ -2409,7 +2408,6 @@ export function AiChat({
       });
       return;
     }
-    if (creatingThread && clearSubmittedDraft && !useComposerTurn) resetComposer();
     if (!thread) thread = await createThreadForDraftOrigin();
     if (!thread) return;
     const messageSkillIds = (
@@ -2417,6 +2415,7 @@ export function AiChat({
     ) ? submittedSkillIds : [];
     setPendingDangerInput(null);
     setError(null);
+    setSending(true);
     try {
       let resolvedComposerDocument: ComposerDocument | undefined;
       if (useComposerTurn && currentComposerDocument) {
@@ -2469,9 +2468,6 @@ export function AiChat({
             messageAttachments,
           )
         : null;
-      if (clearSubmittedDraft && !creatingThread && !composerTurnInput) {
-        resetComposer();
-      }
       const run = composerTurnInput
         ? await startAiChatComposerTurn(thread.id, composerTurnInput)
         : await startAiChatTurn(thread.id, buildTurnInput(
@@ -2480,7 +2476,16 @@ export function AiChat({
             dangerConfirmed,
             messageAttachments,
           ));
-      if (clearSubmittedDraft && composerTurnInput) resetComposer();
+      if (clearSubmittedDraft && selectedThreadRef.current === thread.id) {
+        const editor = editorRef.current;
+        if (
+          editor && editor === submittedEditor
+          && JSON.stringify(readComposer(editor).document) === submittedDocument
+        ) resetComposer(submittedAttachmentIds);
+        else setAttachments((current) => current.filter(
+          (attachment) => !submittedAttachmentIds.has(attachment.id),
+        ));
+      }
       observedRunStatusesRef.current.set(run.id, run.status);
       setSnapshot((current) => current?.thread.id === thread.id ? {
           ...current,
@@ -2501,6 +2506,8 @@ export function AiChat({
       if (selectedThreadRef.current === thread.id) {
         void selectedHintRefreshQueue.request(thread.id);
       }
+    } finally {
+      setSending(false);
     }
   }
 
