@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import type { DragEvent } from "react";
+import { useTaskCardDragPreview } from "../useTaskCardDragPreview";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import { taskStatusLabel, useTaskboardI18n } from "../i18n";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
@@ -83,27 +83,8 @@ export function BoardColumn({
   const { language, text } = useTaskboardI18n();
   const details = STATUS_DETAILS[status];
   const label = taskStatusLabel(language, status);
-  const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
-  const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
-  const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
-  const remainingIndexes = new Map(remainingTasks.map((task, index) => [task.id, index]));
-  const draggedTaskIndex = draggedTaskId ? taskIndexes.get(draggedTaskId) ?? -1 : -1;
-  const beforeIndex = dropBeforeTaskId
-    ? remainingIndexes.get(dropBeforeTaskId) ?? remainingTasks.length
-    : remainingTasks.length;
-  const previewIndex = isDropTarget && dropBeforeTaskId !== undefined ? beforeIndex : -1;
-  const dragDistance = draggedTaskHeight + 8;
-
-  useEffect(() => {
-    if (!isDropTarget || !draggedTaskId) setDropBeforeTaskId(undefined);
-  }, [draggedTaskId, isDropTarget]);
-
-  function findDropBefore(container: HTMLElement, clientY: number): string | null {
-    const cards = Array.from(container.querySelectorAll<HTMLElement>("[data-task-id]"))
-      .filter((card) => card.dataset.taskId !== draggedTaskId);
-    return cards.find((card) => clientY < card.getBoundingClientRect().top + card.offsetHeight / 2)
-      ?.dataset.taskId ?? null;
-  }
+  const { findDropBefore, clearDropPreview, updateDropPreview, leaveDropPreview, getTaskDragShift } =
+    useTaskCardDragPreview({ tasks, draggedTaskId, draggedTaskHeight, isDropTarget });
 
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
@@ -111,18 +92,7 @@ export function BoardColumn({
       event.dataTransfer.getData("application/x-taskboard-task") ||
       event.dataTransfer.getData("text/plain");
     if (taskId) onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY));
-    setDropBeforeTaskId(undefined);
-  }
-
-  function getTaskDragShift(task: Task): number {
-    if (!draggedTaskId || task.id === draggedTaskId) return 0;
-    let shift = 0;
-    const taskIndex = taskIndexes.get(task.id) ?? -1;
-    const remainingIndex = remainingIndexes.get(task.id) ?? -1;
-
-    if (draggedTaskIndex >= 0 && taskIndex > draggedTaskIndex) shift -= dragDistance;
-    if (previewIndex >= 0 && remainingIndex >= previewIndex) shift += dragDistance;
-    return shift;
+    clearDropPreview();
   }
 
   return (
@@ -131,16 +101,10 @@ export function BoardColumn({
       aria-labelledby={`column-${status}`}
       onDragEnter={() => onDragEnter(status)}
       onDragOver={(event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
         onDragEnter(status);
-        setDropBeforeTaskId(findDropBefore(event.currentTarget, event.clientY));
+        updateDropPreview(event);
       }}
-      onDragLeave={(event) => {
-        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-          setDropBeforeTaskId(undefined);
-        }
-      }}
+      onDragLeave={leaveDropPreview}
       onDrop={handleDrop}
     >
       <header className="column-header">
@@ -169,7 +133,7 @@ export function BoardColumn({
 
       <div className="column-list" ref={scrollRef}>
         {tasks.map((task) => {
-          const dragShift = getTaskDragShift(task);
+          const dragShift = getTaskDragShift(task.id);
           return (
             <TaskCard
               key={task.id}

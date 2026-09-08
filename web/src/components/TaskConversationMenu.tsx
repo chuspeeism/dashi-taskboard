@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } fro
 import { createPortal } from "react-dom";
 import type { TaskConversationItem } from "../taskConversations";
 import { useTaskboardI18n } from "../i18n";
+import { listenForMenuViewportChange, listenForOutsidePointerDown } from "../menuEvents";
 import { ConversationIcon } from "./SemanticIcons";
 
 interface TaskConversationMenuProps {
@@ -63,28 +64,19 @@ export function TaskConversationMenu({
 
   useEffect(() => {
     if (!open) return;
-    function closeFromOutside(event: PointerEvent) {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    }
+    const close = () => setOpen(false);
+    const stopOutside = listenForOutsidePointerDown([triggerRef, menuRef], close);
+    const stopViewport = listenForMenuViewportChange(menuRef, close);
     function closeFromEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       setOpen(false);
       triggerRef.current?.focus();
     }
-    function closeFromViewportChange() {
-      setOpen(false);
-    }
-    document.addEventListener("pointerdown", closeFromOutside);
     window.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      stopOutside();
+      stopViewport();
       window.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("resize", closeFromViewportChange);
-      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
   }, [open]);
 

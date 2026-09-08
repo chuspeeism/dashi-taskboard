@@ -5,6 +5,7 @@ import { ProjectIcon, RecurrenceIcon } from "./SemanticIcons";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 import { useTaskboardI18n } from "../i18n";
+import { listenForMenuViewportChange, listenForOutsidePointerDown } from "../menuEvents";
 import type { AiChatModel } from "../types";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";
@@ -127,29 +128,20 @@ export function ProjectAutomationMenu({
 
   useEffect(() => {
     if (!open) return;
-    function closeFromOutside(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function closeFromViewportChange() {
-      setOpen(false);
-    }
+    const close = () => setOpen(false);
+    const stopOutside = listenForOutsidePointerDown([triggerRef, menuRef], close);
+    const stopViewport = listenForMenuViewportChange(menuRef, close);
     function closeFromEscape(event: KeyboardEvent) {
       if (event.key === "Escape" && !pickerMenu) {
         setOpen(false);
         triggerRef.current?.focus();
       }
     }
-    document.addEventListener("pointerdown", closeFromOutside);
     document.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      stopOutside();
+      stopViewport();
       document.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("resize", closeFromViewportChange);
-      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
   }, [open, pickerMenu]);
 
