@@ -1,4 +1,4 @@
-import { DEFAULT_PROJECT_ID } from "./domain.mjs";
+import { DEFAULT_PROJECT_ID, isTaskStatus } from "./domain.mjs";
 import {
   ApiError, assertPlainObject, assertAllowedKeys, stringField,
   parseVersion, validateProjectId, parseThreadId, parseAssigneeTarget,
@@ -140,4 +140,169 @@ export function parseTaskCreate(body, parseDevelopmentContext) {
     throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires 'dueDate'");
   }
   return task;
+}
+
+// Local and cloud entry points retain their existing validation order and errors.
+function assertTaskPatchBody(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
+    "assigneeTarget", "developmentContext", "startDate", "dueDate", "recurrence",
+  ]));
+}
+
+function parseTaskPatchChanges(body, parseDevelopmentContext) {
+  const changes = {};
+  if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
+  if (body.title !== undefined) changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
+  if (body.description !== undefined) changes.description = stringField(body.description, "description", { maxLength: 100_000 });
+  if (body.status !== undefined) changes.status = parseStatus(body.status);
+  if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
+  if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
+  if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
+  if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
+  if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
+  if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);
+  return changes;
+}
+
+function assertTaskPatchFields(changes, assigneeTarget) {
+  if (Object.keys(changes).length === 0 && assigneeTarget === undefined) {
+    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one task field");
+  }
+}
+
+export function parseTaskPatch(body, parseDevelopmentContext) {
+  assertTaskPatchBody(body);
+  const version = parseVersion(body.version);
+  const threadId = parseThreadId(body.threadId);
+  const threadBinding = parseThreadBinding(body.threadBinding);
+  const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
+  const changes = parseTaskPatchChanges(body, parseDevelopmentContext);
+  if (changes.recurrence && body.dueDate === null) {
+    throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires 'dueDate'");
+  }
+  assertTaskPatchFields(changes, assigneeTarget);
+  return { version, changes, threadId, threadBinding, assigneeTarget };
+}
+
+export function parseCloudTaskPatch(body, parseDevelopmentContext) {
+  assertTaskPatchBody(body);
+  const changes = parseTaskPatchChanges(body, parseDevelopmentContext);
+  const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
+  assertTaskPatchFields(changes, assigneeTarget);
+  return {
+    version: parseVersion(body.version),
+    changes,
+    threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
+    assigneeTarget,
+  };
+}
+
+function assertTaskQueryParameters(searchParams, allowed, repeatedCode, cloud = false) {
+  for (const key of searchParams.keys()) {
+    if (!allowed.has(key)) {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", cloud
+        ? `Unknown query parameter: ${key}`
+        : `Unknown query parameter '${key}'`);
+    }
+    const count = searchParams.getAll(key).length;
+    if (cloud ? count > 1 : count !== 1) {
+      throw new ApiError(400, repeatedCode, cloud
+        ? `'${key}' cannot be repeated`
+        : `Query parameter '${key}' cannot be repeated`);
+    }
+  }
+}
+
+function taskFilterValues(searchParams) {
+  return {
+    projectId: searchParams.get("projectId"),
+    status: searchParams.get("status"),
+    archived: searchParams.get("archived") ?? "false",
+  };
+}
+
+export function parseTaskFilters(searchParams) {
+  assertTaskQueryParameters(
+    searchParams, new Set(["projectId", "status", "archived"]), "INVALID_QUERY_PARAMETER",
+  );
+
+  const { projectId: projectIdValue, status: statusValue, archived } = taskFilterValues(searchParams);
+  if (statusValue !== null && !isTaskStatus(statusValue)) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "Invalid task status");
+  }
+  if (!new Set(["true", "false", "all"]).has(archived)) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'archived' must be true, false, or all");
+  }
+  const projectId = projectIdValue === null ? undefined : validateProjectId(projectIdValue);
+  return { projectId, status: statusValue ?? undefined, archived };
+}
+
+export function parseCloudTaskFilters(searchParams) {
+  assertTaskQueryParameters(
+    searchParams, new Set(["projectId", "status", "archived"]), "INVALID_QUERY_PARAMETER", true,
+  );
+  const { projectId, status, archived } = taskFilterValues(searchParams);
+  if (projectId !== null) validateProjectId(projectId);
+  if (status !== null) parseStatus(status);
+  if (!["false", "true", "all"].includes(archived)) {
+    throw new ApiError(
+      400,
+      "INVALID_QUERY_PARAMETER",
+      "'archived' must be false, true, or all",
+    );
+  }
+  return { projectId, status, archived };
+}
+
+function taskTreeQueryValues(searchParams) {
+  const direction = searchParams.get("direction");
+  if (direction !== "descendants" && direction !== "ancestors") {
+    throw new ApiError(400, "INVALID_TREE_QUERY", "'direction' must be descendants or ancestors");
+  }
+  const rawDepth = searchParams.get("depth");
+  const depth = Number(rawDepth);
+  if (!/^\d+$/.test(rawDepth ?? "") || !Number.isSafeInteger(depth) || depth < 1 || depth > 25) {
+    throw new ApiError(400, "INVALID_TREE_QUERY", "'depth' must be an integer from 1 to 25");
+  }
+  return { direction, depth };
+}
+
+export function parseTaskTreeQuery(searchParams) {
+  assertTaskQueryParameters(searchParams, new Set(["direction", "depth"]), "INVALID_TREE_QUERY");
+  return taskTreeQueryValues(searchParams);
+}
+
+export function parseCloudTaskTreeQuery(searchParams) {
+  assertTaskQueryParameters(searchParams, new Set(["direction", "depth"]), "INVALID_TREE_QUERY", true);
+  return taskTreeQueryValues(searchParams);
+}
+
+function projectReadmeContent(value) {
+  const content = value ?? "";
+  if (typeof content !== "string") {
+    throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
+  }
+  if (content.length > 500_000) {
+    throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
+  }
+  return content;
+}
+
+export function parseProjectReadmeSave(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["content", "version"]));
+  const content = projectReadmeContent(body.content);
+  const version = body.version === undefined ? undefined : parseVersion(body.version, { allowZero: true });
+  return { content, version };
+}
+
+export function parseCloudProjectReadmeSave(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "content"]));
+  const version = body.version === undefined ? undefined : parseVersion(body.version, { allowZero: true });
+  const content = projectReadmeContent(body.content);
+  return { content, version };
 }

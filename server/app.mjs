@@ -1,23 +1,17 @@
 import {
-  parseThreadBinding, parseMove, parseVersionMutation, parseRelationMutation,
+  parseMove, parseVersionMutation, parseRelationMutation,
   parseCommentCreate, parseCommentPatch, parseTaskCreate,
+  parseTaskPatch, parseTaskFilters, parseTaskTreeQuery, parseProjectReadmeSave,
 } from "../shared/task-input.mjs";
 import {
   ApiError,
-  parseVersion,
   validateProjectId,
   assertPlainObject,
   assertAllowedKeys,
   stringField,
-  parseDueDate,
-  parseRecurrence,
-  parseLabels,
-  parseStatus,
-  parsePriority,
   slugify,
   parseProjectLabel,
   parseThreadId,
-  parseAssigneeTarget,
 } from "../shared/api-fields.mjs";
 import { createHmac, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -35,7 +29,6 @@ import {
   DEFAULT_PROJECT_ID,
   JIRA_PROJECT_ID,
   TASK_STATUSES,
-  isTaskStatus,
 } from "../shared/domain.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
@@ -396,23 +389,6 @@ function parseProjectCreate(body) {
   return { id, name, workspacePath };
 }
 
-function parseProjectReadmeSave(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["content", "version"]));
-  const content = body.content ?? "";
-  if (typeof content !== "string") {
-    throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
-  }
-  if (content.length > 500_000) {
-    throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
-  }
-  const version = body.version;
-  if (version !== undefined && (!Number.isSafeInteger(version) || version < 0)) {
-    throw new ApiError(400, "INVALID_FIELD", "'version' must be a non-negative integer");
-  }
-  return { content, version };
-}
-
 function requestHeader(request, name) {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
@@ -469,36 +445,6 @@ function resolveAssignee(target, actor) {
     throw new ApiError(400, "INVALID_FIELD", "'current-user' requires a user request identity");
   }
   return actor;
-}
-
-function parseTaskPatch(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set([
-    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
-    "assigneeTarget", "developmentContext", "startDate", "dueDate", "recurrence",
-  ]));
-  const version = parseVersion(body.version);
-  const threadId = parseThreadId(body.threadId);
-  const threadBinding = parseThreadBinding(body.threadBinding);
-  const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
-  const changes = {};
-  if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
-  if (body.title !== undefined) changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
-  if (body.description !== undefined) changes.description = stringField(body.description, "description", { maxLength: 100_000 });
-  if (body.status !== undefined) changes.status = parseStatus(body.status);
-  if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
-  if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
-  if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
-  if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
-  if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
-  if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);
-  if (changes.recurrence && body.dueDate === null) {
-    throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires 'dueDate'");
-  }
-  if (Object.keys(changes).length === 0 && assigneeTarget === undefined) {
-    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one task field");
-  }
-  return { version, changes, threadId, threadBinding, assigneeTarget };
 }
 
 function parseIssueRelationType(value) {
@@ -595,52 +541,6 @@ async function assertEmptyRequestBody(request, routeLabel) {
   if (body.length > 0) {
     throw new ApiError(400, "INVALID_BODY", `${routeLabel} does not accept a request body`);
   }
-}
-
-function parseTaskFilters(searchParams) {
-  const allowed = new Set(["projectId", "status", "archived"]);
-  for (const key of searchParams.keys()) {
-    if (!allowed.has(key)) {
-      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter '${key}'`);
-    }
-    if (searchParams.getAll(key).length !== 1) {
-      throw new ApiError(400, "INVALID_QUERY_PARAMETER", `Query parameter '${key}' cannot be repeated`);
-    }
-  }
-
-  const projectIdValue = searchParams.get("projectId");
-  const statusValue = searchParams.get("status");
-  const archived = searchParams.get("archived") ?? "false";
-  if (statusValue !== null && !isTaskStatus(statusValue)) {
-    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "Invalid task status");
-  }
-  if (!new Set(["true", "false", "all"]).has(archived)) {
-    throw new ApiError(400, "INVALID_QUERY_PARAMETER", "'archived' must be true, false, or all");
-  }
-  const projectId = projectIdValue === null ? undefined : validateProjectId(projectIdValue);
-  return { projectId, status: statusValue ?? undefined, archived };
-}
-
-function parseTaskTreeQuery(searchParams) {
-  const allowed = new Set(["direction", "depth"]);
-  for (const key of searchParams.keys()) {
-    if (!allowed.has(key)) {
-      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter '${key}'`);
-    }
-    if (searchParams.getAll(key).length !== 1) {
-      throw new ApiError(400, "INVALID_TREE_QUERY", `Query parameter '${key}' cannot be repeated`);
-    }
-  }
-  const direction = searchParams.get("direction");
-  if (direction !== "descendants" && direction !== "ancestors") {
-    throw new ApiError(400, "INVALID_TREE_QUERY", "'direction' must be descendants or ancestors");
-  }
-  const rawDepth = searchParams.get("depth");
-  const depth = Number(rawDepth);
-  if (!/^\d+$/.test(rawDepth ?? "") || !Number.isSafeInteger(depth) || depth < 1 || depth > 25) {
-    throw new ApiError(400, "INVALID_TREE_QUERY", "'depth' must be an integer from 1 to 25");
-  }
-  return { direction, depth };
 }
 
 function parseAiSandbox(value) {
@@ -1549,12 +1449,16 @@ export function createTaskboardServer(options = {}) {
     configStore: cloudConfig,
     fetch: options.remoteFetch ?? globalThis.fetch,
     resolveThreadBinding: currentHostThreadBinding,
-    resolveDevelopmentContext: async (projectId, context) => {
+    resolveDevelopmentContext: async (projectId, context, scans) => {
       if (!context.branch) return null;
       const config = await cloudConfig.read();
       const workspacePath = config.projectMappings[projectId];
       if (!workspacePath) return null;
-      const result = await scanDevelopmentContexts(workspacePath, codexProcessEnvironment);
+      const key = `${projectId}\0${workspacePath}`;
+      if (!scans.has(key)) {
+        scans.set(key, scanDevelopmentContexts(workspacePath, codexProcessEnvironment));
+      }
+      const result = await scans.get(key);
       return result.contexts.find((candidate) => (
         candidate.type === "worktree" && candidate.branch === context.branch
       )) ?? null;
@@ -2958,18 +2862,19 @@ export function createTaskboardServer(options = {}) {
             threadId,
             threadBinding,
             assigneeTarget,
-          } = resolveInputThreadBinding(parseTaskPatch(await readJson(request)));
-          const current = database.getTask(id);
-          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          } = resolveInputThreadBinding(parseTaskPatch(await readJson(request), parseDevelopmentContext));
+          const source = database.getTaskSource(id);
+          if (!source) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
           let jiraChanged = false;
-          if (current.source !== "jira" && changes.projectId === JIRA_PROJECT_ID) {
+          if (source !== "jira" && changes.projectId === JIRA_PROJECT_ID) {
             throw new ApiError(
               409,
               "JIRA_PROJECT_MOVE_UNAVAILABLE",
               "本地任务不能移入 Jira 同步项目",
             );
           }
-          if (current.source === "jira") {
+          if (source === "jira") {
+            const current = database.getTask(id);
             if (current.version !== version) {
               throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
                 expectedVersion: version,
