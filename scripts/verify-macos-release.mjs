@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { releaseMetadata } from "./release-metadata.mjs";
 import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
 
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
@@ -36,17 +37,11 @@ const releasePolicy = JSON.parse(await readFile(
   path.join(projectRoot, "src-tauri", "release.json"),
   "utf8",
 ));
-const stableTag = `v${packageJson.version}`;
-const betaPrefix = `${stableTag}-beta.`;
-const betaNumber = releaseTag.startsWith(betaPrefix)
-  ? releaseTag.slice(betaPrefix.length)
-  : "";
-if (releaseTag !== stableTag && !/^[1-9]\d*$/.test(betaNumber)) {
-  throw new Error("Release tag does not match package.json version");
-}
-const releaseVersion = releaseTag.slice(1);
-const productName = betaNumber ? "Codex Taskboard Beta" : tauriConfig.productName;
-const appName = `${productName}.app`;
+const { releaseVersion, productName, appName, assets } = releaseMetadata(
+  packageJson.version,
+  releaseTag,
+  tauriConfig.productName,
+);
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
@@ -147,7 +142,7 @@ async function manifest(root, relative = "") {
   return entries;
 }
 
-const artifactName = `Codex.Taskboard_${packageJson.version}_universal.app.tar.gz`;
+const artifactName = assets.macosUpdater;
 const artifactPath = path.join(releaseDirectory, artifactName);
 const signaturePath = `${artifactPath}.sig`;
 const signature = await readFile(signaturePath, "utf8");
