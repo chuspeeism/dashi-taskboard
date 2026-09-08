@@ -925,7 +925,6 @@ fn update_snapshot(
                 match snapshot.phase.as_str() {
                     "running" => "运行状态：正常",
                     "error" => "运行状态：异常",
-                    "stopped" => "运行状态：已停止",
                     _ => "运行状态：启动中",
                 }
             };
@@ -2469,6 +2468,16 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Accessory);
             let home_directory = app.path().home_dir()?;
+            let bundled_skill = app
+                .path()
+                .resource_dir()?
+                .join("app/skills/manage-taskboard");
+            let legacy_skill_conflict = reconcile_legacy_skill(&home_directory, &bundled_skill)?;
+            let global_skill = home_directory.join(".agents/skills/manage-taskboard");
+            if global_skill.exists() {
+                fs::remove_dir_all(&global_skill)?;
+            }
+            copy_directory(&bundled_skill, &global_skill)?;
             #[cfg(target_os = "macos")]
             let data_directory = home_directory.join("Library/Application Support/Codex Taskboard");
             #[cfg(target_os = "macos")]
@@ -2502,16 +2511,6 @@ fn main() {
                 app.handle().exit(0);
                 return Ok(());
             };
-            let bundled_skill = app
-                .path()
-                .resource_dir()?
-                .join("app/skills/manage-taskboard");
-            let legacy_skill_conflict = reconcile_legacy_skill(&home_directory, &bundled_skill)?;
-            let global_skill = home_directory.join(".agents/skills/manage-taskboard");
-            if global_skill.exists() {
-                fs::remove_dir_all(&global_skill)?;
-            }
-            copy_directory(&bundled_skill, &global_skill)?;
             let version = release_version().to_string();
             let state = Arc::new(LauncherState::new(
                 data_directory,
