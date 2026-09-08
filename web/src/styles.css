@@ -504,6 +504,7 @@ kbd {
     var(--bg);
 }
 
+.appearance-control,
 .palette-control {
   position: relative;
   display: flex;
@@ -511,6 +512,7 @@ kbd {
   min-width: 0;
 }
 
+.appearance-control > i,
 .palette-control > i {
   position: absolute;
   z-index: 1;
@@ -523,6 +525,7 @@ kbd {
   pointer-events: none;
 }
 
+.appearance-control select,
 .palette-control select {
   width: 148px;
   height: 28px;
@@ -540,17 +543,30 @@ kbd {
   transition: border-color 100ms ease, background-color 100ms ease, transform 100ms ease;
 }
 
+.appearance-control select {
+  width: 96px;
+}
+
+.theme-control > i {
+  background: linear-gradient(90deg, #f3c04f 0 50%, #596174 50%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-tertiary) 18%, transparent);
+}
+
+.appearance-control select:hover,
+.appearance-control select:focus-visible,
 .palette-control select:hover,
 .palette-control select:focus-visible {
   border-color: var(--accent);
   background: var(--surface-raised);
 }
 
+.appearance-control select:active,
 .palette-control select:active {
   transform: scale(0.98);
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  .appearance-control select,
   .palette-control select {
     background: var(--surface-raised);
     backdrop-filter: none;

@@ -147,6 +147,7 @@ import { createRevisionPoller, createRevisionWebSocketClient, getRevisionPolling
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
+type ThemeMode = "auto" | Theme;
 type Palette = "cobalt" | "aubergine" | "alpine" | "carbon";
 type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt";
 type DetailSourceScroll =
@@ -395,6 +396,15 @@ function getInitialTheme(): Theme {
     if (isTheme(stored)) return stored;
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === "auto" || isTheme(value);
+}
+
+function getInitialThemeMode(): ThemeMode {
+  const stored = taskboardStorage.getItem("taskboard.theme-mode");
+  return isThemeMode(stored) ? stored : "auto";
 }
 
 function isPalette(value: unknown): value is Palette {
@@ -720,7 +730,9 @@ export function App() {
   const host = query.get("host");
   const embedded = host === "codex" || host === "workbuddy" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
+  const [automaticTheme, setAutomaticTheme] = useState<Theme>(getInitialTheme);
+  const theme = themeMode === "auto" ? automaticTheme : themeMode;
   const [palette, setPalette] = useState<Palette>(getInitialPalette);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const language = resolveTaskboardLanguage(
@@ -1665,6 +1677,10 @@ export function App() {
   }, [embedded, theme]);
 
   useEffect(() => {
+    taskboardStorage.setItem("taskboard.theme-mode", themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
     document.documentElement.dataset.palette = palette;
     taskboardStorage.setItem("taskboard.palette", palette);
   }, [palette]);
@@ -1672,7 +1688,7 @@ export function App() {
   useEffect(() => {
     if (embedded && window.parent !== window) return;
     const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
-    const syncTheme = () => setTheme(systemTheme.matches ? "dark" : "light");
+    const syncTheme = () => setAutomaticTheme(systemTheme.matches ? "dark" : "light");
     syncTheme();
     systemTheme.addEventListener("change", syncTheme);
     return () => systemTheme.removeEventListener("change", syncTheme);
@@ -1785,7 +1801,7 @@ export function App() {
       }
 
       if (message.type === "taskboard:theme" && isTheme(message.theme)) {
-        setTheme(message.theme);
+        setAutomaticTheme(message.theme);
         return;
       }
 
@@ -1815,7 +1831,7 @@ export function App() {
       const payload = message.payload as HostContext;
       setHostContext(payload);
       setCurrentUserActor(payload.user);
-      if (isTheme(payload.theme)) setTheme(payload.theme);
+      if (isTheme(payload.theme)) setAutomaticTheme(payload.theme);
       if (host === "codex") void publishHostRuntime(payload);
     }
 
@@ -3517,6 +3533,20 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
+            <label className="appearance-control theme-control">
+              <span className="sr-only">{text("底板模式", "Appearance mode")}</span>
+              <i aria-hidden="true" />
+              <select
+                aria-label={text("底板模式", "Appearance mode")}
+                title={text("底板模式", "Appearance mode")}
+                value={themeMode}
+                onChange={(event) => setThemeMode(event.target.value as ThemeMode)}
+              >
+                <option value="auto">{text("自動", "Auto")}</option>
+                <option value="light">{text("日間", "Light")}</option>
+                <option value="dark">{text("夜間", "Dark")}</option>
+              </select>
+            </label>
             <label className="palette-control">
               <span className="sr-only">{text("界面配色", "Interface palette")}</span>
               <i aria-hidden="true" />
