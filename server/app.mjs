@@ -2255,12 +2255,20 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "POST"]);
       }
 
+      const aiThreadSummaryRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/summary$/);
+      if (aiThreadSummaryRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/ai/threads/:id/summary");
+        const threadId = decodeRouteSegment(aiThreadSummaryRoute[1], "Thread id");
+        return sendJson(response, 200, await aiChat.getThreadSummary(threadId));
+      }
+
       const aiThreadEventsRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/events$/);
       if (aiThreadEventsRoute) {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         assertNoQuery(url.searchParams, "GET /api/local/ai/threads/:id/events");
         const threadId = decodeRouteSegment(aiThreadEventsRoute[1], "Thread id");
-        await aiChat.getThreadSnapshot(threadId);
+        await aiChat.getThread(threadId);
         response.writeHead(200, {
           connection: "keep-alive",
           "cache-control": "no-cache, no-transform",
