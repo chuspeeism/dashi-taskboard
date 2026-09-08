@@ -41,15 +41,14 @@ import {
 } from "./SemanticIcons";
 import {
   createInlineMediaSegments,
-  InlineMediaComposer,
   inlineMediaFiles,
   inlineMediaImages,
   serializeInlineMedia,
-  type InlineMediaComposerHandle,
   type InlineMediaSegment,
   type PendingInlineAttachment,
   type PendingInlineImage,
-} from "./InlineMediaComposer";
+} from "../documentModel";
+import { InlineMediaComposer, type InlineMediaComposerHandle } from "./InlineMediaComposer";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 

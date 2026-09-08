@@ -11,12 +11,11 @@ import type { Project, ProjectReadme, Task, TaskRelationSummary } from "../types
 import { DescriptionDocument } from "./DescriptionDocument";
 import {
   createInlineMediaSegments,
-  InlineMediaComposer,
   inlineMediaImages,
   serializeInlineMedia,
-  type InlineMediaComposerHandle,
   type InlineMediaSegment,
-} from "./InlineMediaComposer";
+} from "../documentModel";
+import { InlineMediaComposer, type InlineMediaComposerHandle } from "./InlineMediaComposer";
 import { LinearIcon } from "./LinearIcon";
 import "./ProjectReadmeView.css";
 

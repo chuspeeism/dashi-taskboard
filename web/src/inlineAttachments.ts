@@ -1,6 +1,6 @@
 import { attachmentContentUrl, attachmentDownloadUrl } from "./api";
 import type { Attachment } from "./types";
-import type { PendingInlineAttachment, PendingInlineImage } from "./components/InlineMediaComposer";
+import type { PendingInlineAttachment, PendingInlineImage } from "./documentModel";
 
 type PendingAttachment = PendingInlineImage | PendingInlineAttachment;
 
