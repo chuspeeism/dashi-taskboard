@@ -5,6 +5,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { releaseMetadata } from "./release-metadata.mjs";
+
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
@@ -16,15 +18,7 @@ if (!appPath || !outputDirectory || !releaseTag) {
 }
 
 const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
-const stableTag = `v${packageJson.version}`;
-const betaPrefix = `${stableTag}-beta.`;
-const betaNumber = releaseTag.startsWith(betaPrefix)
-  ? releaseTag.slice(betaPrefix.length)
-  : "";
-if (releaseTag !== stableTag && !/^[1-9]\d*$/.test(betaNumber)) {
-  throw new Error("Release tag does not match package.json version");
-}
-const releaseVersion = releaseTag.slice(1);
+const { releaseVersion, assets } = releaseMetadata(packageJson.version, releaseTag);
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
@@ -34,7 +28,7 @@ function run(command, args, options = {}) {
 }
 
 await mkdir(outputDirectory, { recursive: true });
-const artifactName = `Codex.Taskboard_${packageJson.version}_universal.app.tar.gz`;
+const artifactName = assets.macosUpdater;
 const artifactPath = path.join(outputDirectory, artifactName);
 run("/usr/bin/tar", ["-czf", artifactPath, path.basename(appPath)], {
   cwd: path.dirname(appPath),
