@@ -109,7 +109,7 @@ const quotaPolicyQueues = new Map();
 const quotaPolicyCdps = new Set();
 const restoredQuotaPolicyCdps = new WeakSet();
 const quotaPolicyRestorePromises = new WeakMap();
-const remoteAutomationDecisionWaiters = new Map();
+const remoteAutomationTurnWaiters = new Map();
 let quotaPoliciesLoadPromise = null;
 let quotaPoliciesWritePromise = Promise.resolve();
 const taskConversationAppServerTimeoutMs = 30_000;
@@ -1403,44 +1403,61 @@ function remoteAutomationPrompt(task, comments, attachments, target) {
   ].join("\n");
 }
 
-function waitForRemoteAutomationDecision(hostId, threadId) {
+function waitForRemoteAutomationTurn(hostId, threadId) {
   const key = `${hostId}\0${threadId}`;
-  let cancel;
-  const promise = new Promise((resolve, reject) => {
-    const finish = (error, answer) => {
-      clearTimeout(timer);
-      remoteAutomationDecisionWaiters.delete(key);
-      if (error) reject(error);
-      else resolve(answer);
-    };
-    const timer = setTimeout(
-      () => finish(new Error("Codex 自动认领判断超时")),
-      remoteAutomationTurnTimeoutMs,
-    );
-    timer.unref();
-    remoteAutomationDecisionWaiters.set(key, { finish });
-    cancel = () => {
-      clearTimeout(timer);
-      remoteAutomationDecisionWaiters.delete(key);
-    };
-  });
-  return { promise, cancel };
+  const earlyTurns = new Map();
+  let expectedTurnId;
+  let resolveTurn;
+  const completed = new Promise((resolve) => { resolveTurn = resolve; });
+  const onCompleted = (turn) => {
+    // turn/completed can arrive before the turn/start RPC returns its id.
+    if (expectedTurnId === undefined) earlyTurns.set(turn.id, turn);
+    else if (turn.id === expectedTurnId) resolveTurn(turn);
+  };
+  remoteAutomationTurnWaiters.set(key, onCompleted);
+  const cancel = () => {
+    if (remoteAutomationTurnWaiters.get(key) === onCompleted) {
+      remoteAutomationTurnWaiters.delete(key);
+    }
+    earlyTurns.clear();
+  };
+  return {
+    cancel,
+    async wait(turnId, timeoutMessage, timeoutMs = remoteAutomationTurnTimeoutMs) {
+      expectedTurnId = turnId;
+      const earlyTurn = earlyTurns.get(turnId);
+      earlyTurns.clear();
+      let timer;
+      try {
+        if (earlyTurn) return earlyTurn;
+        return await Promise.race([
+          completed,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+            timer.unref();
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        cancel();
+      }
+    },
+  };
 }
 
-function handleRemoteAutomationDecisionNotification(notification) {
-  const params = notification.params;
-  const waiter = remoteAutomationDecisionWaiters.get(
-    `${notification.hostId}\0${params?.threadId}`,
-  );
-  if (!waiter) return;
+function handleRemoteAutomationTurnNotification(notification) {
   if (notification.method !== "turn/completed") return;
-  if (params.turn?.status !== "completed") {
-    waiter.finish(new Error(params.turn?.error?.message || "Codex 自动认领判断失败"));
-    return;
-  }
-  const answer = [...params.turn.items].reverse()
+  const params = notification.params;
+  if (typeof params?.turn?.id !== "string" || !params.turn.id) return;
+  const onCompleted = remoteAutomationTurnWaiters.get(
+    `${notification.hostId}\0${params.threadId}`,
+  );
+  onCompleted?.(params.turn);
+}
+
+function remoteAutomationTurnText(turn) {
+  return [...(turn?.items ?? [])].reverse()
     .find((item) => item.type === "agentMessage")?.text?.trim() || "";
-  waiter.finish(null, answer);
 }
 
 async function remoteAutomationCanStart(cdp, request, task, comments) {
@@ -1464,7 +1481,8 @@ async function remoteAutomationCanStart(cdp, request, task, comments) {
     throw new Error("Codex 未创建临时自动认领判断线程");
   }
 
-  const completion = waitForRemoteAutomationDecision(request.codexHostId, threadId);
+  const deadline = Date.now() + remoteAutomationTurnTimeoutMs;
+  const completion = waitForRemoteAutomationTurn(request.codexHostId, threadId);
   let turnStarted;
   try {
     turnStarted = await requestCodexAppServerViaCdp(
@@ -1513,7 +1531,15 @@ async function remoteAutomationCanStart(cdp, request, task, comments) {
     completion.cancel();
     throw new Error("Codex 未返回自动认领判断 turn");
   }
-  const answer = await completion.promise;
+  const turn = await completion.wait(
+    turnId,
+    "Codex 自动认领判断超时",
+    Math.max(0, deadline - Date.now()),
+  );
+  if (turn.status !== "completed") {
+    throw new Error(turn.error?.message || "Codex 自动认领判断失败");
+  }
+  const answer = remoteAutomationTurnText(turn);
   let decision;
   try {
     decision = JSON.parse(answer).decision;
@@ -1535,20 +1561,25 @@ async function runRemoteTaskboardAutomation(record) {
   const listed = await taskboardRequest(
     `/api/tasks?projectId=${encodeURIComponent(request.taskboardProjectId)}&status=todo`,
   );
-  const listedTask = listed.tasks?.find(eligibleRemoteAutomationTask);
-  if (!listedTask) return;
-
-  const taskPath = `/api/tasks/${encodeURIComponent(listedTask.id)}`;
-  const commentsPath = `${taskPath}/comments`;
-  const attachmentsPath = `${taskPath}/attachments`;
-  const [{ task }, { comments }, { attachments }] = await Promise.all([
-    taskboardRequest(taskPath),
-    taskboardRequest(commentsPath),
-    taskboardRequest(attachmentsPath),
-  ]);
-  if (!eligibleRemoteAutomationTask(task) || task.projectId !== request.taskboardProjectId) return;
-  const cdp = currentQuotaPolicyCdp();
-  if (!(await remoteAutomationCanStart(cdp, request, task, comments))) return;
+  let selected;
+  for (const listedTask of listed.tasks ?? []) {
+    if (!eligibleRemoteAutomationTask(listedTask)) continue;
+    const taskPath = `/api/tasks/${encodeURIComponent(listedTask.id)}`;
+    const commentsPath = `${taskPath}/comments`;
+    const attachmentsPath = `${taskPath}/attachments`;
+    const [{ task }, { comments }, { attachments }] = await Promise.all([
+      taskboardRequest(taskPath),
+      taskboardRequest(commentsPath),
+      taskboardRequest(attachmentsPath),
+    ]);
+    if (!eligibleRemoteAutomationTask(task) || task.projectId !== request.taskboardProjectId) return;
+    const cdp = currentQuotaPolicyCdp();
+    if (!(await remoteAutomationCanStart(cdp, request, task, comments))) continue;
+    selected = { taskPath, commentsPath, attachmentsPath, task, comments, attachments, cdp };
+    break;
+  }
+  if (!selected) return;
+  const { taskPath, commentsPath, attachmentsPath, task, comments, attachments, cdp } = selected;
   const existingBinding = task.threadBinding?.codexProjectKind === "remote"
     ? task.threadBinding
     : null;
@@ -1624,6 +1655,7 @@ async function runRemoteTaskboardAutomation(record) {
     })
   ).task;
 
+  const completion = waitForRemoteAutomationTurn(target.codexHostId, threadId);
   try {
     const turnStarted = await requestCodexAppServerViaCdp(
       cdp,
@@ -1649,36 +1681,26 @@ async function runRemoteTaskboardAutomation(record) {
       throw new Error("Codex did not return the remote automation turn id");
     }
 
-    const deadline = Date.now() + remoteAutomationTurnTimeoutMs;
-    let finalText = "";
-    while (Date.now() < deadline) {
-      let read;
-      try {
-        read = await requestCodexAppServerViaCdp(
-          cdp,
-          undefined,
-          target.codexHostId,
-          "thread/read",
-          { threadId, includeTurns: true },
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes("rollout") || !message.includes("is empty")) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-        continue;
-      }
-      const turn = read?.thread?.turns?.find((candidate) => candidate.id === turnId);
-      if (turn?.status === "completed") {
-        finalText = [...turn.items].reverse().find((item) => item.type === "agentMessage")?.text?.trim() || "";
-        if (!finalText) throw new Error("Codex completed without a final result");
-        break;
-      }
-      if (turn?.status === "failed" || turn?.status === "interrupted") {
-        throw new Error(turn.error?.message || `Codex remote turn ${turn.status}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const turn = await completion.wait(turnId, "Codex remote automation turn timed out");
+    if (turn.status !== "completed") {
+      throw new Error(turn.error?.message || `Codex remote turn ${turn.status}`);
     }
-    if (!finalText) throw new Error("Codex remote automation turn timed out");
+    let finalText = remoteAutomationTurnText(turn);
+    if (!finalText) {
+      // Some completion notifications omit items; read the completed turn once.
+      const read = await requestCodexAppServerViaCdp(
+        cdp,
+        undefined,
+        target.codexHostId,
+        "thread/read",
+        { threadId, includeTurns: true },
+      );
+      const savedTurn = read?.thread?.turns?.find((candidate) => (
+        candidate.id === turnId && candidate.status === "completed"
+      ));
+      finalText = remoteAutomationTurnText(savedTurn);
+    }
+    if (!finalText) throw new Error("Codex completed without a final result");
 
     await taskboardRequest(commentsPath, {
       method: "POST",
@@ -1725,6 +1747,8 @@ async function runRemoteTaskboardAutomation(record) {
         threadBinding,
       },
     });
+  } finally {
+    completion.cancel();
   }
 }
 
@@ -2982,7 +3006,7 @@ async function main() {
     );
   };
   const forwardCodexAppServerNotification = (cdp, notification) => {
-    handleRemoteAutomationDecisionNotification(notification);
+    handleRemoteAutomationTurnNotification(notification);
     if (remoteCodexConnections.get(notification.hostId) !== cdp) return;
     if (!taskboardChild?.connected) return;
     taskboardChild.send({
