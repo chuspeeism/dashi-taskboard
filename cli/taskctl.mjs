@@ -491,74 +491,65 @@ function createApiClient(overrides, {
     });
   }
 
-  const env = overrides.env ?? process.env;
   const baseUrl = normalizeBaseUrl(explicitBaseUrl ?? DEFAULT_API_URL);
+
+  async function sendRequest(pathname, createInit) {
+    let response;
+    try {
+      const url = resolveApiUrl(baseUrl, pathname);
+      const init = createInit();
+      response = await fetchImplementation(url, {
+        ...init,
+        headers: {
+          accept: "application/json",
+          "x-taskboard-client": "taskctl",
+          ...init.headers,
+        },
+      });
+    } catch (error) {
+      throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+        code: "SERVICE_UNAVAILABLE",
+        exitCode: 3,
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await readResponse(response);
+      const apiError = extractApiError(payload, response.status);
+      throw new TaskctlError(apiError.message, {
+        code: apiError.code,
+        exitCode: response.status === 409 ? 5 : 4,
+        details: apiError.details,
+      });
+    }
+    return response;
+  }
+
+  async function readJsonResponse(response) {
+    const payload = await readResponse(response);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new TaskctlError("Taskboard service returned an invalid JSON response", {
+        code: "INVALID_RESPONSE",
+        exitCode: 4,
+      });
+    }
+    return payload;
+  }
 
   return {
     async request(method, pathname, body) {
-      let response;
-      try {
-        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
-          method,
-          headers: {
-            accept: "application/json",
-            "x-taskboard-client": "taskctl",
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        });
-      } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
-          code: "SERVICE_UNAVAILABLE",
-          exitCode: 3,
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      const payload = await readResponse(response);
-      if (!response.ok) {
-        const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
-          code: apiError.code,
-          exitCode: response.status === 409 ? 5 : 4,
-          details: apiError.details,
-        });
-      }
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
-          code: "INVALID_RESPONSE",
-          exitCode: 4,
-        });
-      }
-      return payload;
+      const response = await sendRequest(pathname, () => ({
+        method,
+        headers: body === undefined ? {} : { "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }));
+      return readJsonResponse(response);
     },
     async download(pathname) {
-      let response;
-      try {
-        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
-          headers: {
-            accept: "*/*",
-            "x-taskboard-client": "taskctl",
-          },
-        });
-      } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
-          code: "SERVICE_UNAVAILABLE",
-          exitCode: 3,
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      if (!response.ok) {
-        const payload = await readResponse(response);
-        const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
-          code: apiError.code,
-          exitCode: response.status === 409 ? 5 : 4,
-          details: apiError.details,
-        });
-      }
-
+      const response = await sendRequest(pathname, () => ({
+        headers: { accept: "*/*" },
+      }));
       const bytes = new Uint8Array(await response.arrayBuffer());
       return {
         bytes,
@@ -567,43 +558,16 @@ function createApiClient(overrides, {
       };
     },
     async upload(pathname, { body, contentType, filename, kind }) {
-      let response;
-      try {
-        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": contentType,
-            "x-taskboard-client": "taskctl",
-            "x-taskboard-filename": encodeURIComponent(filename),
-            "x-taskboard-attachment-kind": kind,
-          },
-          body,
-        });
-      } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
-          code: "SERVICE_UNAVAILABLE",
-          exitCode: 3,
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      const payload = await readResponse(response);
-      if (!response.ok) {
-        const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
-          code: apiError.code,
-          exitCode: response.status === 409 ? 5 : 4,
-          details: apiError.details,
-        });
-      }
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
-          code: "INVALID_RESPONSE",
-          exitCode: 4,
-        });
-      }
-      return payload;
+      const response = await sendRequest(pathname, () => ({
+        method: "POST",
+        headers: {
+          "content-type": contentType,
+          "x-taskboard-filename": encodeURIComponent(filename),
+          "x-taskboard-attachment-kind": kind,
+        },
+        body,
+      }));
+      return readJsonResponse(response);
     },
   };
 }
