@@ -1,6 +1,6 @@
 [package]
 name = "codex-taskboard-launcher"
-version = "1.1.22"
+version = "1.1.23"
 description = "Codex Taskboard launcher"
 edition = "2021"
 rust-version = "1.88"

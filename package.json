@@ -1,6 +1,6 @@
 {
   "name": "codex-taskboard",
-  "version": "1.1.22",
+  "version": "1.1.23",
   "private": true,
   "type": "module",
   "engines": {
