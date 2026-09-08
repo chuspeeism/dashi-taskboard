@@ -1278,6 +1278,7 @@ export function AiChat({
   );
   const [panelResizeEdge, setPanelResizeEdge] = useState<PanelResizeEdge | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const composerEditVersionRef = useRef(0);
   const composerQueryRangeRef = useRef<Range | null>(null);
   const dismissedComposerQueryRef = useRef<string | null>(null);
   const composerBeforeInputRef = useRef<ComposerBeforeInput | null>(null);
@@ -1801,6 +1802,7 @@ export function AiChat({
   }, [attachmentBlocked]);
 
   function resetComposer(submittedAttachmentIds?: ReadonlySet<string>) {
+    composerEditVersionRef.current += 1;
     editorRef.current?.replaceChildren();
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     setDraft("");
@@ -1887,6 +1889,7 @@ export function AiChat({
   useEffect(() => {
     const editor = editorRef.current;
     if (!panelOpen || requestedComposerText === null || !editor) return;
+    composerEditVersionRef.current += 1;
     editor.replaceChildren(document.createTextNode(requestedComposerText));
     setDraft(requestedComposerText);
     setRequestedComposerText(null);
@@ -2080,6 +2083,7 @@ export function AiChat({
     const editor = editorRef.current;
     if (!editor) return;
     const { fragment: next } = readComposer(editor);
+    composerEditVersionRef.current += 1;
     setDraft(next.message);
     setSkillIds(next.skillIds);
     setComposerSkillTokens((current) => current.filter((token) => editor.contains(token.element)));
@@ -2332,7 +2336,7 @@ export function AiChat({
     if (boundSkillIds === undefined && slashQueryBlocked) return;
     const submittedEditor = editorRef.current;
     const submittedComposer = submittedEditor ? readComposer(submittedEditor) : null;
-    const submittedDocument = JSON.stringify(submittedComposer?.document);
+    const submittedComposerVersion = composerEditVersionRef.current;
     const trimmed = message.trim();
     const submittedSkillIds = boundSkillIds ?? [...realSkillIdsForMessage()];
     let currentComposerDocument = boundComposerDocument
@@ -2477,14 +2481,13 @@ export function AiChat({
             messageAttachments,
           ));
       if (clearSubmittedDraft && selectedThreadRef.current === thread.id) {
-        const editor = editorRef.current;
-        if (
-          editor && editor === submittedEditor
-          && JSON.stringify(readComposer(editor).document) === submittedDocument
-        ) resetComposer(submittedAttachmentIds);
-        else setAttachments((current) => current.filter(
-          (attachment) => !submittedAttachmentIds.has(attachment.id),
-        ));
+        if (composerEditVersionRef.current === submittedComposerVersion) {
+          resetComposer(submittedAttachmentIds);
+        } else {
+          setAttachments((current) => current.filter(
+            (attachment) => !submittedAttachmentIds.has(attachment.id),
+          ));
+        }
       }
       observedRunStatusesRef.current.set(run.id, run.status);
       setSnapshot((current) => current?.thread.id === thread.id ? {
