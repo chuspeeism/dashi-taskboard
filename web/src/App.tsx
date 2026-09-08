@@ -66,7 +66,7 @@ import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPan
 import {
   type PendingInlineAttachment,
   type PendingInlineImage,
-} from "./components/InlineMediaComposer";
+} from "./documentModel";
 import { LinearIcon } from "./components/LinearIcon";
 import {
   DeleteIcon,

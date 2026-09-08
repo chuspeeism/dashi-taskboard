@@ -1,13 +1,13 @@
 import { memo, useEffect, useState, type ClipboardEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { attachmentContentUrl } from "../api";
-import { readIssueIdentifier } from "../issueRoute";
 import type { Attachment, Task, TaskRelationSummary } from "../types";
 import { STATUS_DETAILS } from "./BoardColumn";
 import {
   createInlineMediaSegmentsFromHtml,
+  parseInternalDocumentUrl,
   writeInlineMediaClipboard,
-} from "./InlineMediaComposer";
+} from "../documentModel";
 import { MarkdownDocument } from "./MarkdownDocument";
 import { LinearIcon } from "./LinearIcon";
 import { StatusIcon } from "./SemanticIcons";
@@ -16,29 +16,19 @@ function referencedTask(
   href: string,
   referenceTasks: Task[],
 ): { identifier: string; task: Task | null } | null {
-  try {
-    const base = new URL(document.baseURI);
-    base.search = "";
-    base.hash = "";
-    const url = new URL(href, base);
-    if (url.origin !== base.origin || url.pathname !== base.pathname) return null;
-    const identifier = readIssueIdentifier(url.search);
-    const projectId = url.searchParams.get("project");
-    if (!identifier || !projectId) return null;
-    const task = referenceTasks.find((candidate) => (
-      candidate.projectId === projectId && candidate.identifier === identifier
-    )) ?? null;
-    return { identifier: task?.externalKey ?? identifier, task };
-  } catch {
-    return null;
-  }
+  const reference = parseInternalDocumentUrl(href, document.baseURI);
+  if (reference?.type !== "issue") return null;
+  const { projectId, identifier } = reference;
+  const task = referenceTasks.find((candidate) => (
+    candidate.projectId === projectId && candidate.identifier === identifier
+  )) ?? null;
+  return { identifier: task?.externalKey ?? identifier, task };
 }
 
 function referencedAttachment(href: string, attachments: Attachment[]): Attachment | null {
-  const match = new URL(href, document.baseURI).pathname.match(/\/api\/attachments\/([^/]+)\/download$/);
-  if (!match) return null;
-  const id = decodeURIComponent(match[1]);
-  return attachments.find((attachment) => attachment.id === id) ?? null;
+  const reference = parseInternalDocumentUrl(href, document.baseURI);
+  if (reference?.type !== "attachment" || reference.endpoint !== "download") return null;
+  return attachments.find((attachment) => attachment.id === reference.attachmentId) ?? null;
 }
 
 function fileSize(value: number): string {

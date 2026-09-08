@@ -504,13 +504,14 @@ function MarkdownPre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
   return <pre {...props}>{children}</pre>;
 }
 
-interface MarkdownLinkContextValue {
+interface MarkdownDocumentContextValue {
   value: string;
+  onImageClick?: (event: MouseEvent<HTMLImageElement>) => void;
   onLinkClick?: (event: MouseEvent<HTMLAnchorElement>, href?: string) => void;
   renderLink?: (href: string | undefined, children: ReactNode) => ReactNode | null;
 }
 
-const MarkdownLinkContext = createContext<MarkdownLinkContextValue | null>(null);
+const MarkdownDocumentContext = createContext<MarkdownDocumentContextValue | null>(null);
 
 function MarkdownLink({
   node,
@@ -519,7 +520,7 @@ function MarkdownLink({
   className,
   ...props
 }: ComponentPropsWithoutRef<"a"> & ExtraProps) {
-  const { value, onLinkClick, renderLink } = useContext(MarkdownLinkContext)!;
+  const { value, onLinkClick, renderLink } = useContext(MarkdownDocumentContext)!;
   const renderedLink = renderLink?.(href, children);
   const isRenderedLink = renderedLink !== null && renderedLink !== undefined;
   const start = node?.position?.start.offset;
@@ -548,6 +549,27 @@ function MarkdownLink({
   );
 }
 
+function MarkdownImage({ node, ...props }: ComponentPropsWithoutRef<"img"> & ExtraProps) {
+  const { value, onImageClick } = useContext(MarkdownDocumentContext)!;
+  const start = node?.position?.start.offset;
+  const end = node?.position?.end.offset;
+  const markdown = typeof start === "number" && typeof end === "number"
+    ? value.slice(start, end)
+    : undefined;
+  const selfContainedMarkdown = markdown
+    && /^!\[(?:\\.|[^\]])*\]\(/.test(markdown)
+    ? markdown
+    : undefined;
+  return (
+    <img
+      {...props}
+      className={[props.className, onImageClick ? "is-previewable" : ""].filter(Boolean).join(" ") || undefined}
+      data-taskboard-inline-media-markdown={selfContainedMarkdown}
+      onClick={onImageClick}
+    />
+  );
+}
+
 export function MarkdownDocument({
   value,
   onCopy,
@@ -563,37 +585,19 @@ export function MarkdownDocument({
 }) {
   return (
     <div className="issue-description-document" onCopy={onCopy}>
-      <MarkdownLinkContext.Provider value={{ value, onLinkClick, renderLink }}>
+      <MarkdownDocumentContext.Provider value={{ value, onImageClick, onLinkClick, renderLink }}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkStripMarkdownComments, remarkBreaks]}
           urlTransform={(url) => defaultUrlTransform(resolvePersistedAttachmentUrl(url))}
           components={{
             a: MarkdownLink,
-            img: ({ node, ...props }) => {
-              const start = node?.position?.start.offset;
-              const end = node?.position?.end.offset;
-              const markdown = typeof start === "number" && typeof end === "number"
-                ? value.slice(start, end)
-                : undefined;
-              const selfContainedMarkdown = markdown
-                && /^!\[(?:\\.|[^\]])*\]\(/.test(markdown)
-                ? markdown
-                : undefined;
-              return (
-                <img
-                  {...props}
-                  className={[props.className, onImageClick ? "is-previewable" : ""].filter(Boolean).join(" ") || undefined}
-                  data-taskboard-inline-media-markdown={selfContainedMarkdown}
-                  onClick={onImageClick}
-                />
-              );
-            },
+            img: MarkdownImage,
             pre: MarkdownPre,
           }}
         >
           {value}
         </ReactMarkdown>
-      </MarkdownLinkContext.Provider>
+      </MarkdownDocumentContext.Provider>
     </div>
   );
 }
