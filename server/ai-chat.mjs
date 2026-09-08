@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { signalProcessTree } from "../shared/process-tree.mjs";
-import { resolveCodexPermissions } from "../shared/codex-permissions.mjs";
 import { ApiError } from "../shared/api-fields.mjs";
 import {
   ComposerCatalog,
@@ -56,14 +55,16 @@ function wait(milliseconds) {
 }
 
 function appServerThreadSettings(thread, resolved) {
-  const permission = resolveCodexPermissions(thread.sandbox);
+  const dangerous = thread.sandbox === "danger-full-access";
   return {
     model: thread.model,
     cwd: resolved.workspacePath,
     runtimeWorkspaceRoots: [resolved.workspacePath, ...resolved.addDirectories],
-    approvalPolicy: permission.approvalPolicy,
-    ...(permission.reviewer ? { approvalsReviewer: permission.reviewer } : {}),
-    sandbox: permission.sandbox,
+    approvalPolicy: dangerous ? "never" : "on-request",
+    ...(dangerous
+      ? {}
+      : { approvalsReviewer: thread.sandbox === "read-only" ? "user" : "auto_review" }),
+    sandbox: thread.sandbox,
   };
 }
 
