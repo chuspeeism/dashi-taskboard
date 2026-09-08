@@ -319,10 +319,13 @@ export interface AiChatEvent {
   createdAt?: string;
 }
 
-export interface AiChatThreadSnapshot {
+export interface AiChatThreadSummary {
   thread: AiChatThread;
-  events: AiChatEvent[];
   runs: AiChatRun[];
+}
+
+export interface AiChatThreadSnapshot extends AiChatThreadSummary {
+  events: AiChatEvent[];
 }
 
 export interface CodexProjectIdentity {

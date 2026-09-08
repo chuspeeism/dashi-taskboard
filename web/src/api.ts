@@ -6,6 +6,7 @@ import type {
   AiChatSandbox,
   AiChatThread,
   AiChatThreadSnapshot,
+  AiChatThreadSummary,
   Attachment,
   Comment,
   ComposerCandidatesQuery,
@@ -317,6 +318,16 @@ export async function createAiChatThread(input: {
     body: JSON.stringify(input),
   });
   return data.thread;
+}
+
+export async function getAiChatThreadSummary(
+  threadId: string,
+  signal?: AbortSignal,
+): Promise<AiChatThreadSummary> {
+  return request<AiChatThreadSummary>(
+    `/api/local/ai/threads/${encodeURIComponent(threadId)}/summary`,
+    { signal },
+  );
 }
 
 export async function getAiChatThread(
