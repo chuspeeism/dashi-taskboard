@@ -2800,6 +2800,10 @@ async function resolveRunnableCodexExecutable(appPath) {
   return cachedExecutable;
 }
 
+function emitLauncherEvent(event) {
+  console.log(JSON.stringify({ launcherEvent: event }));
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   options.startupToken ??= taskboardInstanceToken;
@@ -2884,6 +2888,7 @@ async function main() {
   const queueTaskboardOpen = () => {
     openRequestGeneration += 1;
     console.log(JSON.stringify({ openTaskboardSignalQueued: true }));
+    emitLauncherEvent("openSignalQueued");
   };
   let openControl = null;
   const requestTaskboardOpen = async () => {
@@ -2898,6 +2903,7 @@ async function main() {
         await openWithDefaultApplication(deepLink.toString());
         openedRequestGeneration = Math.max(openedRequestGeneration, generation);
         console.log(JSON.stringify({ openedTaskboardInExistingCodex: true }));
+        emitLauncherEvent("openedInExistingCodex");
         return true;
       }
       const evaluation = await connection.send("Runtime.evaluate", {
@@ -2946,6 +2952,7 @@ async function main() {
       process.on("SIGUSR2", queueTaskboardOpen);
     }
     console.log(JSON.stringify({ openTaskboardSignalReady: true }));
+    emitLauncherEvent("openSignalReady");
   }
   const detached = !options.watch;
   const codexConnectionForHost = async (hostId) => {
@@ -2995,7 +3002,10 @@ async function main() {
   const supervisor = createTaskboardSupervisor({
     detached,
     isReachable: isTaskboardReachable,
-    waitUntilReachable: waitUntilTaskboardReachable,
+    waitUntilReachable: async (timeoutMs) => {
+      await waitUntilTaskboardReachable(timeoutMs);
+      emitLauncherEvent("serviceReady");
+    },
     start: () => {
       const child = startTaskboard({
         detached,
@@ -3139,6 +3149,7 @@ async function main() {
       nativeCodexBrowser = false;
       idleAfterNormalExit = true;
       console.error(`Waiting for Codex after update recovery failed: ${restartError.message}`);
+      emitLauncherEvent("waitingForCodex");
     }
     return true;
   };
@@ -3247,6 +3258,7 @@ async function main() {
         );
         idleAfterNormalExit = true;
         console.error(`Waiting for Codex launch: ${error.message}`);
+        emitLauncherEvent("waitingForCodex");
       }
     } else {
       if (options.launch) {
@@ -3298,6 +3310,7 @@ async function main() {
       } catch (error) {
         if (!options.watch) throw error;
         console.error(`Waiting for Codex renderer: ${error.message}`);
+        emitLauncherEvent("waitingForCodex");
       }
     }
     if (stopping) return;
@@ -3307,6 +3320,7 @@ async function main() {
         activateCodexApp(codexAppPid);
       }
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
+      emitLauncherEvent("injected");
     }
     if (hasOpenPending()) {
       await requestTaskboardOpen();
@@ -3341,6 +3355,7 @@ async function main() {
           console.error(
             "Waiting for Codex after exit; open Codex Taskboard again to restart it.",
           );
+          emitLauncherEvent("waitingForCodex");
           continue;
         }
         if (hasOpenPending()) await requestTaskboardOpen();
@@ -3389,6 +3404,7 @@ async function main() {
         );
         if (results.length > 0) {
           console.log(JSON.stringify({ injected: results }, null, 2));
+          emitLauncherEvent("injected");
         }
         if (hasOpenPending()) {
           await requestTaskboardOpen();
@@ -3421,6 +3437,7 @@ async function main() {
             console.error(
               "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
             );
+            emitLauncherEvent("waitingForCodex");
             continue;
           }
           if (
@@ -3456,6 +3473,7 @@ async function main() {
               console.error(
                 "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
               );
+              emitLauncherEvent("waitingForCodex");
               continue;
             }
             console.error("Codex exited unexpectedly; restarting it for the taskboard launcher.");
@@ -3483,9 +3501,11 @@ async function main() {
           console.error(
             "Waiting for Codex after exit; open Codex Taskboard again to restart it.",
           );
+          emitLauncherEvent("waitingForCodex");
           continue;
         }
         console.error(`Waiting for Codex renderer: ${error.message}`);
+        emitLauncherEvent("waitingForCodex");
       }
     }
   } finally {

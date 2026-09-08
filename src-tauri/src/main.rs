@@ -139,6 +139,17 @@ struct LauncherRuntimeDescriptor {
     url: String,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "launcherEvent", rename_all = "camelCase")]
+enum LauncherEvent {
+    WaitingForCodex,
+    ServiceReady,
+    OpenSignalReady,
+    OpenSignalQueued,
+    OpenedInExistingCodex,
+    Injected,
+}
+
 struct LauncherState {
     child: Mutex<Option<u32>>,
     snapshot: Mutex<LauncherSnapshot>,
@@ -1342,8 +1353,10 @@ fn process_group_is_running(pid: u32) -> bool {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
-    let mut snapshot = state.snapshot.lock().unwrap();
+fn signal_pending_taskboard_open(
+    _state: &LauncherState,
+    snapshot: &mut LauncherSnapshot,
+) -> Result<(), String> {
     if !snapshot.open_request_pending {
         return Ok(());
     }
@@ -1358,8 +1371,10 @@ fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
-    let mut snapshot = state.snapshot.lock().unwrap();
+fn signal_pending_taskboard_open(
+    state: &LauncherState,
+    snapshot: &mut LauncherSnapshot,
+) -> Result<(), String> {
     if !snapshot.open_request_pending {
         return Ok(());
     }
@@ -1539,64 +1554,48 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     thread::spawn(move || {
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
             append_log(&state, &line);
-            if is_stderr && line.contains("Waiting for Codex") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+            if is_stderr {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<LauncherEvent>(&line) else {
+                continue;
+            };
+            update_snapshot(&app, &state, |snapshot| {
+                if state.generation.load(Ordering::SeqCst) != generation
+                    || snapshot.child_pid != Some(pid)
+                {
+                    return;
+                }
+                match event {
+                    LauncherEvent::WaitingForCodex => {
                         snapshot.phase = "starting".into();
                         snapshot.message = "正在等待 Codex 窗口…".into();
                     }
-                });
-            } else if !is_stderr && line.contains("Codex Taskboard listening") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                    LauncherEvent::ServiceReady => {
                         snapshot.phase = "starting".into();
                         snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
                     }
-                });
-            } else if !is_stderr && line.contains("\"openTaskboardSignalReady\":true") {
-                let snapshot = update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                    LauncherEvent::OpenSignalReady => {
                         snapshot.open_signal_pid = Some(pid);
+                        if let Err(error) = signal_pending_taskboard_open(&state, snapshot) {
+                            append_log(&state, &format!("Taskboard open signal failed: {error}"));
+                        }
                     }
-                });
-                if snapshot.child_pid == Some(pid) && snapshot.open_signal_pid == Some(pid) {
-                    if let Err(error) = signal_pending_taskboard_open(&state) {
-                        append_log(&state, &format!("Taskboard open signal failed: {error}"));
+                    LauncherEvent::OpenSignalQueued => {
+                        if snapshot.open_signal_pid == Some(pid) {
+                            snapshot.open_request_pending = false;
+                        }
                     }
-                }
-            } else if !is_stderr && line.contains("\"openTaskboardSignalQueued\":true") {
-                let mut snapshot = state.snapshot.lock().unwrap();
-                if state.generation.load(Ordering::SeqCst) == generation
-                    && snapshot.child_pid == Some(pid)
-                    && snapshot.open_signal_pid == Some(pid)
-                {
-                    snapshot.open_request_pending = false;
-                }
-            } else if !is_stderr && line.contains("\"openedTaskboardInExistingCodex\":true") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                    LauncherEvent::OpenedInExistingCodex => {
                         snapshot.phase = "running".into();
                         snapshot.message = "任务面板已在现有 Codex 的浏览面板中打开。".into();
                     }
-                });
-            } else if !is_stderr && line.contains("\"injected\"") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                    LauncherEvent::Injected => {
                         snapshot.phase = "running".into();
                         snapshot.message = "任务面板已在 Codex 客户端中打开。".into();
                     }
-                });
-            }
+                }
+            });
         }
     });
 }
@@ -1944,8 +1943,9 @@ fn restart_launcher(
 }
 
 fn open_taskboard(state: &LauncherState) -> Result<(), String> {
-    state.snapshot.lock().unwrap().open_request_pending = true;
-    signal_pending_taskboard_open(state)
+    let mut snapshot = state.snapshot.lock().unwrap();
+    snapshot.open_request_pending = true;
+    signal_pending_taskboard_open(state, &mut snapshot)
 }
 
 fn open_taskboard_in_browser(state: &LauncherState) -> Result<(), String> {
