@@ -782,6 +782,12 @@ export async function uploadCommentAttachment(
   return data.attachment;
 }
 
+export async function deleteAttachment(attachment: Attachment): Promise<void> {
+  await request(`/api/attachments/${encodeURIComponent(attachment.id)}`, {
+    method: "DELETE",
+  });
+}
+
 export function attachmentContentUrl(attachment: { id: string }): string {
   return `api/attachments/${encodeURIComponent(attachment.id)}/content`;
 }
