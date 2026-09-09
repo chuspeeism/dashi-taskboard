@@ -1,11 +1,15 @@
 ---
 name: manage-taskboard
-description: Manage Codex Taskboard / e-taskboard work with taskctl. Use for taskboard issue IDs, status sync, comments, or taskctl cloud setup—not for unrelated product docs.
+description: Manage Codex Taskboard issues and taskctl setup when the request names Codex Taskboard, e-taskboard, or taskctl, or the conversation already establishes that board as the target. Not for GitHub, Phabricator, other external trackers, or unrelated product docs.
 ---
 
 # Manage Taskboard
 
-Use `taskctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by the taskboard or supplied in the prompt. Never assume, derive, or rewrite an identifier prefix.
+This skill serves the local-first Codex Taskboard product, including its configured LAN and cloud services.
+
+Apply the workflow below only to work explicitly targeting Codex Taskboard or already established as belonging to it in the conversation. An issue identifier, repository, or generic request to manage tasks, sync status, or add comments does not establish that scope. For GitHub, Phabricator, or another external tracker, use that system's tools and workflow; do not query, claim, or mirror its issues in Taskboard unless the user asks for that board operation. When the target is unclear, clarify it before running `taskctl`.
+
+Within that scope, use `taskctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by the taskboard or supplied in the prompt. Never assume, derive, or rewrite an identifier prefix.
 
 Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed.
 
