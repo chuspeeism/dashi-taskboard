@@ -2974,6 +2974,72 @@ kbd {
   text-align: center;
 }
 
+.attachments-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+
+.issue-attachment-controls .attachment-add-button {
+  margin-left: auto;
+}
+
+.issue-attachment-controls {
+  margin-top: 18px;
+}
+
+.attachments-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.attachments-heading h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 20px;
+}
+
+.attachments-heading > div > span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.attachment-add-button {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  gap: 5px;
+  padding: 0 7px;
+  border: var(--border-hairline) solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.attachment-add-button:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.attachment-add-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
 .attachment-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2999,6 +3065,16 @@ kbd {
 .attachment-list li:focus-within {
   border-color: color-mix(in srgb, var(--border) 70%, transparent);
   background: color-mix(in srgb, var(--surface-active) 64%, var(--surface-muted));
+}
+
+.attachment-link {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 9px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .document-attachment-card,
@@ -3033,7 +3109,7 @@ kbd {
   width: 30px;
   height: 30px;
   border-radius: 5px;
-  background: #cacaca;
+  background: #b489f6;
   color: #fff;
 }
 
@@ -3067,6 +3143,57 @@ kbd {
 .attachment-copy > span {
   color: var(--text-tertiary);
   font-size: 9px;
+}
+
+.attachment-actions {
+  position: absolute;
+  right: 5px;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 1px;
+  margin-left: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface-muted) 92%, transparent);
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.attachment-list li:hover .attachment-actions,
+.attachment-list li:focus-within .attachment-actions {
+  opacity: 1;
+}
+
+.attachment-actions a,
+.attachment-actions button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.attachment-actions a:hover,
+.attachment-actions button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.attachment-actions button:hover {
+  color: var(--danger);
+}
+
+.attachment-actions svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
 }
 
 .attachments-empty {
@@ -3438,6 +3565,14 @@ kbd {
   margin-bottom: 6px;
 }
 
+.comment-attachment-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 2px 16px 16px;
+  list-style: none;
+}
+
 .comment-body .issue-description-document blockquote > :last-child {
   margin-bottom: 0;
 }
@@ -3460,6 +3595,82 @@ kbd {
   opacity: 1;
   visibility: visible;
   transition-delay: 0s;
+}
+
+.comment-attachment-list li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  gap: 6px;
+  padding: 4px 5px 4px 6px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.comment-attachment-list a {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 7px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.comment-attachment-list .attachment-file-icon {
+  width: 26px;
+  height: 26px;
+  background: var(--surface);
+}
+
+.comment-attachment-list a > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.comment-attachment-list strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-attachment-list small {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.comment-attachment-list > li > button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.comment-attachment-list > li > button:hover {
+  background: var(--surface-hover);
+  color: var(--danger);
+}
+
+.comment-attachment-list > li > button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
 }
 
 .comment-attach-button {
@@ -7273,7 +7484,8 @@ kbd {
 @media (hover: none) {
   .column-actions,
 .comment-actions,
-.ai-chat-history-delete {
+.ai-chat-history-delete,
+.attachment-actions {
     opacity: 1;
   }
 }
