@@ -1,0 +1,4 @@
+interface:
+  display_name: "GSD-Taskboard 同步"
+  short_description: "安全同步 GSD 规划与任务面板"
+  default_prompt: "使用 $gsd-taskboard-sync 先对比本地 .planning 与 Taskboard，再按确认结果安全同步。"
