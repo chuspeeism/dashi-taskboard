@@ -463,11 +463,11 @@ export class TaskboardDatabase {
 
     `);
 
-    const aiChatThreadColumns = this.database.prepare("PRAGMA table_info(ai_chat_threads)").all();
-    if (!aiChatThreadColumns.some((column) => column.name === "agent_type")) {
+    const agentChatThreadColumns = this.database.prepare("PRAGMA table_info(ai_chat_threads)").all();
+    if (!agentChatThreadColumns.some((column) => column.name === "agent_type")) {
       this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'codex'");
     }
-    if (!aiChatThreadColumns.some((column) => column.name === "agent_session_id")) {
+    if (!agentChatThreadColumns.some((column) => column.name === "agent_session_id")) {
       this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN agent_session_id TEXT");
     }
 
