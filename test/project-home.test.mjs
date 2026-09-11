@@ -9,6 +9,8 @@ const editorSource = await readFile(new URL("../web/src/components/TaskEditor.ts
 const detailSource = await readFile(new URL("../web/src/components/TaskDetail.tsx", import.meta.url), "utf8");
 const labelPickerSource = await readFile(new URL("../web/src/components/LabelPicker.tsx", import.meta.url), "utf8");
 const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.url), "utf8");
+const dashboardSource = await readFile(new URL("../web/src/components/DashboardView.tsx", import.meta.url), "utf8");
+const dashboardStyles = await readFile(new URL("../web/src/components/DashboardView.css", import.meta.url), "utf8");
 
 test("the project switcher merges live Codex projects with persisted Taskboard projects", () => {
   assert.match(appSource, /hostContext\?\.projects \?\? \[\]/);
@@ -57,6 +59,17 @@ test("the selected project exposes the current board surfaces", () => {
   assert.match(appSource, /<GanttView/);
   assert.match(appSource, /<BoardColumn/);
   assert.match(styles, /\.workspace-header \{[\s\S]*?border-bottom: var\(--border-hairline\) solid var\(--border\)/);
+});
+
+test("the dashboard exposes recently completed issues as clickable cards", () => {
+  assert.match(dashboardSource, /const recentCompletedTasks = \[\.\.\.completedTasks\]/);
+  assert.match(dashboardSource, /right\.updatedAt\.localeCompare\(left\.updatedAt\)/);
+  assert.match(dashboardSource, /最近完成/);
+  assert.match(dashboardSource, /Recently completed/);
+  assert.match(dashboardSource, /recentCompletedTasks\.map\(\(task\) =>/);
+  assert.match(dashboardSource, /className="dashboard-completed-row"[\s\S]*?onClick=\{\(\) => onOpenTask\(task\)\}/);
+  assert.match(dashboardSource, /ID: \{task\.externalKey \?\? task\.identifier\}/);
+  assert.match(dashboardStyles, /\.dashboard-view \.dashboard-completed-row \{/);
 });
 
 test("new issues insert attachments into the description and upload them after creation", () => {

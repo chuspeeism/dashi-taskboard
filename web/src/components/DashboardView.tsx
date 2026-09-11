@@ -163,6 +163,15 @@ function shortDate(value: string, locale: string) {
     .format(new Date(`${value}T12:00:00`));
 }
 
+function completedDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 export function DashboardView({
   projectId,
   projectCreatedAt,
@@ -235,6 +244,9 @@ export function DashboardView({
   const upcomingEnd = todayValue + 14 * 86_400_000;
   const activeTasks = tasks.filter((task) => task.status !== "done" && task.status !== "canceled");
   const completedTasks = tasks.filter((task) => task.status === "done");
+  const recentCompletedTasks = [...completedTasks]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 12);
   const overdueTasks = activeTasks.filter((task) => task.dueDate && dayValue(task.dueDate) < todayValue);
   const runningTasks = tasks.filter((task) => presentations[task.id]?.processing.running);
   const upcomingTasks = activeTasks
@@ -732,6 +744,32 @@ export function DashboardView({
                 </button>
               )) : (
                 <div className="dashboard-empty">{text("近期没有到期议题", "No issues are due soon")}</div>
+              )}
+            </div>
+          </section>
+
+          <section className="dashboard-panel dashboard-tertiary-panel dashboard-completed-panel">
+            <header>
+              <span>{text("最近完成", "Recently completed")}</span>
+              <b>{completedTasks.length}</b>
+            </header>
+            <div className="dashboard-task-list">
+              {recentCompletedTasks.length ? recentCompletedTasks.map((task) => (
+                <button
+                  type="button"
+                  className="dashboard-completed-row"
+                  onClick={() => onOpenTask(task)}
+                  key={task.id}
+                >
+                  <span className="dashboard-completed-check" aria-hidden="true">✓</span>
+                  <span className="dashboard-completed-copy">
+                    <strong>{task.title}</strong>
+                    <small>ID: {task.externalKey ?? task.identifier}</small>
+                  </span>
+                  <time>{completedDate(task.updatedAt, locale)}</time>
+                </button>
+              )) : (
+                <div className="dashboard-empty">{text("目前还没有已完成议题", "No completed issues yet")}</div>
               )}
             </div>
           </section>
