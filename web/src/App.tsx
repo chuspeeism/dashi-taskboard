@@ -2639,6 +2639,21 @@ export function App() {
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === moved.id ? moved : candidate,
       )));
+      if (statusChanged && status === "done") {
+        setOtherTasksTab("done");
+        setOtherTasksOpen(true);
+        setAnnouncement(textRef.current(
+          `${moved.identifier} 已完成，并已移到右侧「完成」列表。`,
+          `${moved.identifier} is complete and is now visible in the Done list on the right.`,
+        ));
+      }
+      const currentScopeProjectId = taskScopeProjectIdRef.current;
+      if (currentScopeProjectId) {
+        await Promise.all([
+          refreshTasks(currentScopeProjectId, { quiet: true }),
+          refreshProjectList(),
+        ]);
+      }
       pushUndo(null, async () => {
         const candidate = tasksRef.current.find((current) => current.id === moved.id);
         const current = candidate && candidate.version >= moved.version ? candidate : moved;
@@ -2711,6 +2726,21 @@ export function App() {
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === updated.id ? updated : candidate,
       )));
+      if (previous.status !== updated.status && updated.status === "done") {
+        setOtherTasksTab("done");
+        setOtherTasksOpen(true);
+        setAnnouncement(textRef.current(
+          `${updated.identifier} 已完成，并已移到右侧「完成」列表。`,
+          `${updated.identifier} is complete and is now visible in the Done list on the right.`,
+        ));
+        const currentScopeProjectId = taskScopeProjectIdRef.current;
+        if (currentScopeProjectId) {
+          await Promise.all([
+            refreshTasks(currentScopeProjectId, { quiet: true }),
+            refreshProjectList(),
+          ]);
+        }
+      }
       const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
       if (!assigneeTarget || previousAssigneeTarget) {
         pushUndo(

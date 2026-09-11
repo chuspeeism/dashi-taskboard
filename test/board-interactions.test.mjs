@@ -129,6 +129,15 @@ test("common issue mutations enter a Linear-style undo queue", () => {
   assert.match(apiSource, /export async function restoreTask/);
 });
 
+test("completing a review makes the persisted destination visible and reconciles server state", () => {
+  assert.match(appSource, /statusChanged && status === "done"/);
+  assert.match(appSource, /previous\.status !== updated\.status && updated\.status === "done"/);
+  assert.equal((appSource.match(/setOtherTasksTab\("done"\)/g) ?? []).length, 2);
+  assert.equal((appSource.match(/setOtherTasksOpen\(true\)/g) ?? []).length, 2);
+  assert.equal((appSource.match(/is now visible in the Done list on the right/g) ?? []).length, 2);
+  assert.equal((appSource.match(/await Promise\.all\(\[\s*refreshTasks\(currentScopeProjectId, \{ quiet: true \}\),\s*refreshProjectList\(\)/g) ?? []).length, 2);
+});
+
 test("issues expose processing conversations without manual binding", () => {
   assert.match(detailSource, /在新对话打开/);
   assert.match(detailSource, /onOpenInThread\(currentTask\)/);
