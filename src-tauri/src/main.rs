@@ -267,6 +267,7 @@ impl UpdateDialog {
             window.center();
             NSApplication::sharedApplication(mtm).activate();
             window.makeKeyAndOrderFront(None);
+            window.orderFrontRegardless();
             Self {
                 native: Arc::new(MainThreadBound::new(
                     NativeUpdateDialog {
