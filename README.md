@@ -61,6 +61,17 @@ ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
 
 The desktop app keeps this same directory synchronized with its bundled Skill. The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
 
+### Optional: synchronize GSD planning files
+
+If your workspace uses the GSD planning convention, you can also install the optional `skills/gsd-taskboard-sync` skill:
+
+```bash
+ln -s /absolute/path/to/codex-taskboard/skills/gsd-taskboard-sync \
+  ~/.agents/skills/gsd-taskboard-sync
+```
+
+This adapter reads `.planning/` files and performs a read-only dry run before any synchronization. It maps GSD phases, plans, and todos onto ordinary Taskboard issues and relations. It is not required for users who do not use GSD.
+
 ## Embed in Codex
 
 ### Manual: use a dedicated CDP port
