@@ -1132,7 +1132,7 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
       const requestId = ${JSON.stringify(requestId)};
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
-        resolve({ ok: false, error: "当前 Codex 版本没有提供原生自动任务能力" });
+        resolve({ ok: false, error: "目前 Codex 版本沒有提供原生自動任務能力" });
         return;
       }
       let settled = false;
@@ -1159,7 +1159,7 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
         });
       };
       const timeout = window.setTimeout(
-        () => finish({ ok: false, error: "Codex 自动任务接口没有响应" }),
+        () => finish({ ok: false, error: "Codex 自動任務介面沒有回應" }),
         10_000,
       );
       window.addEventListener("message", onMessage);
@@ -1387,7 +1387,7 @@ function remoteAutomationPrompt(task, comments, attachments, target) {
     ? comments.map((comment) => (
       `- ${comment.authorName} (${comment.createdAt}):\n${comment.body}`
     )).join("\n\n")
-    : "（无）";
+    : "（無）";
   const attachmentItems = [
     ...attachments,
     ...comments.flatMap((comment) => comment.attachments ?? []),
@@ -1396,26 +1396,26 @@ function remoteAutomationPrompt(task, comments, attachments, target) {
     ? attachmentItems.map((attachment) => (
       `- ${attachment.filename} (${attachment.contentType}, ${attachment.size} bytes)`
     )).join("\n")
-    : "（无）";
+    : "（無）";
   const developmentContext = task.developmentContext
     ? JSON.stringify(task.developmentContext)
-    : "（项目根目录）";
+    : "（專案根目錄）";
   return [
-    `处理 Taskboard 议题 ${task.identifier}：${task.title}`,
+    `處理 Taskboard 議題 ${task.identifier}：${task.title}`,
     "",
-    `远程工作目录：${target.workspacePath}`,
-    `开发上下文：${developmentContext}`,
+    `遠端工作目錄：${target.workspacePath}`,
+    `開發上下文：${developmentContext}`,
     "",
     "完整描述：",
-    task.description || "（无）",
+    task.description || "（無）",
     "",
-    "全部评论：",
+    "全部評論：",
     commentText,
     "",
     "附件：",
     attachmentText,
     "",
-    "你只负责在当前远程项目和工作目录内完成实现与直接验证。不要运行 taskctl，也不要访问或修改 Taskboard。完成后返回改动、验证结果、执行结果和剩余限制。",
+    "你只負責在目前遠端專案和工作目錄內完成實作與直接驗證。不要執行 taskctl，也不要存取或修改 Taskboard。完成後返回改動、驗證結果、執行結果和剩餘限制。",
   ].join("\n");
 }
 
@@ -1494,7 +1494,7 @@ async function remoteAutomationCanStart(cdp, request, task, comments) {
   );
   const threadId = started?.thread?.id;
   if (typeof threadId !== "string" || !threadId || started.thread.ephemeral !== true) {
-    throw new Error("Codex 未创建临时自动认领判断线程");
+    throw new Error("Codex 未建立臨時自動認領判斷執行緒");
   }
 
   const deadline = Date.now() + remoteAutomationTurnTimeoutMs;
@@ -1511,8 +1511,8 @@ async function remoteAutomationCanStart(cdp, request, task, comments) {
         input: [{
           type: "text",
           text: [
-            "你是 Codex Taskboard 自动认领 Agent。只判断下面的议题当前是否允许开始。",
-            "根据完整描述和最新评论做语义判断：若任一处明确要求等待、暂不执行或当前不应开始，decision 为 wait；否则 decision 为 start。不要调用工具，不要解释。",
+            "你是 Codex Taskboard 自動認領 Agent。只判斷下面的議題目前是否允許開始。",
+            "根據完整描述和最新評論做語義判斷：若任一處明確要求等待、暫不執行或目前不應開始，decision 為 wait；否則 decision 為 start。不要呼叫工具，不要解釋。",
             JSON.stringify({
               identifier: task.identifier,
               title: task.title,
@@ -1545,15 +1545,15 @@ async function remoteAutomationCanStart(cdp, request, task, comments) {
   const turnId = turnStarted?.turn?.id;
   if (typeof turnId !== "string" || !turnId) {
     completion.cancel();
-    throw new Error("Codex 未返回自动认领判断 turn");
+    throw new Error("Codex 未返回自動認領判斷 turn");
   }
   const turn = await completion.wait(
     turnId,
-    "Codex 自动认领判断超时",
+    "Codex 自動認領判斷超時",
     Math.max(0, deadline - Date.now()),
   );
   if (turn.status !== "completed") {
-    throw new Error(turn.error?.message || "Codex 自动认领判断失败");
+    throw new Error(turn.error?.message || "Codex 自動認領判斷失敗");
   }
   const answer = remoteAutomationTurnText(turn);
   let decision;
@@ -1561,7 +1561,7 @@ async function remoteAutomationCanStart(cdp, request, task, comments) {
     decision = JSON.parse(answer).decision;
   } catch {}
   if (decision !== "start" && decision !== "wait") {
-    throw new Error("Codex 未返回有效的自动认领判断");
+    throw new Error("Codex 未返回有效的自動認領判斷");
   }
   return decision === "start";
 }
@@ -1603,7 +1603,7 @@ async function runRemoteTaskboardAutomation(record) {
   if (!target) {
     await taskboardRequest(commentsPath, {
       method: "POST",
-      body: { body: "自动认领未开始：目标 SSH 工作目录没有唯一的已登记 Codex 项目映射。" },
+      body: { body: "自動認領未開始：目標 SSH 工作目錄沒有唯一的已登記 Codex 專案對映。" },
     });
     return;
   }
@@ -1722,10 +1722,10 @@ async function runRemoteTaskboardAutomation(record) {
       method: "POST",
       body: {
         body: [
-          "自动认领远程执行完成。",
+          "自動認領遠端執行完成。",
           `- Codex host：${target.codexHostId}`,
-          `- 远程目录：${target.workspacePath}`,
-          `- 远程 thread：${threadId}`,
+          `- 遠端目錄：${target.workspacePath}`,
+          `- 遠端 thread：${threadId}`,
           "",
           finalText,
         ].join("\n").slice(0, 100_000),
@@ -1749,7 +1749,7 @@ async function runRemoteTaskboardAutomation(record) {
     await taskboardRequest(commentsPath, {
       method: "POST",
       body: {
-        body: `自动认领远程执行失败：${message}`.slice(0, 100_000),
+        body: `自動認領遠端執行失敗：${message}`.slice(0, 100_000),
         threadId,
         threadBinding,
       },

@@ -36,7 +36,7 @@ test("embedded page uses the launcher URL inside an opaque sandbox", () => {
 });
 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
-  assert.match(source, /const PLUGIN_LABELS = \["插件", "plugins", "外掛程式", "プラグイン"\]/);
+  assert.match(source, /const PLUGIN_LABELS = \["外掛", "plugins", "外掛程式", "プラグイン"\]/);
   assert.match(source, /if \(plugin\?\.parentElement\) return plugin;/);
   assert.match(source, /button\.getAttribute\(OWNED_ATTRIBUTE\) !== "true"/);
   assert.match(source, /rect\.bottom <= sectionTop/);
@@ -70,7 +70,7 @@ test("entry recognizes known Plugins labels and structurally anchors an unenumer
     querySelectorAll: (selector) => selector === "button" ? currentButtons : [],
   };
   const findReferenceButton = vm.runInNewContext(`(() => {
-    const PLUGIN_LABELS = ["插件", "plugins", "外掛程式", "プラグイン"];
+    const PLUGIN_LABELS = ["外掛", "plugins", "外掛程式", "プラグイン"];
     const OWNED_ATTRIBUTE = "data-codex-taskboard-owned";
     ${normalizedLabelSource}
     ${referenceSource}
@@ -79,7 +79,7 @@ test("entry recognizes known Plugins labels and structurally anchors an unenumer
     document: { querySelector: () => scroll },
   });
 
-  for (const textContent of ["插件", "外掛程式", "プラグイン", "Plugins"]) {
+  for (const textContent of ["外掛", "外掛程式", "プラグイン", "Plugins"]) {
     const currentButton = {
       textContent,
       getAttribute: () => null,
@@ -122,11 +122,11 @@ test("entry recognizes known Plugins labels and structurally anchors an unenumer
 
   for (const language of ["zh", "zh-CN", "zh-TW", "zh-HK"]) {
     languageDocument.documentElement.lang = language;
-    assert.equal(hostText("任务面板", "Taskboard"), "任务面板");
+    assert.equal(hostText("任務面板", "Taskboard"), "任務面板");
   }
   for (const language of ["en-US", "ja-JP", "de-DE"]) {
     languageDocument.documentElement.lang = language;
-    assert.equal(hostText("任务面板", "Taskboard"), "Taskboard");
+    assert.equal(hostText("任務面板", "Taskboard"), "Taskboard");
   }
 });
 

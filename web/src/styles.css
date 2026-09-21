@@ -7260,6 +7260,10 @@ kbd {
     display: none;
   }
 
+  .header-project-menu button:not(.search-clear) {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
   .project-name {
     max-width: 35vw;
   }
