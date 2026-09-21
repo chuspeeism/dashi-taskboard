@@ -239,7 +239,7 @@ struct UpdateDialog {
 impl UpdateDialog {
     fn prompt(_app: &AppHandle, version: &str) -> Option<Self> {
         let message = format!(
-            "发现新版本 Codex Taskboard {version}。是否现在更新并重启？"
+            "發現新版本 Codex Taskboard {version}。是否現在更新並重啟？"
         );
         let (response, result) = std::sync::mpsc::channel();
         let dialog = run_on_main(move |mtm| {
@@ -255,7 +255,7 @@ impl UpdateDialog {
             alert.setMessageText(&NSString::from_str("Codex Taskboard 更新"));
             alert.setInformativeText(&NSString::from_str(&message));
             let install_button = alert.addButtonWithTitle(&NSString::from_str("立即更新"));
-            let defer_button = alert.addButtonWithTitle(&NSString::from_str("稍后"));
+            let defer_button = alert.addButtonWithTitle(&NSString::from_str("稍後"));
             unsafe {
                 install_button.setTarget(Some(&target));
                 install_button.setAction(Some(sel!(acceptUpdate:)));
@@ -359,13 +359,13 @@ impl UpdateDialog {
     fn prompt(app: &AppHandle, version: &str) -> Option<Self> {
         app.dialog()
             .message(format!(
-                "发现新版本 Codex Taskboard {version}。是否现在更新并重启？"
+                "發現新版本 Codex Taskboard {version}。是否現在更新並重啟？"
             ))
             .title("Codex Taskboard 更新")
             .kind(MessageDialogKind::Info)
             .buttons(MessageDialogButtons::OkCancelCustom(
                 "立即更新".into(),
-                "稍后".into(),
+                "稍後".into(),
             ))
             .blocking_show()
             .then_some(Self)
@@ -406,8 +406,8 @@ impl LauncherState {
             child: Mutex::new(None),
             snapshot: Mutex::new(LauncherSnapshot {
                 phase: "starting".into(),
-                message: "正在启动任务面板…".into(),
-                update_message: "启动后将自动检查更新。".into(),
+                message: "正在啟動任務面板…".into(),
+                update_message: "啟動後將自動檢查更新。".into(),
                 update_available: false,
                 version,
                 app_path: None,
@@ -496,7 +496,7 @@ fn wait_for_macos_bundle_migration_lock() -> Result<File, String> {
     let data_directory = home_directory.join("Library/Application Support/Codex Taskboard");
     fs::create_dir_all(&data_directory).map_err(|error| {
         format!(
-            "无法创建应用数据目录 {}：{error}",
+            "無法建立應用資料目錄 {}：{error}",
             data_directory.display()
         )
     })?;
@@ -508,13 +508,13 @@ fn wait_for_macos_bundle_migration_lock() -> Result<File, String> {
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
             Ok(None) => {
                 return Err(format!(
-                    "等待现有 App 退出超时，无法迁移 {}",
+                    "等待現有 App 退出超時，無法遷移 {}",
                     lock_path.display()
                 ));
             }
             Err(error) => {
                 return Err(format!(
-                    "无法锁定 App 迁移路径 {}：{error}",
+                    "無法鎖定 App 遷移路徑 {}：{error}",
                     lock_path.display()
                 ));
             }
@@ -529,7 +529,7 @@ fn rename_macos_app_bundle(source: &Path, destination: &Path) -> Result<(), Stri
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
         Err(error) => {
             return Err(format!(
-                "无法将 {} 改名为 {}：{error}",
+                "無法將 {} 改名為 {}：{error}",
                 source.display(),
                 destination.display()
             ));
@@ -547,18 +547,18 @@ end run"#;
         .arg(source)
         .arg(destination)
         .output()
-        .map_err(|error| format!("无法请求 App 改名授权：{error}"))?;
+        .map_err(|error| format!("無法請求 App 改名授權：{error}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if detail.is_empty() {
-            "App 改名授权未完成".into()
+            "App 改名授權未完成".into()
         } else {
-            format!("App 改名授权未完成：{detail}")
+            format!("App 改名授權未完成：{detail}")
         });
     }
     if source.exists() || !destination.is_dir() {
         return Err(format!(
-            "App 改名后路径状态不正确：{} -> {}",
+            "App 改名後路徑狀態不正確：{} -> {}",
             source.display(),
             destination.display()
         ));
@@ -580,32 +580,32 @@ fn take_macos_bundle_migration_marker() -> Result<Option<MacosBundleMigration>, 
     let beta_autostart_was_enabled =
         beta_autostart_marker.as_deref() == Some(std::ffi::OsStr::new("1"));
     if !is_beta_release() {
-        return Err("稳定版不能恢复 Beta App bundle migration marker".into());
+        return Err("穩定版不能恢復 Beta App bundle migration marker".into());
     }
 
     let current_executable =
-        std::env::current_exe().map_err(|error| format!("无法定位当前可执行文件：{error}"))?;
+        std::env::current_exe().map_err(|error| format!("無法定位目前可執行檔案：{error}"))?;
     let current_executable = fs::canonicalize(&current_executable)
-        .map_err(|error| format!("无法解析当前可执行文件路径：{error}"))?;
+        .map_err(|error| format!("無法解析目前可執行檔案路徑：{error}"))?;
     let current_app = macos_app_path_from_executable(&current_executable)
-        .ok_or_else(|| "当前可执行文件不在 macOS App bundle 内".to_string())?;
+        .ok_or_else(|| "目前可執行檔案不在 macOS App bundle 內".to_string())?;
     if current_app.file_name() != Some(std::ffi::OsStr::new("Codex Taskboard Beta.app")) {
         return Err(format!(
-            "macOS App bundle migration marker 只能由改名后的 Beta App 恢复：{}",
+            "macOS App bundle migration marker 只能由改名後的 Beta App 恢復：{}",
             current_app.display()
         ));
     }
     let relative_executable = current_executable
         .strip_prefix(&current_app)
-        .map_err(|error| format!("无法解析 Beta App 可执行文件相对路径：{error}"))?;
+        .map_err(|error| format!("無法解析 Beta App 可執行檔案相對路徑：{error}"))?;
     let expected_source_executable = current_app
         .parent()
-        .ok_or_else(|| format!("无法定位 App 上级目录：{}", current_app.display()))?
+        .ok_or_else(|| format!("無法定位 App 上級目錄：{}", current_app.display()))?
         .join("Codex Taskboard.app")
         .join(relative_executable);
     if source_executable != expected_source_executable {
         return Err(format!(
-            "macOS App bundle migration source marker 不匹配：{} != {}",
+            "macOS App bundle migration source marker 不相符：{} != {}",
             source_executable.display(),
             expected_source_executable.display()
         ));
@@ -627,9 +627,9 @@ fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, 
     }
 
     let current_executable =
-        std::env::current_exe().map_err(|error| format!("无法定位当前可执行文件：{error}"))?;
+        std::env::current_exe().map_err(|error| format!("無法定位目前可執行檔案：{error}"))?;
     let current_executable = fs::canonicalize(&current_executable)
-        .map_err(|error| format!("无法解析当前可执行文件路径：{error}"))?;
+        .map_err(|error| format!("無法解析目前可執行檔案路徑：{error}"))?;
     let Some(current_app) = macos_app_path_from_executable(&current_executable) else {
         return Ok(None);
     };
@@ -638,17 +638,17 @@ fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, 
     }
     if current_app.file_name() != Some(std::ffi::OsStr::new("Codex Taskboard.app")) {
         return Err(format!(
-            "Beta App 当前路径名称不受支持：{}",
+            "Beta App 目前路徑名稱不受支援：{}",
             current_app.display()
         ));
     }
     let destination_app = current_app
         .parent()
-        .ok_or_else(|| format!("无法定位 App 上级目录：{}", current_app.display()))?
+        .ok_or_else(|| format!("無法定位 App 上級目錄：{}", current_app.display()))?
         .join("Codex Taskboard Beta.app");
     let executable_name = current_executable
         .file_name()
-        .ok_or_else(|| format!("无法定位 App 可执行文件名：{}", current_executable.display()))?
+        .ok_or_else(|| format!("無法定位 App 可執行檔名：{}", current_executable.display()))?
         .to_owned();
     let destination_executable = destination_app
         .join("Contents/MacOS")
@@ -665,17 +665,17 @@ fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, 
         } < 0
     {
         return Err(format!(
-            "无法设置 App 迁移锁：{}",
+            "無法設定 App 遷移鎖：{}",
             std::io::Error::last_os_error()
         ));
     }
 
     if !current_app.is_dir() {
-        return Err(format!("当前 App 路径不存在：{}", current_app.display()));
+        return Err(format!("目前 App 路徑不存在：{}", current_app.display()));
     }
     if destination_app.exists() {
         return Err(format!(
-            "目标 App 路径已存在，未覆盖：{}",
+            "目標 App 路徑已存在，未覆蓋：{}",
             destination_app.display()
         ));
     }
@@ -706,7 +706,7 @@ fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, 
 
     match rename_macos_app_bundle(&destination_app, &current_app) {
         Ok(()) => Err(format!(
-            "无法从改名后的 App 重启，已恢复原路径：{exec_error}"
+            "無法從改名後的 App 重啟，已恢復原路徑：{exec_error}"
         )),
         Err(rollback_error) => {
             append_macos_startup_log(&format!(
@@ -834,13 +834,13 @@ fn resolve_legacy_skill_conflict(
     let proceed = app
         .dialog()
         .message(format!(
-            "检测到旧位置中的 manage-taskboard Skill 与当前 App 内置版本不同，可能包含你的修改。\n\n为避免 Codex 同时发现两个版本，Taskboard 会把旧副本完整保留到：\n\n{}\n\n选择退出不会改动旧副本，也不会启动 Codex。",
+            "檢測到舊位置中的 manage-taskboard Skill 與目前 App 內建版本不同，可能包含你的修改。\n\n為避免 Codex 同時發現兩個版本，Taskboard 會把舊副本完整保留到：\n\n{}\n\n選擇退出不會改動舊副本，也不會啟動 Codex。",
             backup_path.display()
         ))
-        .title("Codex Taskboard Skill 冲突")
+        .title("Codex Taskboard Skill 衝突")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
-            "保留备份并继续".into(),
+            "保留備份並繼續".into(),
             "退出".into(),
         ))
         .blocking_show();
@@ -920,9 +920,9 @@ fn update_snapshot(
             let status = {
                 let snapshot = status_state.snapshot.lock().unwrap();
                 match snapshot.phase.as_str() {
-                    "running" => "运行状态：正常",
-                    "error" => "运行状态：异常",
-                    _ => "运行状态：启动中",
+                    "running" => "執行狀態：正常",
+                    "error" => "執行狀態：異常",
+                    _ => "執行狀態：啟動中",
                 }
             };
             let _ = status_menu.set_text(status);
@@ -947,7 +947,7 @@ fn show_error_dialog(app: &AppHandle, title: &str, message: &str) {
         .message(message)
         .title(title)
         .kind(MessageDialogKind::Error)
-        .buttons(MessageDialogButtons::OkCustom("关闭".into()))
+        .buttons(MessageDialogButtons::OkCustom("關閉".into()))
         .blocking_show();
 }
 
@@ -990,7 +990,7 @@ fn sync_macos_autostart_path(
     }
     app.autolaunch()
         .enable()
-        .map_err(|error| format!("无法更新 Beta 开机自启动路径：{error}"))?;
+        .map_err(|error| format!("無法更新 Beta 開機自啟動路徑：{error}"))?;
     if !migrate_stable_entry {
         return Ok(());
     }
@@ -998,7 +998,7 @@ fn sync_macos_autostart_path(
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
-            "无法移除已迁移的开机自启动项 {}：{error}",
+            "無法移除已遷移的開機自啟動項 {}：{error}",
             stable_entry.display()
         )),
     }
@@ -1009,17 +1009,17 @@ fn install_taskctl_symlink(app: &AppHandle) -> Result<(PathBuf, PathBuf), String
     let wrapper_path = app
         .path()
         .resource_dir()
-        .map_err(|error| format!("无法定位当前 App 资源目录：{error}"))?
+        .map_err(|error| format!("無法定位目前 App 資源目錄：{error}"))?
         .join("bin/taskctl");
     let wrapper_path = fs::canonicalize(&wrapper_path).map_err(|error| {
         format!(
-            "无法定位当前 App 内置命令行工具 {}：{error}",
+            "無法定位目前 App 內建命令列工具 {}：{error}",
             wrapper_path.display()
         )
     })?;
     if !wrapper_path.is_file() {
         return Err(format!(
-            "当前 App 内置命令行工具不是文件：{}",
+            "目前 App 內建命令列工具不是檔案：{}",
             wrapper_path.display()
         ));
     }
@@ -1031,23 +1031,23 @@ fn install_taskctl_symlink(app: &AppHandle) -> Result<(PathBuf, PathBuf), String
     ));
     std::os::unix::fs::symlink(&wrapper_path, &temporary_path).map_err(|error| {
         format!(
-            "无法在 {} 创建符号链接：{error}",
+            "無法在 {} 建立符號連結：{error}",
             system_path.parent().unwrap().display()
         )
     })?;
     if let Err(error) = fs::rename(&temporary_path, &system_path) {
         let _ = fs::remove_file(&temporary_path);
         return Err(format!(
-            "无法替换系统命令 {}：{error}",
+            "無法替換系統命令 {}：{error}",
             system_path.display()
         ));
     }
 
     let installed_target = fs::read_link(&system_path)
-        .map_err(|error| format!("无法验证系统命令 {}：{error}", system_path.display()))?;
+        .map_err(|error| format!("無法驗證系統命令 {}：{error}", system_path.display()))?;
     if installed_target != wrapper_path {
         return Err(format!(
-            "系统命令未指向当前 App：{} -> {}",
+            "系統命令未指向目前 App：{} -> {}",
             system_path.display(),
             installed_target.display()
         ));
@@ -1072,14 +1072,14 @@ fn find_codex_app(home_directory: &Path) -> Option<PathBuf> {
 fn ordinary_codex_process(app_path: &Path) -> Result<Option<u32>, String> {
     let app_name = app_path
         .file_stem()
-        .ok_or_else(|| "无法识别 Codex App 名称".to_string())?;
+        .ok_or_else(|| "無法識別 Codex App 名稱".to_string())?;
     let executable = app_path.join("Contents/MacOS").join(app_name);
     let output = StdCommand::new("/bin/ps")
         .args(["-ww", "-axo", "pid=,command="])
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
-        return Err("无法检查正在运行的 Codex".to_string());
+        return Err("無法檢查正在執行的 Codex".to_string());
     }
 
     let executable = executable.to_string_lossy();
@@ -1110,16 +1110,16 @@ fn process_is_running(pid: u32) -> bool {
 fn quit_codex_normally(pid: u32) -> Result<(), String> {
     let application =
         NSRunningApplication::runningApplicationWithProcessIdentifier(pid as libc::pid_t)
-            .ok_or_else(|| "无法找到正在运行的 Codex".to_string())?;
+            .ok_or_else(|| "無法找到正在執行的 Codex".to_string())?;
     if !application.terminate() {
-        return Err("Codex 没有接受退出请求".to_string());
+        return Err("Codex 沒有接受退出請求".to_string());
     }
     let deadline = Instant::now() + LAUNCHER_STOP_TIMEOUT;
     while process_is_running(pid) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
     }
     if process_is_running(pid) {
-        return Err("Codex 尚未退出，任务面板没有启动".to_string());
+        return Err("Codex 尚未退出，任務面板沒有啟動".to_string());
     }
     Ok(())
 }
@@ -1159,7 +1159,7 @@ fn ordinary_codex_process(app_path: &Path, codex_profile: &Path) -> Result<Optio
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
-        return Err("无法检查正在运行的 Codex".to_string());
+        return Err("無法檢查正在執行的 Codex".to_string());
     }
     let pid = String::from_utf8_lossy(&output.stdout);
     let pid = pid.trim();
@@ -1168,7 +1168,7 @@ fn ordinary_codex_process(app_path: &Path, codex_profile: &Path) -> Result<Optio
     }
     pid.parse()
         .map(Some)
-        .map_err(|_| "无法检查正在运行的 Codex".to_string())
+        .map_err(|_| "無法檢查正在執行的 Codex".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -1197,7 +1197,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
     .is_err()
     {
         let _ = unsafe { CloseHandle(process) };
-        return Err("无法检查正在运行的 Codex".to_string());
+        return Err("無法檢查正在執行的 Codex".to_string());
     }
 
     let mut session = 0;
@@ -1205,7 +1205,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
     let started = unsafe { RmStartSession(&mut session, None, PWSTR(session_key.as_mut_ptr())) };
     if started != ERROR_SUCCESS {
         let _ = unsafe { CloseHandle(process) };
-        return Err("无法请求 Codex 退出".to_string());
+        return Err("無法請求 Codex 退出".to_string());
     }
     let application = RM_UNIQUE_PROCESS {
         dwProcessId: pid,
@@ -1220,7 +1220,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
     let _ = unsafe { RmEndSession(session) };
     if shutdown != ERROR_SUCCESS {
         let _ = unsafe { CloseHandle(process) };
-        return Err("Codex 没有接受退出请求".to_string());
+        return Err("Codex 沒有接受退出請求".to_string());
     }
 
     let exited = unsafe {
@@ -1233,7 +1233,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
     if exited {
         Ok(())
     } else {
-        Err("Codex 尚未退出，任务面板没有启动".to_string())
+        Err("Codex 尚未退出，任務面板沒有啟動".to_string())
     }
 }
 
@@ -1250,7 +1250,7 @@ fn ordinary_codex_process(app_path: &Path, codex_profile: &Path) -> Result<Optio
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
-        return Err("无法检查正在运行的 Codex".to_string());
+        return Err("無法檢查正在執行的 Codex".to_string());
     }
 
     let executable = app_path.to_string_lossy();
@@ -1293,31 +1293,31 @@ fn ordinary_codex_process(app_path: &Path, codex_profile: &Path) -> Result<Optio
 #[cfg(target_os = "linux")]
 fn quit_codex_normally(pid: u32) -> Result<(), String> {
     if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
-        return Err("Codex 没有接受退出请求".to_string());
+        return Err("Codex 沒有接受退出請求".to_string());
     }
     let deadline = Instant::now() + LAUNCHER_STOP_TIMEOUT;
     while process_is_running(pid) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
     }
     if process_is_running(pid) {
-        return Err("Codex 尚未退出，任务面板没有启动".to_string());
+        return Err("Codex 尚未退出，任務面板沒有啟動".to_string());
     }
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 fn missing_codex_app_message() -> String {
-    "未找到官方 ChatGPT.app 或 Codex.app。请先安装到 Applications 文件夹。".to_string()
+    "未找到官方 ChatGPT.app 或 Codex.app。請先安裝到 Applications 資料夾。".to_string()
 }
 
 #[cfg(target_os = "windows")]
 fn missing_codex_app_message() -> String {
-    "未找到官方 Codex App。请先从 Microsoft Store 安装。".to_string()
+    "未找到官方 Codex App。請先從 Microsoft Store 安裝。".to_string()
 }
 
 #[cfg(target_os = "linux")]
 fn missing_codex_app_message() -> String {
-    "未找到官方 ChatGPT App。请先安装 Ubuntu x64 .deb。".to_string()
+    "未找到官方 ChatGPT App。請先安裝 Ubuntu x64 .deb。".to_string()
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1529,7 +1529,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     }
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "stopped".into();
-        snapshot.message = "任务面板已停止。".into();
+        snapshot.message = "任務面板已停止。".into();
         snapshot.child_pid = None;
         snapshot.open_signal_pid = None;
     });
@@ -1566,11 +1566,11 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                 match event {
                     LauncherEvent::WaitingForCodex => {
                         snapshot.phase = "starting".into();
-                        snapshot.message = "正在等待 Codex 窗口…".into();
+                        snapshot.message = "正在等待 Codex 視窗…".into();
                     }
                     LauncherEvent::ServiceReady => {
                         snapshot.phase = "starting".into();
-                        snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
+                        snapshot.message = "任務面板服務已啟動，正在注入 Codex…".into();
                     }
                     LauncherEvent::OpenSignalReady => {
                         snapshot.open_signal_pid = Some(pid);
@@ -1585,11 +1585,11 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                     }
                     LauncherEvent::OpenedInExistingCodex => {
                         snapshot.phase = "running".into();
-                        snapshot.message = "任务面板已在现有 Codex 的浏览面板中打开。".into();
+                        snapshot.message = "任務面板已在現有 Codex 的瀏覽面板中開啟。".into();
                     }
                     LauncherEvent::Injected => {
                         snapshot.phase = "running".into();
-                        snapshot.message = "任务面板已在 Codex 客户端中打开。".into();
+                        snapshot.message = "任務面板已在 Codex 客戶端中開啟。".into();
                     }
                 }
             });
@@ -1616,7 +1616,7 @@ fn start_launcher_locked(
     let node_path = std::env::current_exe()
         .map_err(|error| error.to_string())?
         .parent()
-        .ok_or_else(|| "无法定位 App 可执行文件目录".to_string())?
+        .ok_or_else(|| "無法定位 App 可執行檔案目錄".to_string())?
         .join(if cfg!(target_os = "windows") {
             "node.exe"
         } else if cfg!(target_os = "linux") {
@@ -1635,11 +1635,11 @@ fn start_launcher_locked(
     if let Some(codex_pid) = ordinary_codex_pid {
         let restart = app
             .dialog()
-            .message("需要重新启动 Codex 才能显示任务面板")
+            .message("需要重新啟動 Codex 才能顯示任務面板")
             .title("Codex Taskboard")
             .kind(MessageDialogKind::Info)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                "重新启动 Codex".into(),
+                "重新啟動 Codex".into(),
                 "取消".into(),
             ))
             .blocking_show();
@@ -1647,7 +1647,7 @@ fn start_launcher_locked(
             append_log(state, "Codex restart canceled by user");
             return Ok(update_snapshot(app, state, |snapshot| {
                 snapshot.phase = "stopped".into();
-                snapshot.message = "已取消重新启动 Codex，任务面板未注入。".into();
+                snapshot.message = "已取消重新啟動 Codex，任務面板未注入。".into();
                 snapshot.app_path = Some(codex_app.display().to_string());
                 snapshot.open_signal_pid = None;
                 snapshot.open_request_pending = false;
@@ -1663,7 +1663,7 @@ fn start_launcher_locked(
     state.intentional_stop.store(false, Ordering::SeqCst);
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "starting".into();
-        snapshot.message = "正在启动任务面板服务…".into();
+        snapshot.message = "正在啟動任務面板服務…".into();
         snapshot.app_path = Some(codex_app.display().to_string());
         snapshot.open_signal_pid = None;
     });
@@ -1848,7 +1848,7 @@ fn start_launcher_locked(
                 snapshot.open_signal_pid = None;
                 if !intentional {
                     snapshot.phase = "error".into();
-                    snapshot.message = "任务面板进程已退出，正在恢复…".into();
+                    snapshot.message = "任務面板程式已退出，正在恢復…".into();
                 }
             }
         });
@@ -1887,8 +1887,8 @@ fn start_launcher_locked(
             });
             show_error_dialog(
                 &event_app,
-                "Codex Taskboard 恢复失败",
-                &format!("任务面板进程无法恢复：{error}\n\n请重新打开 App。"),
+                "Codex Taskboard 恢復失敗",
+                &format!("任務面板程式無法恢復：{error}\n\n請重新開啟 App。"),
             );
         }
     });
@@ -1931,7 +1931,7 @@ fn restart_launcher(
                 && snapshot.child_pid.is_none()
             {
                 snapshot.phase = "error".into();
-                snapshot.message = format!("任务面板启动失败：{error}");
+                snapshot.message = format!("任務面板啟動失敗：{error}");
                 snapshot.open_signal_pid = None;
             }
         });
@@ -1969,7 +1969,7 @@ fn open_taskboard_in_browser(state: &LauncherState) -> Result<(), String> {
     status
         .success()
         .then_some(())
-        .ok_or_else(|| "系统默认浏览器没有打开任务面板".to_string())
+        .ok_or_else(|| "系統預設瀏覽器沒有開啟任務面板".to_string())
 }
 
 async fn check_for_startup_update(
@@ -1977,7 +1977,7 @@ async fn check_for_startup_update(
     state: &Arc<LauncherState>,
 ) -> Result<Option<Update>, String> {
     update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = "正在检查更新…".into();
+        snapshot.update_message = "正在檢查更新…".into();
         snapshot.update_available = false;
     });
     let beta_release = is_beta_release();
@@ -2015,7 +2015,7 @@ async fn check_for_startup_update(
             append_log(state, &format!("Update {} is available", update.version));
             update_snapshot(app, state, |snapshot| {
                 snapshot.update_message =
-                    format!("发现新版本 {}，可以下载并安装。", update.version);
+                    format!("發現新版本 {}，可以下載並安裝。", update.version);
                 snapshot.update_available = true;
             });
         }
@@ -2023,7 +2023,7 @@ async fn check_for_startup_update(
             append_log(state, "No update is available");
             update_snapshot(app, state, |snapshot| {
                 snapshot.update_message =
-                    format!("当前版本 {} 已是最新版本。", snapshot.version.as_str());
+                    format!("目前版本 {} 已是最新版本。", snapshot.version.as_str());
                 snapshot.update_available = false;
             });
         }
@@ -2043,7 +2043,7 @@ async fn prepare_update(
         &format!("Downloading update {update_version} before confirmation"),
     );
     update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = format!("正在下载 {update_version}…");
+        snapshot.update_message = format!("正在下載 {update_version}…");
         snapshot.update_available = true;
     });
     let progress_app = app.clone();
@@ -2070,8 +2070,8 @@ async fn prepare_update(
             displayed_progress = progress;
             let snapshot = update_snapshot(&progress_app, &progress_state, |snapshot| {
                 snapshot.update_message = match progress {
-                    Some(progress) => format!("正在下载 {progress_version} · {progress}%"),
-                    None => format!("正在下载 {progress_version}…"),
+                    Some(progress) => format!("正在下載 {progress_version} · {progress}%"),
+                    None => format!("正在下載 {progress_version}…"),
                 };
             });
             let dialog = progress_dialog.lock().unwrap().clone();
@@ -2081,7 +2081,7 @@ async fn prepare_update(
         },
         move || {
             let snapshot = update_snapshot(&finish_app, &finish_state, |snapshot| {
-                snapshot.update_message = "正在验证更新…".into();
+                snapshot.update_message = "正在驗證更新…".into();
             });
             let dialog = finish_dialog.lock().unwrap().clone();
             if let Some(dialog) = dialog {
@@ -2097,7 +2097,7 @@ async fn prepare_update(
         &format!("Downloaded and verified update {update_version}"),
     );
     update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = format!("{update_version} 已下载并通过签名验证，等待安装。");
+        snapshot.update_message = format!("{update_version} 已下載並透過簽名驗證，等待安裝。");
         snapshot.update_available = true;
     });
     Ok(bytes)
@@ -2137,7 +2137,7 @@ async fn prepare_available_update(
             if let Err(error) = &result {
                 append_log(&state, &format!("Update {} preparation failed: {error}", update.version));
                 update_snapshot(&app, &state, |snapshot| {
-                    snapshot.update_message = format!("更新下载或签名验证失败：{error}");
+                    snapshot.update_message = format!("更新下載或簽名驗證失敗：{error}");
                     snapshot.update_available = true;
                 });
             }
@@ -2161,7 +2161,7 @@ fn install_update(
     state.update_in_progress.store(true, Ordering::SeqCst);
 
     let snapshot = update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = "正在安装更新…".into();
+        snapshot.update_message = "正在安裝更新…".into();
         snapshot.update_available = false;
     });
     update_dialog.show_installing(&snapshot.update_message);
@@ -2193,11 +2193,11 @@ fn install_update(
             );
         }
         update_snapshot(app, state, |snapshot| {
-            snapshot.update_message = format!("更新安装失败：{error}");
+            snapshot.update_message = format!("更新安裝失敗：{error}");
             snapshot.update_available = true;
             if let Some(restart_error) = &restart_error {
                 snapshot.phase = "error".into();
-                snapshot.message = format!("任务面板恢复失败：{restart_error}");
+                snapshot.message = format!("任務面板恢復失敗：{restart_error}");
             }
         });
         return Err(error.to_string());
@@ -2208,7 +2208,7 @@ fn install_update(
         &format!("Installed update {update_version}; restarting"),
     );
     let snapshot = update_snapshot(app, state, |snapshot| {
-        snapshot.update_message = "正在重启…".into();
+        snapshot.update_message = "正在重啟…".into();
     });
     update_dialog.set_progress(&snapshot.update_message, None, false);
     app.restart()
@@ -2220,7 +2220,7 @@ fn finish_update_flow(
     quit: &MenuItem<tauri::Wry>,
 ) {
     state.update_in_progress.store(false, Ordering::SeqCst);
-    check_update.set_text("检查更新").unwrap();
+    check_update.set_text("檢查更新").unwrap();
     check_update.set_enabled(true).unwrap();
     quit.set_enabled(true).unwrap();
     state.update_flow_in_progress.store(false, Ordering::SeqCst);
@@ -2235,11 +2235,11 @@ async fn offer_update(
 ) {
     if cfg!(target_os = "windows") {
         update_snapshot(app, state, |snapshot| {
-            snapshot.update_message = "Windows 版本暂不支持自动更新。".into();
+            snapshot.update_message = "Windows 版本暫不支援自動更新。".into();
             snapshot.update_available = false;
         });
         check_update
-            .set_text("检查更新（Windows 暂不支持）")
+            .set_text("檢查更新（Windows 暫不支援）")
             .unwrap();
         check_update.set_enabled(false).unwrap();
         return;
@@ -2252,7 +2252,7 @@ async fn offer_update(
         {
             return;
         }
-        check_update.set_text("正在检查更新…").unwrap();
+        check_update.set_text("正在檢查更新…").unwrap();
         check_update.set_enabled(false).unwrap();
     } else if state.update_flow_in_progress.load(Ordering::SeqCst) {
         return;
@@ -2262,14 +2262,14 @@ async fn offer_update(
         Err(error) => {
             append_log(state, &format!("Update check failed: {error}"));
             update_snapshot(app, state, |snapshot| {
-                snapshot.update_message = format!("更新检查失败：{error}");
+                snapshot.update_message = format!("更新檢查失敗：{error}");
                 snapshot.update_available = false;
             });
             if show_current_version {
                 show_error_dialog(
                     app,
-                    "Codex Taskboard 更新检查失败",
-                    &format!("无法检查更新。请稍后重试。\n\n{error}"),
+                    "Codex Taskboard 更新檢查失敗",
+                    &format!("無法檢查更新。請稍後重試。\n\n{error}"),
                 );
                 finish_update_flow(state, check_update, quit);
             }
@@ -2282,7 +2282,7 @@ async fn offer_update(
     let Some(update) = update else {
         let current_version = state.snapshot.lock().unwrap().version.clone();
         app.dialog()
-            .message(format!("当前版本 {current_version} 已是最新版本。"))
+            .message(format!("目前版本 {current_version} 已是最新版本。"))
             .title("Codex Taskboard 更新")
             .buttons(MessageDialogButtons::Ok)
             .blocking_show();
@@ -2296,7 +2296,7 @@ async fn offer_update(
         append_log(state, &format!("Update {version} deferred by user"));
         update_snapshot(app, state, |snapshot| {
             snapshot.update_message =
-                format!("已暂缓安装 {version}，可稍后从检查更新继续。");
+                format!("已暫緩安裝 {version}，可稍後從檢查更新繼續。");
             snapshot.update_available = true;
         });
         finish_update_flow(state, check_update, quit);
@@ -2304,7 +2304,7 @@ async fn offer_update(
     };
     append_log(state, &format!("Update {version} accepted by user"));
     if update.download.peek().is_none() {
-        update_dialog.set_progress("正在下载或验证更新…", None, false);
+        update_dialog.set_progress("正在下載或驗證更新…", None, false);
     }
     *update.dialog.lock().unwrap() = Some(update_dialog.clone());
     let result = update.download.clone().await;
@@ -2315,8 +2315,8 @@ async fn offer_update(
             update_dialog.close();
             show_error_dialog(
                 app,
-                "Codex Taskboard 更新准备失败",
-                &format!("无法下载或验证更新。请稍后重试。\n\n{error}"),
+                "Codex Taskboard 更新準備失敗",
+                &format!("無法下載或驗證更新。請稍後重試。\n\n{error}"),
             );
             finish_update_flow(state, check_update, quit);
             return;
@@ -2332,16 +2332,16 @@ async fn offer_update(
             append_log(state, &format!("Update installation failed: {error}"));
             let service_recovered = state.snapshot.lock().unwrap().child_pid.is_some();
             let service_message = if service_recovered {
-                "任务面板服务已恢复。"
+                "任務面板服務已恢復。"
             } else {
-                "任务面板服务未能恢复，请重新打开 App。"
+                "任務面板服務未能恢復，請重新開啟 App。"
             };
             update_dialog.close();
             show_error_dialog(
                 app,
-                "Codex Taskboard 更新失败",
+                "Codex Taskboard 更新失敗",
                 &format!(
-                    "更新未完成。{service_message}\n\n请稍后重试。详情见启动日志。\n\n{error}"
+                    "更新未完成。{service_message}\n\n請稍後重試。詳情見啟動記錄。\n\n{error}"
                 ),
             );
             finish_update_flow(state, check_update, quit);
@@ -2445,29 +2445,29 @@ fn main() {
             let launcher_status = MenuItem::with_id(
                 app,
                 "launcher-status",
-                "运行状态：启动中",
+                "執行狀態：啟動中",
                 false,
                 None::<&str>,
             )?;
             *state.status_menu.lock().unwrap() = Some(launcher_status.clone());
             let open_taskboard_item =
-                MenuItem::with_id(app, "open-taskboard", "打开任务面板", true, None::<&str>)?;
+                MenuItem::with_id(app, "open-taskboard", "開啟任務面板", true, None::<&str>)?;
             let open_taskboard_web = MenuItem::with_id(
                 app,
                 "open-taskboard-web",
-                "在网页打开任务面板",
+                "在網頁開啟任務面板",
                 true,
                 None::<&str>,
             )?;
             let check_update =
-                MenuItem::with_id(app, "check-update", "检查更新", true, None::<&str>)?;
+                MenuItem::with_id(app, "check-update", "檢查更新", true, None::<&str>)?;
             let restart_codex =
-                MenuItem::with_id(app, "restart-codex", "重新打开 Codex", true, None::<&str>)?;
+                MenuItem::with_id(app, "restart-codex", "重新開啟 Codex", true, None::<&str>)?;
             let autostart_enabled = app.autolaunch().is_enabled()?;
             let autostart = CheckMenuItem::with_id(
                 app,
                 "autostart",
-                "开机自启动",
+                "開機自啟動",
                 true,
                 autostart_enabled,
                 None::<&str>,
@@ -2534,8 +2534,8 @@ fn main() {
                                 append_log(&state, &format!("Launcher menu open failed: {error}"));
                                 show_error_dialog(
                                     &app,
-                                    "Codex Taskboard 打开失败",
-                                    &format!("{error}\n\n请确认 Codex 正在运行。"),
+                                    "Codex Taskboard 開啟失敗",
+                                    &format!("{error}\n\n請確認 Codex 正在執行。"),
                                 );
                             }
                         });
@@ -2552,7 +2552,7 @@ fn main() {
                                     &state,
                                     &format!("Launcher menu browser open failed: {error}"),
                                 );
-                                show_error_dialog(&app, "Codex Taskboard 网页打开失败", &error);
+                                show_error_dialog(&app, "Codex Taskboard 網頁開啟失敗", &error);
                             }
                         });
                     }
@@ -2570,8 +2570,8 @@ fn main() {
                                 );
                                 show_error_dialog(
                                     &app,
-                                    "Codex Taskboard 启动失败",
-                                    &format!("{error}\n\n请确认官方 Codex/ChatGPT App 已安装。"),
+                                    "Codex Taskboard 啟動失敗",
+                                    &format!("{error}\n\n請確認官方 Codex/ChatGPT App 已安裝。"),
                                 );
                             }
                         });
@@ -2606,7 +2606,7 @@ fn main() {
                             }
                         };
                         if let Some(error) = operation_error.or(sync_error) {
-                            show_error_dialog(app, "Codex Taskboard 自启动设置失败", &error);
+                            show_error_dialog(app, "Codex Taskboard 自啟動設定失敗", &error);
                         }
                     }
                     "quit" => {
@@ -2654,8 +2654,8 @@ fn main() {
                         Err(error) => {
                             show_error_dialog(
                                 &app_handle,
-                                "Codex Taskboard Skill 更新失败",
-                                &format!("无法保留旧 Skill：{error}"),
+                                "Codex Taskboard Skill 更新失敗",
+                                &format!("無法保留舊 Skill：{error}"),
                             );
                             app_handle.exit(1);
                             return;
@@ -2670,9 +2670,9 @@ fn main() {
                     });
                     show_error_dialog(
                         &app_handle,
-                        "Codex Taskboard 启动失败",
+                        "Codex Taskboard 啟動失敗",
                         &format!(
-                            "{error}\n\n请确认官方 Codex/ChatGPT App 已安装。详情见启动日志。"
+                            "{error}\n\n請確認官方 Codex/ChatGPT App 已安裝。詳情見啟動記錄。"
                         ),
                     );
                 }
@@ -2701,8 +2701,8 @@ fn main() {
                 append_log(&state, &format!("Launcher panel reopen failed: {error}"));
                 show_error_dialog(
                     app_handle,
-                    "Codex Taskboard 打开失败",
-                    &format!("{error}\n\n请确认官方 Codex/ChatGPT App 已安装。"),
+                    "Codex Taskboard 開啟失敗",
+                    &format!("{error}\n\n請確認官方 Codex/ChatGPT App 已安裝。"),
                 );
             }
         }

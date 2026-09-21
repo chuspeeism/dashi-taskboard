@@ -3,7 +3,7 @@ export function commentConversationTitle(body) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean);
-  if (!firstLine) return "评论";
+  if (!firstLine) return "評論";
   const compact = firstLine.replace(/\s+/g, " ");
   return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
 }

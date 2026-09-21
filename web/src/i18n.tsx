@@ -5,14 +5,14 @@ export type TaskboardLanguage = "zh" | "en";
 
 interface TaskboardI18n {
   language: TaskboardLanguage;
-  locale: "zh-CN" | "en";
+  locale: "zh-TW" | "en";
   text: (chinese: string, english: string) => string;
 }
 
 const I18N: Record<TaskboardLanguage, TaskboardI18n> = {
   zh: {
     language: "zh",
-    locale: "zh-CN",
+    locale: "zh-TW",
     text: (chinese) => chinese,
   },
   en: {
@@ -24,11 +24,11 @@ const I18N: Record<TaskboardLanguage, TaskboardI18n> = {
 
 const STATUS_LABELS: Record<TaskboardLanguage, Record<TaskStatus, string>> = {
   zh: {
-    backlog: "待立项",
-    todo: "等待认领",
-    in_progress: "处理中",
-    in_review: "等你确认",
-    blocked: "遇到阻碍",
+    backlog: "待立項",
+    todo: "等待認領",
+    in_progress: "處理中",
+    in_review: "等你確認",
+    blocked: "遇到阻礙",
     done: "完成",
     canceled: "取消",
   },
@@ -45,8 +45,8 @@ const STATUS_LABELS: Record<TaskboardLanguage, Record<TaskStatus, string>> = {
 
 const PRIORITY_LABELS: Record<TaskboardLanguage, Record<TaskPriority, string>> = {
   zh: {
-    none: "无优先级",
-    urgent: "紧急",
+    none: "無優先順序",
+    urgent: "緊急",
     high: "高",
     medium: "中",
     low: "低",

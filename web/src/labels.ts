@@ -5,7 +5,7 @@ export const DEFAULT_LABELS = [
   { name: "特性", color: "#bb87fc" },
   { name: "for-claude", color: "#5b8cff" },
   { name: "hold", color: "#d99b25" },
-  { name: "改进", color: "#4ea7fc" },
+  { name: "改進", color: "#4ea7fc" },
   { name: "phase-1", color: "#1d4ed8" },
   { name: "phase-2", color: "#0f766e" },
   { name: "phase-3", color: "#7c3aed" },
@@ -14,8 +14,15 @@ export const DEFAULT_LABELS = [
   { name: "phase-6", color: "#475569" },
 ] as const;
 
+const LEGACY_SIMPLIFIED_IMPROVEMENT_LABEL = "\u6539\u8fdb";
+
+function normalizedLabelName(name: string): string {
+  return name === LEGACY_SIMPLIFIED_IMPROVEMENT_LABEL ? "改進" : name;
+}
+
 export function labelColor(name: string): string {
-  return DEFAULT_LABELS.find((label) => label.name === name)?.color ?? "#8b8d92";
+  const normalizedName = normalizedLabelName(name);
+  return DEFAULT_LABELS.find((label) => label.name === normalizedName)?.color ?? "#8b8d92";
 }
 
 export type LabelTone = "bug" | "feature" | null;
@@ -23,7 +30,7 @@ export type LabelTone = "bug" | "feature" | null;
 export function labelDisplayName(name: string, language: TaskboardLanguage = "zh"): string {
   if (name === "缺陷" || name.toLocaleUpperCase() === "BUG") return "BUG";
   if (name === "特性" || name === "新功能") return language === "zh" ? "新功能" : "Feature";
-  if (name === "改进") return language === "zh" ? "改进" : "Improvement";
+  if (normalizedLabelName(name) === "改進") return language === "zh" ? "改進" : "Improvement";
   return name;
 }
 

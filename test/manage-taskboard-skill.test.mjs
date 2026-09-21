@@ -14,12 +14,12 @@ const cliReference = await readFile(
 test("the taskboard skill disambiguates companion terminology for agents", () => {
   assert.match(skillSource, /## Terminology: local companion/i);
   assert.match(skillSource, /device-local loopback service/i);
-  assert.match(skillSource, /Never translate as \*\*伴侣\*\*/i);
+  assert.match(skillSource, /Never translate as \*\*伴侶\*\*/i);
   assert.match(skillSource, /not “companion API”/i);
 
   assert.match(cliReference, /## Terminology: local companion/i);
   assert.match(cliReference, /Do not use/i);
-  assert.match(cliReference, /伴侣 API/i);
+  assert.match(cliReference, /伴侶 API/i);
   assert.match(cliReference, /Taskboard HTTP API/i);
   assert.match(cliReference, /local loopback service/i);
 });

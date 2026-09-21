@@ -76,10 +76,10 @@ test("a new status entry overrides the old draft status and restores the remaini
     const draft = JSON.parse(decodeURIComponent(result[1]));
 
     assert.equal(draft.status, "in_progress");
-    assert.equal(draft.title, "保留的草稿标题");
+    assert.equal(draft.title, "保留的草稿標題");
     assert.equal(draft.description, "保留的草稿描述");
     assert.equal(draft.priority, "high");
-    assert.deepEqual(draft.labels, ["回归证据"]);
+    assert.deepEqual(draft.labels, ["迴歸證據"]);
   } finally {
     await server.close();
     await rm(profile, { recursive: true, force: true });

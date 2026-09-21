@@ -34,9 +34,9 @@ async function createComposerCatalogFixture(issueSlashCommands) {
   const agentsDirectory = path.join(directory, "agents");
   await mkdir(agentsDirectory);
   await writeFile(path.join(agentsDirectory, "master.toml"), [
-    'name = "任务总管"',
-    'description = "协调专业 agents"',
-    'developer_instructions = "按任务分工协调 agents"',
+    'name = "任務總管"',
+    'description = "協調專業 agents"',
+    'developer_instructions = "按任務分工協調 agents"',
   ].join("\n"));
   let skills = [{
     skills: [{
@@ -86,15 +86,15 @@ test("issue composer candidates persist canonical Agent and Skill markers withou
     const agentResponse = await fixture.catalog.candidates({
       workspacePath: "/workspace",
       trigger: "@",
-      query: "任务",
+      query: "任務",
     });
     assert.equal(agentResponse.candidates.length, 1);
     assert.equal(agentResponse.candidates[0].kind, "agent");
-    assert.equal(agentResponse.candidates[0].label, "任务总管");
+    assert.equal(agentResponse.candidates[0].label, "任務總管");
     assert.equal(agentResponse.candidates[0].persistence.kind, "agent");
     assert.equal(
       decodeComposerReferenceKey(agentResponse.candidates[0].persistence.referenceKey),
-      "任务总管",
+      "任務總管",
     );
 
     const skillResponse = await fixture.catalog.candidates({
@@ -208,24 +208,24 @@ test("persisted composer references rebind without upgrading historical text", a
       "release-skill",
       "Release Skill",
     );
-    const agentPersistence = composerReferencePersistence("agent", "任务总管", "任务总管");
+    const agentPersistence = composerReferencePersistence("agent", "任務總管", "任務總管");
     const rebound = await fixture.catalog.rebindPersistedReferences({
       workspacePath: "/workspace",
       nodes: [
-        { type: "text", text: "历史 @master、$release-skill 与 subagent://master 原样保留 " },
+        { type: "text", text: "歷史 @master、$release-skill 與 subagent://master 原樣保留 " },
         {
           type: "persistedReference",
           referenceKind: "skill",
           referenceKey: skillPersistence.referenceKey,
-          label: "旧 Skill 标签",
+          label: "舊 Skill 標籤",
           stableId: "release-skill",
         },
         {
           type: "persistedReference",
           referenceKind: "agent",
           referenceKey: agentPersistence.referenceKey,
-          label: "旧 Agent 标签",
-          stableId: "任务总管",
+          label: "舊 Agent 標籤",
+          stableId: "任務總管",
         },
       ],
     });
@@ -236,12 +236,12 @@ test("persisted composer references rebind without upgrading historical text", a
       rebound.document.nodes.slice(1).map(({ type, label }) => ({ type, label })),
       [
         { type: "skill", label: "Release Skill" },
-        { type: "agent", label: "任务总管" },
+        { type: "agent", label: "任務總管" },
       ],
     );
     assert.deepEqual(rebound.bindings, [
       { nodeIndex: 1, status: "resolved", referenceKind: "skill", label: "Release Skill" },
-      { nodeIndex: 2, status: "resolved", referenceKind: "agent", label: "任务总管" },
+      { nodeIndex: 2, status: "resolved", referenceKind: "agent", label: "任務總管" },
     ]);
     assert.deepEqual(rebound.diagnostics, []);
     assert.equal(JSON.stringify(rebound).includes("/private/secret"), false);

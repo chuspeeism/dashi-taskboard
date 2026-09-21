@@ -44,10 +44,10 @@ interface GanttViewProps {
 let pendingDetailViewport: { projectId: string; x: number; y: number } | null = null;
 
 const GANTT_GROUPS: GanttGroupDefinition[] = [
-  { id: "in-progress", chineseLabel: "处理中", englishLabel: "In progress", statuses: ["in_progress"], defaultOpen: true },
-  { id: "in-review", chineseLabel: "等你确认", englishLabel: "In review", statuses: ["in_review"], defaultOpen: true },
-  { id: "blocked", chineseLabel: "遇到阻碍", englishLabel: "Blocked", statuses: ["blocked"], defaultOpen: true },
-  { id: "todo", chineseLabel: "待处理", englishLabel: "To do", statuses: ["backlog", "todo"], defaultOpen: true },
+  { id: "in-progress", chineseLabel: "處理中", englishLabel: "In progress", statuses: ["in_progress"], defaultOpen: true },
+  { id: "in-review", chineseLabel: "等你確認", englishLabel: "In review", statuses: ["in_review"], defaultOpen: true },
+  { id: "blocked", chineseLabel: "遇到阻礙", englishLabel: "Blocked", statuses: ["blocked"], defaultOpen: true },
+  { id: "todo", chineseLabel: "待處理", englishLabel: "To do", statuses: ["backlog", "todo"], defaultOpen: true },
   { id: "done", chineseLabel: "已完成", englishLabel: "Completed", statuses: ["done"], defaultOpen: false },
   { id: "canceled", chineseLabel: "已取消", englishLabel: "Canceled", statuses: ["canceled"], defaultOpen: false },
 ];
@@ -153,7 +153,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     instance.config.columns = [
       {
         name: "text",
-        label: i18nRef.current.text("议题", "Issue"),
+        label: i18nRef.current.text("議題", "Issue"),
         tree: true,
         width: "*",
         min_width: 190,
@@ -162,7 +162,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           if (task.taskboardGroup) {
             return `<div class="gantt-grid-group"><strong>${escapeHtml(task.taskboardTitle)}</strong><span>${task.taskboardCount}</span></div>`;
           }
-          return `<div class="gantt-grid-issue"><strong>${escapeHtml(task.taskboardTitle)}</strong>${task.taskboardUnread ? `<i class="task-unread-dot" aria-label="${escapeHtml(i18nRef.current.text("有未读更新", "Unread updates"))}"></i>` : ""}</div>`;
+          return `<div class="gantt-grid-issue"><strong>${escapeHtml(task.taskboardTitle)}</strong>${task.taskboardUnread ? `<i class="task-unread-dot" aria-label="${escapeHtml(i18nRef.current.text("有未讀更新", "Unread updates"))}"></i>` : ""}</div>`;
         },
       },
     ];
@@ -342,7 +342,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     const showGrid = instance.config.show_grid;
     const gridWidth = instance.config.grid_width;
     const issueColumn = instance.config.columns.find((column) => column.name === "text");
-    if (issueColumn) issueColumn.label = i18nRef.current.text("议题", "Issue");
+    if (issueColumn) issueColumn.label = i18nRef.current.text("議題", "Issue");
 
     for (const group of GANTT_GROUPS) {
       const id = `gantt-group-${group.id}`;
@@ -506,12 +506,12 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           className={`gantt-grid-toggle${gridCollapsed ? " is-collapsed" : ""}`}
           style={{ left: gridCollapsed ? 14 : gridWidth }}
           aria-label={gridCollapsed
-            ? text("展开标题区域", "Expand title area")
-            : text("收起标题区域", "Collapse title area")}
+            ? text("展開標題區域", "Expand title area")
+            : text("收起標題區域", "Collapse title area")}
           aria-expanded={!gridCollapsed}
           title={gridCollapsed
-            ? text("展开标题区域", "Expand title area")
-            : text("收起标题区域", "Collapse title area")}
+            ? text("展開標題區域", "Expand title area")
+            : text("收起標題區域", "Collapse title area")}
           onClick={toggleGrid}
         >
           <LinearIcon name={gridCollapsed ? "chevronRight" : "chevronLeft"} />
@@ -520,8 +520,8 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           <div className="gantt-empty-overlay">
             <DueDateIcon color="currentColor" />
             <span>{hasActiveFilters || hideCompleted
-              ? text("当前条件下没有议题", "No issues match the current conditions")
-              : text("创建议题后，可在这里安排时间线", "Create an issue to schedule it on the timeline")}</span>
+              ? text("目前條件下沒有議題", "No issues match the current conditions")
+              : text("建立議題後，可在這裡安排時間線", "Create an issue to schedule it on the timeline")}</span>
           </div>
         )}
       </div>
