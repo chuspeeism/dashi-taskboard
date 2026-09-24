@@ -1288,6 +1288,52 @@ test("stale updates receive a version conflict", async () => {
   });
 });
 
+test("completing an in-review task creates exactly one continuation", async () => {
+  const baseUrl = await startServer();
+  const createResult = await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: {
+      title: "Review parent",
+      status: "in_review",
+      priority: "high",
+      description: [
+        "## Completion policy",
+        "continuation: auto",
+        "",
+        "## Next task:",
+        "Title: Continue the approved work",
+        "Goal: Implement phase two",
+        "## Acceptance",
+        "- Phase two is verified",
+      ].join("\n"),
+    },
+  });
+  const parent = createResult.body.task;
+
+  const first = await request(baseUrl, `/api/tasks/${parent.id}/complete`, {
+    method: "POST",
+    body: { version: parent.version },
+  });
+  assert.equal(first.response.status, 200);
+  assert.equal(first.body.task.status, "done");
+  assert.equal(first.body.continuation.outcome, "todo_created");
+  assert.equal(first.body.continuation.nextTask.status, "todo");
+  assert.equal(first.body.continuation.nextTask.relations.parent.id, parent.id);
+
+  const repeated = await request(baseUrl, `/api/tasks/${parent.id}/complete`, {
+    method: "POST",
+    body: { version: parent.version },
+  });
+  assert.equal(repeated.response.status, 200);
+  assert.equal(repeated.body.continuation.nextTask.id, first.body.continuation.nextTask.id);
+
+  const list = await request(baseUrl, "/api/tasks?projectId=local&archived=false");
+  assert.equal(
+    list.body.tasks.filter((task) => task.title === "Continue the approved work").length,
+    1,
+  );
+});
+
 test("issue comments can be created, edited, listed, and deleted", async () => {
   const baseUrl = await startServer();
   const createTaskResult = await request(baseUrl, "/api/tasks", {

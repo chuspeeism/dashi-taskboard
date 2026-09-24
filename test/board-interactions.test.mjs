@@ -134,7 +134,8 @@ test("completing a review makes the persisted destination visible and reconciles
   assert.match(appSource, /previous\.status !== updated\.status && updated\.status === "done"/);
   assert.equal((appSource.match(/setOtherTasksTab\("done"\)/g) ?? []).length, 2);
   assert.equal((appSource.match(/setOtherTasksOpen\(true\)/g) ?? []).length, 2);
-  assert.equal((appSource.match(/is now visible in the Done list on the right/g) ?? []).length, 2);
+  assert.equal((appSource.match(/waiting for global dispatch/g) ?? []).length, 2);
+  assert.equal((appSource.match(/has no automatic continuation/g) ?? []).length, 2);
   assert.equal((appSource.match(/await Promise\.all\(\[\s*refreshTasks\(currentScopeProjectId, \{ quiet: true \}\),\s*refreshProjectList\(\)/g) ?? []).length, 2);
 });
 

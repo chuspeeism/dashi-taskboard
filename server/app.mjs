@@ -19,6 +19,7 @@ import {
 } from "../shared/domain.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { parseTaskContinuation } from "../shared/task-continuation.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
 import { decodeComposerReferenceKey } from "./composer-reference.mjs";
@@ -3193,7 +3194,7 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|complete))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -3296,6 +3297,34 @@ export function createTaskboardServer(options = {}) {
           }
           events.emit("task.deleted", { task: deleted.task });
           return sendEmpty(response, 204);
+        }
+        if (action === "complete" && request.method === "POST") {
+          const current = database.getTask(id);
+          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          if (current.source === "jira") {
+            throw new ApiError(409, "JIRA_COMPLETE_UNAVAILABLE", "请在 Jira 中完成该任务");
+          }
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
+          const result = database.completeTask(
+            id,
+            version,
+            parseTaskContinuation(current.description),
+            threadId,
+            threadBinding,
+            actorFromRequest(request),
+            CODEX_AGENT_ACTOR,
+          );
+          events.emit("task.moved", { task: result.task });
+          if (result.continuation.nextTask) {
+            events.emit("task.created", { task: result.continuation.nextTask });
+            events.emit("task.relation.updated", {
+              task: result.task,
+              relatedTask: result.continuation.nextTask,
+            });
+          }
+          return sendJson(response, 200, result);
         }
         if (action === "move" && request.method === "POST") {
           const move = resolveInputThreadBinding(parseMove(await readJson(request)));

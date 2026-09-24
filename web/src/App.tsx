@@ -16,6 +16,7 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
+  completeTask as completeTaskRequest,
   createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
@@ -2635,17 +2636,30 @@ export function App() {
     )));
 
     try {
-      const moved = await moveTaskRequest(task, status, sortOrder);
-      setTasks((current) => sortTasks(current.map((candidate) =>
-        candidate.id === moved.id ? moved : candidate,
-      )));
+      const completion = statusChanged && task.status === "in_review" && status === "done"
+        ? await completeTaskRequest(task)
+        : null;
+      const moved = completion?.task ?? await moveTaskRequest(task, status, sortOrder);
+      setTasks((current) => {
+        const nextTask = completion?.continuation.nextTask;
+        const merged = current.map((candidate) => candidate.id === moved.id ? moved : candidate);
+        return sortTasks(nextTask && !merged.some((candidate) => candidate.id === nextTask.id)
+          ? [...merged, nextTask]
+          : merged);
+      });
       if (statusChanged && status === "done") {
         setOtherTasksTab("done");
         setOtherTasksOpen(true);
-        setAnnouncement(textRef.current(
-          `${moved.identifier} 已完成，并已移到右侧「完成」列表。`,
-          `${moved.identifier} is complete and is now visible in the Done list on the right.`,
-        ));
+        const nextTask = completion?.continuation.nextTask;
+        setAnnouncement(nextTask
+          ? textRef.current(
+              `${moved.identifier} 已完成；已建立 ${nextTask.identifier}（${nextTask.status === "todo" ? "等待全域派工" : "等待你批准"}）。`,
+              `${moved.identifier} is complete; ${nextTask.identifier} was created (${nextTask.status === "todo" ? "waiting for global dispatch" : "waiting for your approval"}).`,
+            )
+          : textRef.current(
+              `${moved.identifier} 已完成；这张卡没有可自动接续的下一步。`,
+              `${moved.identifier} is complete; this card has no automatic continuation.`,
+            ));
       }
       const currentScopeProjectId = taskScopeProjectIdRef.current;
       if (currentScopeProjectId) {
@@ -2722,17 +2736,31 @@ export function App() {
     ));
 
     try {
-      const updated = await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
-      setTasks((current) => sortTasks(current.map((candidate) =>
-        candidate.id === updated.id ? updated : candidate,
-      )));
+      const completion = task.status === "in_review" && changes.status === "done"
+        ? await completeTaskRequest(task)
+        : null;
+      const updated = completion?.task
+        ?? await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
+      setTasks((current) => {
+        const nextTask = completion?.continuation.nextTask;
+        const merged = current.map((candidate) => candidate.id === updated.id ? updated : candidate);
+        return sortTasks(nextTask && !merged.some((candidate) => candidate.id === nextTask.id)
+          ? [...merged, nextTask]
+          : merged);
+      });
       if (previous.status !== updated.status && updated.status === "done") {
         setOtherTasksTab("done");
         setOtherTasksOpen(true);
-        setAnnouncement(textRef.current(
-          `${updated.identifier} 已完成，并已移到右侧「完成」列表。`,
-          `${updated.identifier} is complete and is now visible in the Done list on the right.`,
-        ));
+        const nextTask = completion?.continuation.nextTask;
+        setAnnouncement(nextTask
+          ? textRef.current(
+              `${updated.identifier} 已完成；已建立 ${nextTask.identifier}（${nextTask.status === "todo" ? "等待全域派工" : "等待你批准"}）。`,
+              `${updated.identifier} is complete; ${nextTask.identifier} was created (${nextTask.status === "todo" ? "waiting for global dispatch" : "waiting for your approval"}).`,
+            )
+          : textRef.current(
+              `${updated.identifier} 已完成；这张卡没有可自动接续的下一步。`,
+              `${updated.identifier} is complete; this card has no automatic continuation.`,
+            ));
         const currentScopeProjectId = taskScopeProjectIdRef.current;
         if (currentScopeProjectId) {
           await Promise.all([
