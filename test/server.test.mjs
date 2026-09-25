@@ -1327,6 +1327,20 @@ test("completing an in-review task creates exactly one continuation", async () =
   assert.equal(repeated.response.status, 200);
   assert.equal(repeated.body.continuation.nextTask.id, first.body.continuation.nextTask.id);
 
+  const restored = await request(baseUrl, `/api/tasks/${parent.id}/move`, {
+    method: "POST",
+    body: { version: first.body.task.version, status: "in_review", sortOrder: 1 },
+  });
+  assert.equal(restored.response.status, 200);
+
+  const completedAgain = await request(baseUrl, `/api/tasks/${parent.id}/complete`, {
+    method: "POST",
+    body: { version: restored.body.task.version },
+  });
+  assert.equal(completedAgain.response.status, 200);
+  assert.equal(completedAgain.body.task.status, "done");
+  assert.equal(completedAgain.body.continuation.nextTask.id, first.body.continuation.nextTask.id);
+
   const list = await request(baseUrl, "/api/tasks?projectId=local&archived=false");
   assert.equal(
     list.body.tasks.filter((task) => task.title === "Continue the approved work").length,

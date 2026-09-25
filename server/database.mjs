@@ -2115,14 +2115,15 @@ export class TaskboardDatabase {
   }
 
   completeTask(id, version, continuation, threadId, threadBinding, actor, nextAssignee, agentSession) {
+    const current = this.#requireTask(id);
     const alreadyProcessed = this.database.prepare(`
       SELECT policy, outcome, next_task_id
       FROM task_continuations
       WHERE parent_task_id = ?
     `).get(id);
-    if (alreadyProcessed) {
+    if (alreadyProcessed && current.status === "done") {
       return {
-        task: this.getTask(id),
+        task: current,
         continuation: {
           policy: alreadyProcessed.policy,
           outcome: alreadyProcessed.outcome,
@@ -2133,7 +2134,6 @@ export class TaskboardDatabase {
       };
     }
 
-    const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     if (current.archivedAt !== null) {
       throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be completed");
@@ -2152,7 +2152,7 @@ export class TaskboardDatabase {
       WHERE project_id = ? AND status = 'done' AND archived_at IS NULL AND id != ?
     `).get(current.projectId, current.id);
     const doneSortOrder = donePlacement.minimum === null ? 1000 : donePlacement.minimum - 1000;
-    let nextTaskId = null;
+    let nextTaskId = alreadyProcessed?.next_task_id ?? null;
 
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -2173,7 +2173,7 @@ export class TaskboardDatabase {
         timestamp,
       );
 
-      if (continuation.nextTask) {
+      if (continuation.nextTask && !alreadyProcessed) {
         const project = this.database.prepare(`
           SELECT id, name, labels, next_task_number,
             (SELECT tasks.identifier FROM tasks WHERE tasks.project_id = projects.id
@@ -2239,11 +2239,13 @@ export class TaskboardDatabase {
         `).run(current.id, nextTaskId, timestamp);
       }
 
-      this.database.prepare(`
-        INSERT INTO task_continuations (
-          parent_task_id, next_task_id, policy, outcome, created_at
-        ) VALUES (?, ?, ?, ?, ?)
-      `).run(current.id, nextTaskId, continuation.policy, continuation.outcome, timestamp);
+      if (!alreadyProcessed) {
+        this.database.prepare(`
+          INSERT INTO task_continuations (
+            parent_task_id, next_task_id, policy, outcome, created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(current.id, nextTaskId, continuation.policy, continuation.outcome, timestamp);
+      }
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -2253,8 +2255,8 @@ export class TaskboardDatabase {
     return {
       task: this.getTask(current.id),
       continuation: {
-        policy: continuation.policy,
-        outcome: continuation.outcome,
+        policy: alreadyProcessed?.policy ?? continuation.policy,
+        outcome: alreadyProcessed?.outcome ?? continuation.outcome,
         nextTask: nextTaskId ? this.getTask(nextTaskId) : null,
       },
     };
