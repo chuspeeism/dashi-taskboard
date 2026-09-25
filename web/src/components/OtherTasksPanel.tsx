@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
+import { useTaskCardDragPreview } from "../useTaskCardDragPreview";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
 import { taskStatusLabel, useTaskboardI18n } from "../i18n";
@@ -136,7 +136,6 @@ interface OtherTasksPanelProps {
   tasksByStatus: Record<TaskStatus, Task[]>;
   archivedTasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
-  now: number;
   hasActiveFilters: boolean;
   isDropTarget: boolean;
   draggedTaskId: string | null;
@@ -149,6 +148,7 @@ interface OtherTasksPanelProps {
   currentUser: ActorIdentity;
   showCover: boolean;
   showBody: boolean;
+  showCreatedAt: boolean;
   onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   restoringTaskId: string | null;
   deletingTaskId: string | null;
@@ -173,7 +173,6 @@ export function OtherTasksPanel({
   tasksByStatus,
   archivedTasks,
   presentations,
-  now,
   hasActiveFilters,
   isDropTarget,
   draggedTaskId,
@@ -186,6 +185,7 @@ export function OtherTasksPanel({
   currentUser,
   showCover,
   showBody,
+  showCreatedAt,
   onCreateLabel,
   restoringTaskId,
   deletingTaskId,
@@ -208,27 +208,8 @@ export function OtherTasksPanel({
     ? text("已归档", "Archived")
     : taskStatusLabel(language, activeTab);
   const tasks = archived ? archivedTasks : tasksByStatus[activeTab];
-  const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
-  const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
-  const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
-  const remainingIndexes = new Map(remainingTasks.map((task, index) => [task.id, index]));
-  const draggedTaskIndex = draggedTaskId ? taskIndexes.get(draggedTaskId) ?? -1 : -1;
-  const beforeIndex = dropBeforeTaskId
-    ? remainingIndexes.get(dropBeforeTaskId) ?? remainingTasks.length
-    : remainingTasks.length;
-  const previewIndex = isDropTarget && dropBeforeTaskId !== undefined ? beforeIndex : -1;
-  const dragDistance = draggedTaskHeight + 8;
-
-  useEffect(() => {
-    if (!isDropTarget || !draggedTaskId) setDropBeforeTaskId(undefined);
-  }, [draggedTaskId, isDropTarget]);
-
-  function findDropBefore(container: HTMLElement, clientY: number): string | null {
-    const cards = Array.from(container.querySelectorAll<HTMLElement>("[data-task-id]"))
-      .filter((card) => card.dataset.taskId !== draggedTaskId);
-    return cards.find((card) => clientY < card.getBoundingClientRect().top + card.offsetHeight / 2)
-      ?.dataset.taskId ?? null;
-  }
+  const { findDropBefore, clearDropPreview, updateDropPreview, leaveDropPreview, getTaskDragShift } =
+    useTaskCardDragPreview({ tasks, draggedTaskId, draggedTaskHeight, isDropTarget });
 
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
@@ -237,18 +218,7 @@ export function OtherTasksPanel({
       event.dataTransfer.getData("application/x-taskboard-task") ||
       event.dataTransfer.getData("text/plain");
     if (taskId) onDrop(activeTab, taskId, findDropBefore(event.currentTarget, event.clientY));
-    setDropBeforeTaskId(undefined);
-  }
-
-  function getTaskDragShift(task: Task): number {
-    if (!draggedTaskId || task.id === draggedTaskId) return 0;
-    let shift = 0;
-    const taskIndex = taskIndexes.get(task.id) ?? -1;
-    const remainingIndex = remainingIndexes.get(task.id) ?? -1;
-
-    if (draggedTaskIndex >= 0 && taskIndex > draggedTaskIndex) shift -= dragDistance;
-    if (previewIndex >= 0 && remainingIndex >= previewIndex) shift += dragDistance;
-    return shift;
+    clearDropPreview();
   }
 
   return (
@@ -313,16 +283,10 @@ export function OtherTasksPanel({
         }}
         onDragOver={(event) => {
           if (archived) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
           onDragEnter(activeTab);
-          setDropBeforeTaskId(findDropBefore(event.currentTarget, event.clientY));
+          updateDropPreview(event);
         }}
-        onDragLeave={(event) => {
-          if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-            setDropBeforeTaskId(undefined);
-          }
-        }}
+        onDragLeave={leaveDropPreview}
         onDrop={handleDrop}
       >
         {archived ? archivedTasks.map((task) => (
@@ -335,14 +299,13 @@ export function OtherTasksPanel({
             onDelete={onDelete}
           />
         )) : tasks.map((task) => {
-          const dragShift = getTaskDragShift(task);
+          const dragShift = getTaskDragShift(task.id);
           return (
             <TaskCard
               key={task.id}
               task={task}
               variant="sidebar"
               presentation={presentations[task.id]}
-              now={now}
               isDragging={draggedTaskId === task.id}
               dragShift={dragShift}
               isMoving={movingTaskId === task.id}
@@ -353,6 +316,7 @@ export function OtherTasksPanel({
               currentUser={currentUser}
               showCover={showCover}
               showBody={showBody}
+              showCreatedAt={showCreatedAt}
               onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
               onEdit={onEdit}
               onUpdate={onUpdate}

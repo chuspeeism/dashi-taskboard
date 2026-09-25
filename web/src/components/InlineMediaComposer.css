@@ -218,15 +218,10 @@
 .inline-media-composer.ProseMirror li.task-list-item > input[type="checkbox"] {
   width: 14px;
   height: 14px;
-  margin: 4px 0 0;
+  margin: calc((1lh - 14px) / 2) 0 0;
   padding: 0;
   accent-color: var(--accent);
   cursor: pointer;
-}
-
-.issue-description-composer .inline-media-composer.ProseMirror li.task-list-item > input[type="checkbox"],
-.inline-media-description.ProseMirror li.task-list-item > input[type="checkbox"] {
-  margin-top: 6.5px;
 }
 
 .inline-media-composer.ProseMirror .inline-media-task-content {

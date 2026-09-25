@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { JIRA_PROJECT_ID } from "../shared/domain.mjs";
-import { ApiError } from "./database.mjs";
+import { ApiError } from "../shared/api-fields.mjs";
 
 const JIRA_FIELDS = [
   "summary",
@@ -150,6 +150,14 @@ function safeConfig(config, lastSyncedAt = null) {
 export function createJiraIntegration({ configStore, database, fetch: fetchImplementation = globalThis.fetch }) {
   let lastSyncedAt = null;
   let pendingSync = null;
+  let pendingOperation = Promise.resolve();
+
+  function runInOrder(operation) {
+    const result = pendingOperation.then(operation);
+    // Recover only the scheduling tail; callers still receive the rejection.
+    pendingOperation = result.catch(() => {});
+    return result;
+  }
 
   async function request(config, pathname, init = {}) {
     const controller = new AbortController();
@@ -205,6 +213,29 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
 
   async function fetchAssignedIssues(config) {
     const issues = [];
+    if (new URL(config.baseUrl).hostname.endsWith(".atlassian.net")) {
+      let nextPageToken = null;
+      while (true) {
+        const body = {
+          jql: buildJiraJql(config.projects),
+          maxResults: 100,
+          fields: JIRA_FIELDS,
+          ...(nextPageToken ? { nextPageToken } : {}),
+        };
+        const page = await request(config, "/rest/api/2/search/jql", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        const pageIssues = Array.isArray(page?.issues) ? page.issues : [];
+        issues.push(...pageIssues);
+        if (page?.isLast === true) break;
+        if (typeof page?.nextPageToken !== "string" || !page.nextPageToken.trim()) {
+          throw new ApiError(502, "INVALID_JIRA_RESPONSE", "Jira 搜索结果缺少下一页标记");
+        }
+        nextPageToken = page.nextPageToken;
+      }
+      return issues;
+    }
     let startAt = 0;
     while (true) {
       const page = await request(config, "/rest/api/2/search", {
@@ -271,16 +302,26 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
   }
 
   async function sync({ force = false } = {}) {
-    const config = await configStore.read();
-    if (!config) return safeConfig(null);
-    if (!force && lastSyncedAt && Date.now() - new Date(lastSyncedAt).getTime() < SYNC_INTERVAL_MS) {
-      return safeConfig(config, lastSyncedAt);
+    if (pendingSync) {
+      // A forced caller must not inherit a queued, throttled no-op.
+      pendingSync.force ||= force;
+      return pendingSync.promise;
     }
-    if (pendingSync) return pendingSync;
-    pendingSync = syncWithConfig(config).finally(() => {
-      pendingSync = null;
+    const syncRequest = { force, promise: null };
+    syncRequest.promise = runInOrder(async () => {
+      try {
+        const config = await configStore.read();
+        if (!config) return safeConfig(null);
+        if (!syncRequest.force && lastSyncedAt && Date.now() - new Date(lastSyncedAt).getTime() < SYNC_INTERVAL_MS) {
+          return safeConfig(config, lastSyncedAt);
+        }
+        return await syncWithConfig(config);
+      } finally {
+        pendingSync = null;
+      }
     });
-    return pendingSync;
+    pendingSync = syncRequest;
+    return syncRequest.promise;
   }
 
   async function resolveTransition(config, issueKey, targetStatus) {
@@ -346,54 +387,58 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       return safeConfig(await configStore.read(), lastSyncedAt);
     },
     async configure(input) {
-      const current = await configStore.read();
-      const username = input.username || current?.username;
-      const password = input.password || current?.password;
-      const candidate = configStore.validate({ ...input, username, password });
-      if (current?.version === 1 && candidate.baseUrl !== current.baseUrl) {
-        throw new ApiError(
-          409,
-          "JIRA_LEGACY_URL_CHANGE_UNAVAILABLE",
-          "请先使用原 Jira 地址完成配置升级，再修改地址",
+      return runInOrder(async () => {
+        const current = await configStore.read();
+        const username = input.username || current?.username;
+        const password = input.password || current?.password;
+        const candidate = configStore.validate({ ...input, username, password });
+        if (current?.version === 1 && candidate.baseUrl !== current.baseUrl) {
+          throw new ApiError(
+            409,
+            "JIRA_LEGACY_URL_CHANGE_UNAVAILABLE",
+            "请先使用原 Jira 地址完成配置升级，再修改地址",
+          );
+        }
+        if (
+          !input.password
+          && (
+            !current
+            || candidate.baseUrl !== current.baseUrl
+            || candidate.username !== current.username
+          )
+        ) {
+          throw new ApiError(
+            400,
+            "JIRA_PASSWORD_REQUIRED",
+            "修改 Jira 地址或用户名时必须重新输入密码",
+          );
+        }
+        const { config, issues } = await validateConnection(candidate);
+        const legacyIdentity = current?.version === 1
+          ? { urlHash: legacyJiraOriginId(current.baseUrl), originId: config.originId }
+          : null;
+        database.syncJiraTasks(
+          issues.map((issue, index) => normalizeIssue(issue, config, index)),
+          {
+            archiveMissing: true,
+            projectName: `Jira · ${config.displayName}`,
+            legacyIdentity,
+          },
         );
-      }
-      if (
-        !input.password
-        && (
-          !current
-          || candidate.baseUrl !== current.baseUrl
-          || candidate.username !== current.username
-        )
-      ) {
-        throw new ApiError(
-          400,
-          "JIRA_PASSWORD_REQUIRED",
-          "修改 Jira 地址或用户名时必须重新输入密码",
-        );
-      }
-      const { config, issues } = await validateConnection(candidate);
-      const legacyIdentity = current?.version === 1
-        ? { urlHash: legacyJiraOriginId(current.baseUrl), originId: config.originId }
-        : null;
-      database.syncJiraTasks(
-        issues.map((issue, index) => normalizeIssue(issue, config, index)),
-        {
-          archiveMissing: true,
-          projectName: `Jira · ${config.displayName}`,
-          legacyIdentity,
-        },
-      );
-      const savedConfig = await configStore.save(config);
-      lastSyncedAt = new Date().toISOString();
-      return safeConfig(savedConfig, lastSyncedAt);
+        const savedConfig = await configStore.save(config);
+        lastSyncedAt = new Date().toISOString();
+        return safeConfig(savedConfig, lastSyncedAt);
+      });
     },
     sync,
     async reconcile() {
-      const config = await configStore.read();
-      if (!config || config.version !== 2) {
-        throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成稳定身份配置");
-      }
-      return syncWithConfig(config, { archiveMissing: false });
+      return runInOrder(async () => {
+        const config = await configStore.read();
+        if (!config || config.version !== 2) {
+          throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成稳定身份配置");
+        }
+        return syncWithConfig(config, { archiveMissing: false });
+      });
     },
     async updateTask(task, changes) {
       const config = await configStore.read();

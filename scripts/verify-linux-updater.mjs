@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { releaseMetadata } from "./release-metadata.mjs";
 import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -23,15 +24,7 @@ const tauriConfig = JSON.parse(await readFile(
   path.join(projectRoot, "src-tauri", "tauri.conf.json"),
   "utf8",
 ));
-const stableTag = `v${packageJson.version}`;
-const betaPrefix = `${stableTag}-beta.`;
-const betaNumber = releaseTag.startsWith(betaPrefix)
-  ? releaseTag.slice(betaPrefix.length)
-  : "";
-if (releaseTag !== stableTag && !/^[1-9]\d*$/.test(betaNumber)) {
-  throw new Error("Release tag does not match package.json version");
-}
-const releaseVersion = releaseTag.slice(1);
+const { releaseVersion } = releaseMetadata(packageJson.version, releaseTag);
 
 const latest = JSON.parse(await readFile(latestPath, "utf8"));
 if (latest.version !== releaseVersion) throw new Error("latest.json version is incorrect");

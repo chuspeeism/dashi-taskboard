@@ -5,6 +5,7 @@ import { ProjectIcon, RecurrenceIcon } from "./SemanticIcons";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 import { useTaskboardI18n } from "../i18n";
+import { listenForMenuViewportChange, listenForOutsidePointerDown } from "../menuEvents";
 import type { AiChatModel } from "../types";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";
@@ -21,6 +22,7 @@ interface AutomationOptions {
 
 interface AutomationState extends AutomationOptions {
   status: AutomationStatus;
+  idleReason?: "checking-todos" | "waiting-todos";
   quota?: {
     state: AutomationQuotaState;
     checkedAt: number;
@@ -84,7 +86,12 @@ export function ProjectAutomationMenu({
   const [draft, setDraft] = useState<AutomationOptions>(() => automationOptions(models, automation));
   const status = automation?.status ?? "PAUSED";
   const quota = automation?.quota;
-  const stateLabel = !automation?.enabledByUser
+  const idleLabel = automation?.enabledByUser && automation.idleReason === "checking-todos"
+    ? text("正在判断待办", "Checking todos")
+    : automation?.enabledByUser && automation.idleReason === "waiting-todos"
+      ? text("等待任务条件", "Waiting for task conditions")
+      : null;
+  const stateLabel = idleLabel ?? (!automation?.enabledByUser
     ? text("已暂停", "Paused")
     : automation.quotaAware && quota?.state === "blocked"
       ? text("额度暂停", "Paused by quota")
@@ -94,7 +101,7 @@ export function ProjectAutomationMenu({
           ? text("额度未知", "Quota unknown")
           : status === "ACTIVE"
             ? text("运行中", "Running")
-            : text("已暂停", "Paused");
+            : text("已暂停", "Paused"));
   const selectedModel = models.find((model) => model.slug === draft.model) ?? models[0];
   const disabled = pending || !selectedModel || Boolean(unavailableReason);
 
@@ -127,29 +134,20 @@ export function ProjectAutomationMenu({
 
   useEffect(() => {
     if (!open) return;
-    function closeFromOutside(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function closeFromViewportChange() {
-      setOpen(false);
-    }
+    const close = () => setOpen(false);
+    const stopOutside = listenForOutsidePointerDown([triggerRef, menuRef], close);
+    const stopViewport = listenForMenuViewportChange(menuRef, close);
     function closeFromEscape(event: KeyboardEvent) {
       if (event.key === "Escape" && !pickerMenu) {
         setOpen(false);
         triggerRef.current?.focus();
       }
     }
-    document.addEventListener("pointerdown", closeFromOutside);
     document.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      stopOutside();
+      stopViewport();
       document.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("resize", closeFromViewportChange);
-      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
   }, [open, pickerMenu]);
 
@@ -304,6 +302,19 @@ export function ProjectAutomationMenu({
           </div>
         </>
       )}
+      {idleLabel && (
+        <p className="project-automation-note" role="status">
+          {automation?.idleReason === "waiting-todos"
+            ? text(
+              "当前待办任务都需要等待，已暂停本轮自动认领。新增可执行任务，或更新任务说明、最新评论后，将自动重新判断。",
+              "Current tasks need to wait, so auto-claim is paused for now. New actionable tasks or changes to task descriptions or latest comments will trigger a new check.",
+            )
+            : text(
+              "正在确认待办任务是否可以开始，确认前暂停自动认领。",
+              "Checking whether tasks can start. Auto-claim is paused until the check is complete.",
+            )}
+        </p>
+      )}
       {unavailableReason && <p className="project-automation-note">{unavailableReason}</p>}
       {error && error !== unavailableReason && <p className="project-automation-error" role="alert">{error}</p>}
     </div>,
@@ -316,15 +327,15 @@ export function ProjectAutomationMenu({
         ref={triggerRef}
         type="button"
         className={`project-automation-trigger no-drag ${status === "ACTIVE" ? "is-active" : "is-paused"}`}
-        aria-label={status === "ACTIVE"
+        aria-label={idleLabel ?? (status === "ACTIVE"
           ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation")}
+          : text("自动化", "Automation"))}
         aria-busy={pending}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={status === "ACTIVE"
+        title={idleLabel ?? (status === "ACTIVE"
           ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation")}
+          : text("自动化", "Automation"))}
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
@@ -334,9 +345,9 @@ export function ProjectAutomationMenu({
         }}
       >
         <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
-        <span>{status === "ACTIVE"
+        <span>{idleLabel ?? (status === "ACTIVE"
           ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation")}</span>
+          : text("自动化", "Automation"))}</span>
       </button>
       {menu}
     </>

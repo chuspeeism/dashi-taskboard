@@ -1,3 +1,5 @@
+import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
+import { resolveInlineAttachments } from "./inlineAttachments";
 import {
   Fragment,
   lazy,
@@ -26,7 +28,6 @@ import {
   deleteProject as deleteProjectRequest,
   getAiChatCatalog,
   getCodexThreadProgress,
-  getHostRuntime,
   getJiraConnection,
   getTaskboardRevision,
   getTaskboardMetadata,
@@ -65,11 +66,9 @@ import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
-  resolveInlineAttachmentMarkdown,
-  resolveInlineMediaMarkdown,
   type PendingInlineAttachment,
   type PendingInlineImage,
-} from "./components/InlineMediaComposer";
+} from "./documentModel";
 import { LinearIcon } from "./components/LinearIcon";
 import {
   DeleteIcon,
@@ -87,7 +86,7 @@ import {
   type NewTaskCreateOptions,
   type NewTaskEditorDraft,
 } from "./components/TaskEditor";
-import { TaskFilterMenu } from "./components/TaskFilterMenu";
+import { TaskFilterMenu, type TaskSort } from "./components/TaskFilterMenu";
 import {
   PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX,
   projectBoardDisplaySettingsStorageEntries,
@@ -111,6 +110,7 @@ import {
   type OtherTaskTab,
 } from "./issueBoardStatuses";
 import {
+  indexAiThreadsByTask,
   normalizeCodexThreadId,
   taskCardPresentation,
   type TaskCardPresentation,
@@ -178,7 +178,6 @@ const GanttView = lazy(() => import("./components/GanttView").then((module) => (
 })));
 
 interface EditorState {
-  task: Task | null;
   status: TaskStatus;
   projectId?: string | null;
 }
@@ -216,6 +215,7 @@ interface UndoNotice {
 
 type ProjectAutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
+type AutomationIdleReason = "checking-todos" | "waiting-todos";
 type AutomationIntervalMinutes = 5 | 10 | 15 | 30 | 60;
 
 interface AutomationQuotaStatus {
@@ -235,6 +235,7 @@ interface ProjectAutomationRecord {
   enabledByUser: boolean;
   quotaAware: boolean;
   quota?: AutomationQuotaStatus;
+  idleReason?: AutomationIdleReason;
   intervalMinutes: AutomationIntervalMinutes;
   model: string;
   reasoningEffort: string;
@@ -278,6 +279,7 @@ interface AutomationHostResponse {
   item?: AutomationHostItem;
   items?: AutomationHostItem[];
   quota?: AutomationQuotaStatus;
+  idleReason?: AutomationIdleReason;
   policy?: {
     automationId?: string;
     codexProjectId: string;
@@ -389,7 +391,7 @@ function getInitialTheme(): Theme {
   const host = query.get("host");
   if (
     window.parent !== window
-    && (host === "codex" || host === "workbuddy" || host === "deepseek-harness")
+    && (host === "codex" || host === "deepseek-harness")
   ) {
     const fromQuery = query.get("theme");
     if (isTheme(fromQuery)) return fromQuery;
@@ -487,6 +489,8 @@ function readProjectAutomations(): ProjectAutomations {
         enabledByUser,
         quotaAware,
         ...(quota ? { quota } : {}),
+        ...(candidate.idleReason === "checking-todos" || candidate.idleReason === "waiting-todos"
+          ? { idleReason: candidate.idleReason } : {}),
         intervalMinutes: candidate.intervalMinutes ?? 5,
         model,
         reasoningEffort,
@@ -612,23 +616,39 @@ function LocalRealtimeSync({
   setAttachmentsRevision,
   setReadmeRevision,
 }: LocalRealtimeSyncProps) {
+  const selectionRef = useRef({ selectedProjectId, detailTaskId });
+  const eventsUrl = resolveTaskboardUrl("/api/events");
+
+  useLayoutEffect(() => {
+    selectionRef.current = { selectedProjectId, detailTaskId };
+  }, [selectedProjectId, detailTaskId]);
+
   useEffect(() => {
-    const source = new EventSource(resolveTaskboardUrl("/api/events"));
+    const source = new EventSource(eventsUrl);
     let refreshTimer: number | undefined;
     let refreshProjectsPending = false;
-    let refreshTasksPending = false;
+    const pendingTaskProjects = new Set<string | undefined>();
 
-    const scheduleRefresh = (options: { projects?: boolean; tasks?: boolean }) => {
+    const scheduleRefresh = (options: { projects?: boolean; tasks?: boolean; projectId?: string }) => {
       refreshProjectsPending ||= options.projects === true;
-      refreshTasksPending ||= options.tasks === true;
+      if (options.tasks) pendingTaskProjects.add(options.projectId);
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
+        const { selectedProjectId } = selectionRef.current;
         if (refreshProjectsPending) void refreshProjectList();
-        if (refreshTasksPending && selectedProjectId) {
+        if (
+          selectedProjectId
+          && pendingTaskProjects.size > 0
+          && (
+            selectedProjectId === ALL_PROJECTS_ID
+            || pendingTaskProjects.has(undefined)
+            || pendingTaskProjects.has(selectedProjectId)
+          )
+        ) {
           void refreshTasks(selectedProjectId, { quiet: true });
         }
         refreshProjectsPending = false;
-        refreshTasksPending = false;
+        pendingTaskProjects.clear();
       }, 120);
     };
 
@@ -652,6 +672,7 @@ function LocalRealtimeSync({
         void refreshProjectBoardDisplaySettings();
         return;
       }
+      const { selectedProjectId, detailTaskId } = selectionRef.current;
       const eventProjectId = payload.projectId ?? payload.project?.id;
       const affectsSelectedProject = Boolean(selectedProjectId)
         && (
@@ -664,11 +685,15 @@ function LocalRealtimeSync({
         return;
       }
       if (event.type === "project.labels.updated") {
-        scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
+        scheduleRefresh({ projects: true, tasks: affectsSelectedProject, projectId: eventProjectId });
         return;
       }
       if (event.type.startsWith("task.")) {
-        scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
+        scheduleRefresh({
+          projects: event.type !== "task.relation.updated",
+          tasks: affectsSelectedProject,
+          projectId: eventProjectId,
+        });
         return;
       }
       if (!affectsSelectedProject) return;
@@ -680,7 +705,7 @@ function LocalRealtimeSync({
         if (!detailTaskId || !payload.taskId || payload.taskId === detailTaskId) {
           setCommentsRevision((current) => current + 1);
         }
-        scheduleRefresh({ tasks: true });
+        scheduleRefresh({ tasks: true, projectId: eventProjectId });
         return;
       }
       if (event.type.startsWith("attachment.")) {
@@ -694,6 +719,7 @@ function LocalRealtimeSync({
     EVENT_NAMES.forEach((name) => source.addEventListener(name, handleEvent));
     source.onopen = () => {
       setConnection("live");
+      const { selectedProjectId, detailTaskId } = selectionRef.current;
       void refreshProjectBoardDisplaySettings();
       scheduleRefresh({ projects: true, tasks: Boolean(selectedProjectId) });
       if (selectedProjectId && selectedProjectId !== ALL_PROJECTS_ID) {
@@ -704,7 +730,9 @@ function LocalRealtimeSync({
         setAttachmentsRevision((current) => current + 1);
       }
     };
-    source.onerror = () => setConnection("reconnecting");
+    source.onerror = () => {
+      setConnection("reconnecting");
+    };
 
     return () => {
       window.clearTimeout(refreshTimer);
@@ -712,11 +740,10 @@ function LocalRealtimeSync({
       source.close();
     };
   }, [
-    detailTaskId,
+    eventsUrl,
     refreshProjectBoardDisplaySettings,
     refreshProjectList,
     refreshTasks,
-    selectedProjectId,
     setAttachmentsRevision,
     setCommentsRevision,
     setConnection,
@@ -729,7 +756,7 @@ function LocalRealtimeSync({
 export function App() {
   const query = useMemo(() => new URL(document.baseURI).searchParams, []);
   const host = query.get("host");
-  const embedded = host === "codex" || host === "workbuddy" || host === "deepseek-harness";
+  const embedded = host === "codex" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
   const [automaticTheme, setAutomaticTheme] = useState<Theme>(getInitialTheme);
@@ -763,7 +790,6 @@ export function App() {
       running: boolean;
     } | null>
   >({});
-  const [processingNow, setProcessingNow] = useState(() => Date.now());
   const [recentProjectIds, setRecentProjectIds] = useState(readRecentProjectIds);
   const initialProjectId = query.get("project") ?? recentProjectIds[0] ?? ALL_PROJECTS_ID;
   const [projects, setProjects] = useState<Project[]>([]);
@@ -784,6 +810,7 @@ export function App() {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
+  const [taskSort, setTaskSort] = useState<TaskSort>("default");
   const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
   const [projectBoardDisplaySettings, setProjectBoardDisplaySettings] = useState(
     readProjectBoardDisplaySettings,
@@ -1230,8 +1257,7 @@ export function App() {
     : projectMenuCandidates;
   const firstEmptyProjectId = projectMenuChoices.find((project) => project.issueCount === 0)?.id ?? null;
   const hasProjectsWithIssues = projectMenuChoices.some((project) => project.issueCount > 0);
-  const editorProjectId = editor?.task?.projectId
-    ?? editor?.projectId
+  const editorProjectId = editor?.projectId
     ?? (newTaskDraft?.projectId === selectedProjectId ? newTaskDraft.targetProjectId : undefined)
     ?? (isAllProjects ? GLOBAL_PROJECT_ID : selectedProjectId);
   const developmentEditorProjectId = isAllProjects && editor ? editorProjectId : null;
@@ -1311,6 +1337,7 @@ export function App() {
         && current[projectId]?.enabledByUser === record.enabledByUser
         && current[projectId]?.quotaAware === record.quotaAware
         && JSON.stringify(current[projectId]?.quota) === JSON.stringify(record.quota)
+        && current[projectId]?.idleReason === record.idleReason
         && current[projectId]?.intervalMinutes === record.intervalMinutes
         && current[projectId]?.model === record.model
         && current[projectId]?.reasoningEffort === record.reasoningEffort
@@ -1406,6 +1433,7 @@ export function App() {
           enabledByUser: policy.enabledByUser,
           quotaAware: policy.quotaAware,
           ...(response.quota ? { quota: response.quota } : {}),
+          idleReason: response.idleReason,
           intervalMinutes: policy.intervalMinutes,
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
@@ -1477,6 +1505,7 @@ export function App() {
           enabledByUser: policy.enabledByUser,
           quotaAware: policy.quotaAware,
           ...(response.quota ? { quota: response.quota } : {}),
+          idleReason: response.idleReason,
           intervalMinutes: policy.intervalMinutes,
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
@@ -1499,6 +1528,7 @@ export function App() {
             enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
             quotaAware: policy?.quotaAware ?? stored.quotaAware,
             ...(response.quota ? { quota: response.quota } : {}),
+            idleReason: response.idleReason,
             intervalMinutes: policy?.intervalMinutes ?? stored.intervalMinutes,
             model: policy?.model ?? stored.model,
             reasoningEffort: policy?.reasoningEffort ?? stored.reasoningEffort,
@@ -1524,6 +1554,7 @@ export function App() {
               ? { quota: stored.quota }
               : {}
         ),
+        idleReason: response.idleReason,
         intervalMinutes,
         model: policy?.model ?? item.model,
         reasoningEffort: policy?.reasoningEffort ?? item.reasoningEffort,
@@ -1600,6 +1631,41 @@ export function App() {
       task.identifier,
     );
     window.history.pushState(window.history.state, "", detailUrl);
+  }
+
+  function inheritedLabelsForChild(parent: Task): string[] {
+    const taskById = new Map(tasksRef.current.map((candidate) => [candidate.id, candidate]));
+    const labels: string[] = [];
+    const visited = new Set<string>();
+    let current: Task | undefined = parent;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      labels.push(...current.labels);
+      const parentId: string | undefined = current.relations.parent?.id;
+      current = parentId ? taskById.get(parentId) : undefined;
+    }
+    return [...new Set(labels)];
+  }
+
+  function openChildTaskEditor(parent: Task) {
+    setNewTaskDraft({
+      projectId: selectedProjectId,
+      targetProjectId: parent.projectId,
+      draft: {
+        title: "",
+        descriptionSegments: [],
+        status: "todo",
+        priority: "none",
+        assignee: currentUser,
+        selectedLabels: inheritedLabelsForChild(parent),
+        developmentContext: null,
+        startDate: "",
+        dueDate: "",
+        recurrence: null,
+        relations: { parentId: parent.id, relatedIds: [], subIssueIds: [] },
+      },
+    });
+    setEditor({ status: "todo", projectId: parent.projectId });
   }
 
   function closeTaskDetail() {
@@ -1763,6 +1829,20 @@ export function App() {
   }, [selectedProjectId, reconcileProjectAutomation]);
 
   useEffect(() => {
+    if (!selectedProjectAutomation?.enabledByUser || !selectedProjectAutomation.idleReason) return;
+    // The host acknowledges the pause before doing the ephemeral semantic turn.
+    // Refresh that result through the existing list path, including auto-resume.
+    const timer = window.setInterval(() => {
+      void reconcileProjectAutomation();
+    }, selectedProjectAutomation.idleReason === "checking-todos" ? 5_000 : 60_000);
+    return () => window.clearInterval(timer);
+  }, [
+    selectedProjectAutomation?.enabledByUser,
+    selectedProjectAutomation?.idleReason,
+    reconcileProjectAutomation,
+  ]);
+
+  useEffect(() => {
     if (!embedded || window.parent === window) return;
     let acknowledgedFrameChallenge = "";
 
@@ -1853,23 +1933,6 @@ export function App() {
       pendingAutomationRequestsRef.current.clear();
     };
   }, [embedded, host]);
-
-  useEffect(() => {
-    if (host !== "workbuddy") return;
-    let disposed = false;
-    const syncRuntime = async () => {
-      try {
-        const runtime = await getHostRuntime();
-        if (!disposed) setHostContext(runtime);
-      } catch {}
-    };
-    void syncRuntime();
-    const timer = window.setInterval(syncRuntime, 1_000);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [host]);
 
   useLayoutEffect(() => {
     if (!embedded || window.parent === window || !dragRegionRef.current) return;
@@ -2249,7 +2312,7 @@ export function App() {
         && !isJiraProject
       ) {
         event.preventDefault();
-        setEditor({ task: null, status: "todo" });
+        setEditor({ status: "todo" });
       }
       if (
         event.key === "/"
@@ -2269,15 +2332,26 @@ export function App() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [boardView, contextMenu, detailTaskId, editor, isJiraProject, projectMenuOpen, selectedProjectId]);
 
+  const taskComparator = useMemo(() => {
+    if (taskSort === "name") {
+      return (left: Task, right: Task) => left.title.localeCompare(right.title, language, { numeric: true });
+    }
+    if (taskSort === "priority") {
+      const rank = { urgent: 0, high: 1, medium: 2, low: 3, none: 4 };
+      return (left: Task, right: Task) => rank[left.priority] - rank[right.priority];
+    }
+    return () => 0;
+  }, [language, taskSort]);
+
   const filteredTasks = useMemo(() => {
     return tasks.filter(
       (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
-    );
-  }, [filters, language, search, tasks]);
+    ).sort(taskComparator);
+  }, [filters, language, search, taskComparator, tasks]);
 
   const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
     (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
-  ), [archivedTasks, filters, language, search]);
+  ).sort(taskComparator), [archivedTasks, filters, language, search, taskComparator]);
 
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
@@ -2341,6 +2415,7 @@ export function App() {
     setOtherTasksTab(otherTaskTabs[0]);
   }, [otherTaskTabsKey, otherTasksAvailable, otherTasksTab]);
 
+  const aiThreadsByTask = useMemo(() => indexAiThreadsByTask(aiThreads), [aiThreads]);
   const taskPresentations = useMemo(() => Object.fromEntries(tasks.map((task) => {
     const storageKey = issueReadStorageKey(issueReadMode, task);
     const readActivityKey = readActivityKeys[storageKey] ?? taskboardStorage.getItem(storageKey);
@@ -2352,14 +2427,14 @@ export function App() {
     const taskThreadId = normalizeCodexThreadId(task.threadId);
     return [task.id, taskCardPresentation(
       task,
-      aiThreads,
+      aiThreadsByTask.get(task.id) ?? [],
       unread,
       runningNativeThreadId,
       hostContext?.threadTodoProgress ?? null,
       taskThreadId ? codexThreadProgress[taskThreadId] ?? null : undefined,
     )];
   })) as Record<string, TaskCardPresentation>, [
-    aiThreads,
+    aiThreadsByTask,
     codexThreadProgress,
     hostContext?.threadId,
     hostContext?.threadRunning,
@@ -2368,18 +2443,6 @@ export function App() {
     readActivityKeys,
     tasks,
   ]);
-  const hasRunningTask = useMemo(
-    () => Object.values(taskPresentations).some((presentation) => presentation.processing.running),
-    [taskPresentations],
-  );
-
-  useEffect(() => {
-    setProcessingNow(Date.now());
-    if (!hasRunningTask) return;
-    const timer = window.setInterval(() => setProcessingNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [hasRunningTask]);
-
 
   function selectBoardView(view: BoardView) {
     closeContextMenu();
@@ -2421,27 +2484,14 @@ export function App() {
     if (!selectedProjectId || !editor) return;
     const targetProjectId = editorProjectId ?? selectedProjectId;
     setActionError(null);
-    const creating = editor.task === null;
-    let saved: Task;
-    try {
-      saved = editor.task
-        ? await updateTaskRequest(editor.task, draft)
-        : await createTaskRequest(targetProjectId, draft);
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
-        void refreshTasks(taskScopeProjectId, { quiet: true });
-      }
-      throw error;
-    }
-    if (creating) {
-      setProjects((current) => current.map((project) => (
-        project.id === targetProjectId
-          ? { ...project, issueCount: project.issueCount + 1 }
-          : project
-      )));
-    }
+    let saved = await createTaskRequest(targetProjectId, draft);
+    setProjects((current) => current.map((project) => (
+      project.id === targetProjectId
+        ? { ...project, issueCount: project.issueCount + 1 }
+        : project
+    )));
     let postCreateWriteFailed = false;
-    if (creating && (inlineFiles.length > 0 || inlineImages.length > 0)) {
+    if (inlineFiles.length > 0 || inlineImages.length > 0) {
       const [fileResults, inlineResults] = await Promise.all([
           Promise.allSettled(
             inlineFiles.map((file) => uploadAttachment(saved.id, file.file, "attachment")),
@@ -2463,14 +2513,10 @@ export function App() {
         postCreateWriteFailed = true;
       } else if (inlineFiles.length > 0 || inlineImages.length > 0) {
         try {
-          const description = resolveInlineAttachmentMarkdown(
-            resolveInlineMediaMarkdown(
-              draft.description,
-              inlineImages,
-              inlineAttachments,
-            ),
-            inlineFiles,
-            fileAttachments,
+          const description = resolveInlineAttachments(
+            draft.description,
+            [...inlineImages, ...inlineFiles],
+            [...inlineAttachments, ...fileAttachments],
           );
           saved = await updateTaskRequest(saved, { ...draft, description });
         } catch {
@@ -2483,7 +2529,7 @@ export function App() {
     let addedParentId: string | null = null;
     const addedRelatedIds: string[] = [];
     let relationWriteFailed = false;
-    if (creating && createOptions) {
+    if (createOptions) {
       const { parentId, relatedIds, subIssueIds } = createOptions.relations;
       try {
         if (parentId) {
@@ -2516,67 +2562,56 @@ export function App() {
       ...current.filter((task) => !relationUpdates.has(task.id)),
       ...relationUpdates.values(),
     ]));
-    if (creating) setNewTaskDraft(null);
+    setNewTaskDraft(null);
     const failedWrites = [
       ...(relationWriteFailed ? [{ zh: "关系", en: "relations" }] : []),
       ...(postCreateWriteFailed ? [{ zh: "正文或媒体", en: "description or media" }] : []),
     ];
-    if (!creating || !createOptions?.keepOpen || failedWrites.length > 0) setEditor(null);
+    if (!createOptions?.keepOpen || failedWrites.length > 0) setEditor(null);
     if (failedWrites.length > 0) {
       setActionError(text(
         `${saved.identifier} 已创建，但以下内容写入失败：${failedWrites.map((failure) => failure.zh).join("、")}。`,
         `${saved.identifier} was created, but these follow-up writes failed: ${failedWrites.map((failure) => failure.en).join(", ")}.`,
       ));
     }
-    if (creating) {
-      pushUndo(null, async () => {
-        const restoredRelations = new Map<string, Task>();
-        const candidate = tasksRef.current.find((task) => task.id === saved.id);
-        let current = candidate && candidate.version >= saved.version ? candidate : saved;
-        if (addedParentId) {
-          const result = await removeTaskRelation(current, "parent", addedParentId);
-          current = result.task;
-          restoredRelations.set(result.relatedTask.id, result.relatedTask);
-        }
-        for (const relatedId of [...addedRelatedIds].reverse()) {
-          const result = await removeTaskRelation(current, "related", relatedId);
-          current = result.task;
-          restoredRelations.set(result.relatedTask.id, result.relatedTask);
-        }
-        for (const movedSubIssue of [...movedSubIssues].reverse()) {
-          const latestChild = tasksRef.current.find((task) => task.id === movedSubIssue.task.id);
-          const child = latestChild && latestChild.version >= movedSubIssue.task.version
-            ? latestChild
-            : movedSubIssue.task;
-          const removed = await removeTaskRelation(child, "parent", saved.id);
-          restoredRelations.set(removed.task.id, removed.task);
-          current = removed.relatedTask;
-          if (movedSubIssue.previousParentId) {
-            const restored = await addTaskRelation(
-              removed.task,
-              "parent",
-              movedSubIssue.previousParentId,
-            );
-            restoredRelations.set(restored.task.id, restored.task);
-            restoredRelations.set(restored.relatedTask.id, restored.relatedTask);
-          }
-        }
-        await archiveTaskRequest(current);
-        setTasks((tasks) => sortTasks([
-          ...tasks.filter((task) => task.id !== saved.id && !restoredRelations.has(task.id)),
-          ...[...restoredRelations.values()].filter((task) => task.id !== saved.id),
-        ]));
-      });
-    } else if (editor.task) {
-      const previous = editor.task;
-      const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
-      if (!draft.assigneeTarget || previousAssigneeTarget) {
-        pushUndo(
-          null,
-          () => restoreTaskDetails(previous, saved, previousAssigneeTarget),
-        );
+    pushUndo(null, async () => {
+      const restoredRelations = new Map<string, Task>();
+      const candidate = tasksRef.current.find((task) => task.id === saved.id);
+      let current = candidate && candidate.version >= saved.version ? candidate : saved;
+      if (addedParentId) {
+        const result = await removeTaskRelation(current, "parent", addedParentId);
+        current = result.task;
+        restoredRelations.set(result.relatedTask.id, result.relatedTask);
       }
-    }
+      for (const relatedId of [...addedRelatedIds].reverse()) {
+        const result = await removeTaskRelation(current, "related", relatedId);
+        current = result.task;
+        restoredRelations.set(result.relatedTask.id, result.relatedTask);
+      }
+      for (const movedSubIssue of [...movedSubIssues].reverse()) {
+        const latestChild = tasksRef.current.find((task) => task.id === movedSubIssue.task.id);
+        const child = latestChild && latestChild.version >= movedSubIssue.task.version
+          ? latestChild
+          : movedSubIssue.task;
+        const removed = await removeTaskRelation(child, "parent", saved.id);
+        restoredRelations.set(removed.task.id, removed.task);
+        current = removed.relatedTask;
+        if (movedSubIssue.previousParentId) {
+          const restored = await addTaskRelation(
+            removed.task,
+            "parent",
+            movedSubIssue.previousParentId,
+          );
+          restoredRelations.set(restored.task.id, restored.task);
+          restoredRelations.set(restored.relatedTask.id, restored.relatedTask);
+        }
+      }
+      await archiveTaskRequest(current);
+      setTasks((tasks) => sortTasks([
+        ...tasks.filter((task) => task.id !== saved.id && !restoredRelations.has(task.id)),
+        ...[...restoredRelations.values()].filter((task) => task.id !== saved.id),
+      ]));
+    });
   }
 
   async function moveTask(
@@ -2710,12 +2745,13 @@ export function App() {
     setDraggedTaskId(null);
     setDraggedTaskHeight(0);
     setDropTarget(null);
-    if (!task) return;
+    if (!task || (taskSort !== "default" && task.status === destination)) return;
     setSettlingTaskId(task.id);
     window.setTimeout(() => {
       setSettlingTaskId((current) => current === task.id ? null : current);
     }, 220);
-    void moveTask(task, destination, beforeTaskId, true);
+    if (taskSort === "default") void moveTask(task, destination, beforeTaskId, true);
+    else void moveTask(task, destination);
   }
 
   async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>): Promise<Task> {
@@ -3041,6 +3077,15 @@ export function App() {
   }
 
   function openTaskConversation(conversation: TaskConversationItem) {
+    if (conversation.kind === "agent-session" && conversation.agentSession) {
+      const { platform, sessionId } = conversation.agentSession;
+      const label = agentPlatformLabel(platform);
+      void copyText(
+        sessionResumeCommand(platform, sessionId),
+        text(`${label} 恢复命令已复制。`, `${label} resume command copied.`),
+      );
+      return;
+    }
     if (conversation.kind === "local-ai" && conversation.aiThreadId) {
       aiOpenThreadRequestSequenceRef.current += 1;
       setAiOpenThreadRequest({
@@ -3647,7 +3692,7 @@ export function App() {
               <button
                 className="icon-button header-create-button"
                 type="button"
-                onClick={() => setEditor({ task: null, status: "todo" })}
+                onClick={() => setEditor({ status: "todo" })}
                 aria-label={text("新建议题", "Create issue")}
                 title={text("新建议题 (C)", "Create issue (C)")}
               >
@@ -3761,6 +3806,8 @@ export function App() {
               labels={availableLabels}
               filters={filters}
               onChange={setFilters}
+              sort={taskSort}
+              onSortChange={setTaskSort}
             />
             {boardView === "issues" && (isAllProjects || selectedProject) && (
               <BoardCardDisplayMenu
@@ -3821,6 +3868,7 @@ export function App() {
             attachmentsRevision={attachmentsRevision}
             onCreateLabel={persistProjectLabel}
             onDeleteLabel={removeProjectLabel}
+            onCreateChild={openChildTaskEditor}
             onUpdate={(current, changes) => updateTaskProperties(current, changes)}
             onOpenTask={openTaskDetail}
             onAddRelation={(current, type, relatedTaskId, origin) => (
@@ -3869,7 +3917,7 @@ export function App() {
               <button
                 className="button secondary"
                 type="button"
-                onClick={() => setEditor({ task: null, status: "todo" })}
+                onClick={() => setEditor({ status: "todo" })}
               >
                 {text("添加议题", "Add issue")}
               </button>
@@ -3965,7 +4013,6 @@ export function App() {
                         status={item}
                         tasks={tasksByStatus[item]}
                         presentations={taskPresentations}
-                        now={processingNow}
                         emptyMessage={hasActiveTaskFilters
                           ? text("当前筛选下无匹配议题", "No issues match the current filters")
                           : text("暂无议题", "No issues")}
@@ -3980,9 +4027,10 @@ export function App() {
                         currentUser={currentUser}
                         showCover={boardDisplaySettings.cover}
                         showBody={boardDisplaySettings.body}
+                        showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
                         createEnabled={!isJiraProject}
                         onCreateLabel={persistProjectLabel}
-                        onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                        onCreate={(initialStatus) => setEditor({ status: initialStatus })}
                         onEdit={openTaskDetail}
                         onUpdate={updateTaskProperties}
                         onComplete={(task) => moveTask(task, "done")}
@@ -4004,7 +4052,6 @@ export function App() {
                     tasksByStatus={tasksByStatus}
                     archivedTasks={filteredArchivedTasks}
                     presentations={taskPresentations}
-                    now={processingNow}
                     hasActiveFilters={hasActiveTaskFilters}
                     isDropTarget={otherTasksTab !== "archived" && dropTarget === otherTasksTab}
                     draggedTaskId={draggedTaskId}
@@ -4017,13 +4064,14 @@ export function App() {
                     currentUser={currentUser}
                     showCover={boardDisplaySettings.cover}
                     showBody={boardDisplaySettings.body}
+                    showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
                     onCreateLabel={persistProjectLabel}
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}
                     onTabChange={setOtherTasksTab}
                     onCreate={isJiraProject
                       ? undefined
-                      : (initialStatus) => setEditor({ task: null, status: initialStatus })}
+                      : (initialStatus) => setEditor({ status: initialStatus })}
                     onRestore={(task) => void restoreArchivedTask(task)}
                     onDelete={setPendingArchivedTaskDelete}
                     onEdit={openTaskDetail}
@@ -4254,17 +4302,16 @@ export function App() {
 
       {editor && (
         <TaskEditor
-          key={editor.task?.id ?? `new-${selectedProjectId}-${editor.status}`}
+          key={`new-${selectedProjectId}-${editor.status}`}
           projectId={editorProjectId}
-          projectOptions={!editor.task && isAllProjects ? createTargetProjects : undefined}
+          projectOptions={isAllProjects ? createTargetProjects : undefined}
           onProjectChange={(projectId) => setEditor((current) => (
             current ? { ...current, projectId } : current
           ))}
-          task={editor.task}
           tasks={tasks.filter((task) => task.projectId === editorProjectId)}
           referenceTasks={referenceTasks.filter((task) => task.projectId === editorProjectId)}
           initialStatus={editor.status}
-          initialDraft={editor.task || newTaskDraft?.projectId !== selectedProjectId
+          initialDraft={newTaskDraft?.projectId !== selectedProjectId
             ? null
             : newTaskDraft.draft}
           labels={projects.find((project) => project.id === editorProjectId)?.labels ?? []}
@@ -4273,13 +4320,11 @@ export function App() {
           developmentScanLoading={developmentScanLoading}
           onCreateLabel={(label) => persistProjectLabel(label, editorProjectId ?? selectedProjectId)}
           onCancel={(draft) => {
-            if (!editor.task) {
-              setNewTaskDraft(draft ? {
-                projectId: selectedProjectId,
-                targetProjectId: editorProjectId,
-                draft,
-              } : null);
-            }
+            setNewTaskDraft(draft ? {
+              projectId: selectedProjectId,
+              targetProjectId: editorProjectId,
+              draft,
+            } : null);
             setEditor(null);
           }}
           onSave={saveEditor}

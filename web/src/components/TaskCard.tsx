@@ -31,7 +31,6 @@ interface TaskCardProps {
   task: Task;
   variant?: "main" | "sidebar";
   presentation: TaskCardPresentation;
-  now: number;
   isDragging: boolean;
   dragShift: number;
   isMoving: boolean;
@@ -42,6 +41,7 @@ interface TaskCardProps {
   currentUser: ActorIdentity;
   showCover: boolean;
   showBody: boolean;
+  showCreatedAt: boolean;
   onCreateLabel: (label: string) => Promise<void>;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
@@ -89,7 +89,7 @@ function calendarDate(value: string, locale: string) {
 }
 
 function createdDate(value: string, locale: string, text: (chinese: string, english: string) => string) {
-  const formatted = new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
+  const formatted = new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" })
     .format(new Date(value));
   return text(`${formatted}创建`, `Created ${formatted}`);
 }
@@ -195,26 +195,38 @@ function ProcessingProgress({
   );
 }
 
+function ProcessingLabel({ processing }: { processing: TaskCardPresentation["processing"] }) {
+  const { text } = useTaskboardI18n();
+  const { running, startedAt } = processing;
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!running || !startedAt) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [running, startedAt]);
+  const elapsed = elapsedTime(startedAt, now);
+  return (
+    <span className="task-processing-label">
+      {running
+        ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
+        : text("暂停处理", "Processing paused")}
+    </span>
+  );
+}
+
 function ProcessingStatusRow({
   presentation,
-  now,
   onOpenConversation,
 }: {
   presentation: TaskCardPresentation;
-  now: number;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }) {
-  const { text } = useTaskboardI18n();
-  const elapsed = elapsedTime(presentation.processing.startedAt, now);
   const running = presentation.processing.running;
   return (
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
-      <span className="task-processing-label">
-        {running
-          ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
-          : text("暂停处理", "Processing paused")}
-      </span>
+      <ProcessingLabel processing={presentation.processing} />
       <span className="task-processing-spacer" aria-hidden="true" />
       {presentation.conversations.length > 0 && (
         <TaskConversationMenu
@@ -392,7 +404,6 @@ export function TaskCard({
   task,
   variant = "main",
   presentation,
-  now,
   isDragging,
   dragShift,
   isMoving,
@@ -403,6 +414,7 @@ export function TaskCard({
   currentUser,
   showCover,
   showBody,
+  showCreatedAt,
   onCreateLabel,
   onEdit,
   onUpdate,
@@ -516,7 +528,6 @@ export function TaskCard({
               onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
             />
-            <span>{createdDate(task.createdAt, locale, text)}</span>
           </span>
         )}
       </div>
@@ -596,10 +607,14 @@ export function TaskCard({
           <ProcessingProgress presentation={presentation} />
           <ProcessingStatusRow
             presentation={presentation}
-            now={now}
             onOpenConversation={onOpenConversation}
           />
         </>
+      )}
+      {showCreatedAt && (
+        <time className="task-card-created-at" dateTime={task.createdAt}>
+          {createdDate(task.createdAt, locale, text)}
+        </time>
       )}
     </article>
   );

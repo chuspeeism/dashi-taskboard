@@ -8,8 +8,8 @@ import { parse as parseToml } from "smol-toml";
 
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
-import { composerReferencePersistence } from "./composer-reference.mjs";
-import { ApiError } from "./database.mjs";
+import { composerReferencePersistence } from "../shared/composer-reference.mjs";
+import { ApiError } from "../shared/api-fields.mjs";
 
 const execFileAsync = promisify(execFile);
 const CATALOG_TIMEOUT_MS = 10_000;

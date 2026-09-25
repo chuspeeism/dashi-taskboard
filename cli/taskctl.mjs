@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
 import {
   DEFAULT_PROJECT_ID,
@@ -49,7 +50,7 @@ const COMMAND_OPTIONS = new Map([
       "status",
       "priority",
       "labels",
-      "thread-id",
+      "thread-id", "agent-platform", "session-id",
       "git-branch",
       "worktree-path",
       "worktree-branch",
@@ -70,7 +71,7 @@ const COMMAND_OPTIONS = new Map([
       "status",
       "priority",
       "labels",
-      "thread-id",
+      "thread-id", "agent-platform", "session-id",
       "git-branch",
       "worktree-path",
       "worktree-branch",
@@ -84,7 +85,7 @@ const COMMAND_OPTIONS = new Map([
   ],
   ["issue move", new Set([
     "status",
-    "thread-id",
+    "thread-id", "agent-platform", "session-id",
     "binding-thread-id",
     "binding-codex-project-id",
     "binding-codex-project-kind",
@@ -94,15 +95,15 @@ const COMMAND_OPTIONS = new Map([
     "if-version",
     "json",
   ])],
-  ["issue archive", new Set(["thread-id", "if-version", "json"])],
-  ["issue restore", new Set(["thread-id", "if-version", "json"])],
+  ["issue archive", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
+  ["issue restore", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["issue tree", new Set(["direction", "depth", "json"])],
-  ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
+  ["issue relation", new Set(["type", "issue", "thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["comment list", new Set(["after", "json"])],
   ["comment add", new Set([
     "body",
     "body-file",
-    "thread-id",
+    "thread-id", "agent-platform", "session-id",
     "binding-thread-id",
     "binding-codex-project-id",
     "binding-codex-project-kind",
@@ -111,8 +112,8 @@ const COMMAND_OPTIONS = new Map([
     "clear-binding-thread",
     "json",
   ])],
-  ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
-  ["comment delete", new Set(["thread-id", "if-version", "json"])],
+  ["comment update", new Set(["body", "thread-id", "agent-platform", "session-id", "if-version", "json"])],
+  ["comment delete", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["attachment list", new Set(["task", "comment", "after", "json"])],
   ["attachment download", new Set(["output", "json"])],
   ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
@@ -149,6 +150,12 @@ Examples:
   taskctl issue get LOCAL-275 --json
   taskctl comment list LOCAL-275 --json
 
+Conversation attribution for issue/comment writes:
+  --agent-platform claude|pi|agy|grok --session-id ID
+  Or keep Codex --thread-id ID / CODEX_THREAD_ID.
+  External options must be supplied together and ignore CODEX_THREAD_ID.
+  --binding-* options remain separate native Codex bindings.
+
 Run taskctl issue --help for all issue arguments.`],
   ["issue", `Usage: taskctl issue ACTION [arguments] [options]
 
@@ -183,11 +190,34 @@ Actions:
   relation add|remove ISSUE_ID --type parent|blocks|blocked_by|related
     --issue RELATED_ISSUE_ID [--thread-id ID] [--if-version N] [--json]
 
+All issue writes accept --agent-platform claude|pi|agy|grok --session-id ID
+instead of Codex --thread-id / CODEX_THREAD_ID. Both external options are required.
+External metadata does not replace --binding-* native Codex identity.
+Update also accepts only external session metadata plus --if-version.
+
 Statuses: backlog, todo, in_progress, in_review, blocked, done, canceled
 Priorities: none, urgent, high, medium, low
 
 Example:
   taskctl issue get LOCAL-275 --json`],
+  ["comment add", `Usage: taskctl comment add ISSUE_ID (--body TEXT | --body-file FILE)
+  [--thread-id ID | --agent-platform claude|pi|agy|grok --session-id ID]
+  [--binding-thread-id ID
+    [--binding-codex-project-id ID --binding-codex-project-kind local|remote
+     --binding-codex-host-id ID --binding-workspace-path PATH]
+   | --clear-binding-thread] [--json]
+
+External attribution requires both options; Pi accepts a full session path or ID.
+CODEX_THREAD_ID is used only when no external attribution is supplied.
+Binding options remain independent, native Codex identity.`],
+  ["comment update", `Usage: taskctl comment update COMMENT_ID --body TEXT --if-version N
+  [--thread-id ID | --agent-platform claude|pi|agy|grok --session-id ID] [--json]
+
+External attribution requires both options; otherwise Codex uses CODEX_THREAD_ID.`],
+  ["comment delete", `Usage: taskctl comment delete COMMENT_ID --if-version N
+  [--thread-id ID | --agent-platform claude|pi|agy|grok --session-id ID] [--json]
+
+Deleting a comment removes its saved session metadata with it.`],
   ["comment list", `Usage: taskctl comment list ISSUE_ID [--after CURSOR] [--json]
 
 Options:
@@ -430,7 +460,7 @@ async function execute(parsed, overrides) {
       }
       return api.request("POST", `${taskPath(parsed.operands[0])}/comments`, {
         body,
-        threadId: resolveThreadId(parsed.options, overrides),
+        ...resolveConversationAttribution(parsed.options, overrides),
         ...optionalField("threadBinding", threadBindingFromOptions(parsed.options)),
       });
     }
@@ -438,13 +468,13 @@ async function execute(parsed, overrides) {
       expectOperandCount(parsed, 1);
       return api.request("PATCH", commentPath(parsed.operands[0]), {
         body: requiredOption(parsed.options, "body"),
-        threadId: resolveThreadId(parsed.options, overrides),
+        ...resolveConversationAttribution(parsed.options, overrides),
         version: explicitVersion(parsed.options["if-version"]),
       });
     case "comment delete":
       expectOperandCount(parsed, 1);
       return api.request("DELETE", commentPath(parsed.operands[0]), {
-        threadId: resolveThreadId(parsed.options, overrides),
+        ...resolveConversationAttribution(parsed.options, overrides),
         version: explicitVersion(parsed.options["if-version"]),
       });
     case "attachment list": {
@@ -491,74 +521,65 @@ function createApiClient(overrides, {
     });
   }
 
-  const env = overrides.env ?? process.env;
   const baseUrl = normalizeBaseUrl(explicitBaseUrl ?? DEFAULT_API_URL);
+
+  async function sendRequest(pathname, createInit) {
+    let response;
+    try {
+      const url = resolveApiUrl(baseUrl, pathname);
+      const init = createInit();
+      response = await fetchImplementation(url, {
+        ...init,
+        headers: {
+          accept: "application/json",
+          "x-taskboard-client": "taskctl",
+          ...init.headers,
+        },
+      });
+    } catch (error) {
+      throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+        code: "SERVICE_UNAVAILABLE",
+        exitCode: 3,
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await readResponse(response);
+      const apiError = extractApiError(payload, response.status);
+      throw new TaskctlError(apiError.message, {
+        code: apiError.code,
+        exitCode: response.status === 409 ? 5 : 4,
+        details: apiError.details,
+      });
+    }
+    return response;
+  }
+
+  async function readJsonResponse(response) {
+    const payload = await readResponse(response);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new TaskctlError("Taskboard service returned an invalid JSON response", {
+        code: "INVALID_RESPONSE",
+        exitCode: 4,
+      });
+    }
+    return payload;
+  }
 
   return {
     async request(method, pathname, body) {
-      let response;
-      try {
-        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
-          method,
-          headers: {
-            accept: "application/json",
-            "x-taskboard-client": "taskctl",
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        });
-      } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
-          code: "SERVICE_UNAVAILABLE",
-          exitCode: 3,
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      const payload = await readResponse(response);
-      if (!response.ok) {
-        const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
-          code: apiError.code,
-          exitCode: response.status === 409 ? 5 : 4,
-          details: apiError.details,
-        });
-      }
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
-          code: "INVALID_RESPONSE",
-          exitCode: 4,
-        });
-      }
-      return payload;
+      const response = await sendRequest(pathname, () => ({
+        method,
+        headers: body === undefined ? {} : { "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }));
+      return readJsonResponse(response);
     },
     async download(pathname) {
-      let response;
-      try {
-        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
-          headers: {
-            accept: "*/*",
-            "x-taskboard-client": "taskctl",
-          },
-        });
-      } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
-          code: "SERVICE_UNAVAILABLE",
-          exitCode: 3,
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      if (!response.ok) {
-        const payload = await readResponse(response);
-        const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
-          code: apiError.code,
-          exitCode: response.status === 409 ? 5 : 4,
-          details: apiError.details,
-        });
-      }
-
+      const response = await sendRequest(pathname, () => ({
+        headers: { accept: "*/*" },
+      }));
       const bytes = new Uint8Array(await response.arrayBuffer());
       return {
         bytes,
@@ -567,43 +588,16 @@ function createApiClient(overrides, {
       };
     },
     async upload(pathname, { body, contentType, filename, kind }) {
-      let response;
-      try {
-        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": contentType,
-            "x-taskboard-client": "taskctl",
-            "x-taskboard-filename": encodeURIComponent(filename),
-            "x-taskboard-attachment-kind": kind,
-          },
-          body,
-        });
-      } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
-          code: "SERVICE_UNAVAILABLE",
-          exitCode: 3,
-          details: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      const payload = await readResponse(response);
-      if (!response.ok) {
-        const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
-          code: apiError.code,
-          exitCode: response.status === 409 ? 5 : 4,
-          details: apiError.details,
-        });
-      }
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
-          code: "INVALID_RESPONSE",
-          exitCode: 4,
-        });
-      }
-      return payload;
+      const response = await sendRequest(pathname, () => ({
+        method: "POST",
+        headers: {
+          "content-type": contentType,
+          "x-taskboard-filename": encodeURIComponent(filename),
+          "x-taskboard-attachment-kind": kind,
+        },
+        body,
+      }));
+      return readJsonResponse(response);
     },
   };
 }
@@ -870,7 +864,7 @@ async function createIssue(api, options, overrides) {
 
   const developmentContext = developmentContextFromOptions(options, overrides);
   const recurrence = recurrenceFromOptions(options);
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   return api.request("POST", "/api/tasks", {
     projectId: requiredOption(options, "project"),
     title: requiredOption(options, "title"),
@@ -878,7 +872,7 @@ async function createIssue(api, options, overrides) {
     status,
     priority,
     labels: parseLabels(options.labels),
-    threadId,
+    ...attribution,
     ...optionalField("developmentContext", developmentContext),
     ...optionalField("startDate", options["start-date"]),
     ...optionalField("dueDate", options["due-date"]),
@@ -892,7 +886,7 @@ async function updateIssue(api, taskId, options, overrides) {
 
   const developmentContext = developmentContextFromOptions(options, overrides);
   const recurrence = recurrenceFromOptions(options);
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   const patch = {
     ...optionalField("projectId", options.project),
     ...optionalField("title", options.title),
@@ -908,10 +902,10 @@ async function updateIssue(api, taskId, options, overrides) {
     patch.description = await resolveDescription(options, overrides);
   }
 
-  if (Object.keys(patch).length === 0) {
+  if (Object.keys(patch).length === 0 && attribution.agentSession === undefined) {
     throw usageError("issue update requires at least one field to update");
   }
-  patch.threadId = threadId;
+  Object.assign(patch, attribution);
   patch.version = await resolveVersion(api, taskId, options["if-version"]);
   return api.request("PATCH", taskPath(taskId), patch);
 }
@@ -919,11 +913,11 @@ async function updateIssue(api, taskId, options, overrides) {
 async function moveIssue(api, taskId, options, overrides) {
   const status = requiredOption(options, "status");
   assertStatus(status);
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   const threadBinding = threadBindingFromOptions(options);
   return api.request("POST", `${taskPath(taskId)}/move`, {
     status,
-    threadId,
+    ...attribution,
     ...optionalField("threadBinding", threadBinding),
     version: await resolveVersion(api, taskId, options["if-version"]),
   });
@@ -978,9 +972,9 @@ function threadBindingFromOptions(options) {
 }
 
 async function archiveIssue(api, taskId, options, overrides, action) {
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   return api.request("POST", `${taskPath(taskId)}/${action}`, {
-    threadId,
+    ...attribution,
     version: await resolveVersion(api, taskId, options["if-version"]),
   });
 }
@@ -1008,12 +1002,12 @@ async function mutateIssueRelation(api, action, taskId, options, overrides) {
     throw usageError("--type must be parent, blocks, blocked_by, or related");
   }
   const relatedTaskId = requiredOption(options, "issue");
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   const version = await resolveVersion(api, taskId, options["if-version"]);
   return api.request(
     action === "add" ? "POST" : "DELETE",
     `${taskPath(taskId)}/relations/${type}/${encodeURIComponent(relatedTaskId)}`,
-    { threadId, version },
+    { ...attribution, version },
   );
 }
 
@@ -1124,11 +1118,28 @@ function recurrenceFromOptions(options) {
   return { interval, unit };
 }
 
+function resolveConversationAttribution(options, overrides) {
+  if (options["agent-platform"] !== undefined || options["session-id"] !== undefined) {
+    if (options["thread-id"] !== undefined) {
+      throw usageError("Use --agent-platform with --session-id, or Codex --thread-id, not both");
+    }
+    try {
+      return { agentSession: parseAgentSession({
+        platform: requiredOption(options, "agent-platform"),
+        sessionId: requiredOption(options, "session-id"),
+      }) };
+    } catch (error) {
+      throw usageError(error.message);
+    }
+  }
+  return { threadId: resolveThreadId(options, overrides) };
+}
+
 function resolveThreadId(options, overrides) {
   const env = overrides.env ?? process.env;
   const value = options["thread-id"] ?? env.CODEX_THREAD_ID;
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw usageError("Codex conversation attribution requires --thread-id or CODEX_THREAD_ID");
+    throw usageError("Conversation attribution requires --agent-platform with --session-id, or Codex --thread-id or CODEX_THREAD_ID");
   }
   const threadId = value.trim();
   if (threadId.length > 256) {

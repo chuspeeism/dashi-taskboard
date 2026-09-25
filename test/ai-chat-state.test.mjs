@@ -9,13 +9,10 @@ import {
   chatPrimaryAction,
   createAiSnapshotRefreshQueue,
   filterVisibleAiEvents,
-  isAiChatCapabilityAvailable,
   needsDangerConfirmation,
   normalizeChatSelection,
   parseAiChatComposerFragment,
   patchAiChatSnapshot,
-  routeChatState,
-  shouldRefreshAiSnapshot,
 } from "../web/src/aiChatState.ts";
 
 const models = [
@@ -37,12 +34,6 @@ const models = [
   },
 ];
 
-test("AI chat is exposed only when the local capability is explicit", () => {
-  assert.equal(isAiChatCapabilityAvailable({ localAiChat: true }), true);
-  assert.equal(isAiChatCapabilityAvailable({ localAiChat: false }), false);
-  assert.equal(isAiChatCapabilityAvailable(undefined), false);
-});
-
 test("new threads freeze the current project and optional issue as server identifiers", () => {
   assert.deepEqual(buildThreadCreateInput("project-1", "issue-1"), {
     projectId: "project-1",
@@ -52,21 +43,6 @@ test("new threads freeze the current project and optional issue as server identi
     projectId: "project-1",
   });
   assert.equal(buildThreadCreateInput("", null), null);
-});
-
-test("route changes update only the next origin and preserve the selected global thread", () => {
-  assert.deepEqual(
-    routeChatState(
-      { selectedThreadId: "thread-a", pendingProjectId: "project-a", pendingIssueId: "issue-a" },
-      "project-b",
-      "issue-b",
-    ),
-    {
-      selectedThreadId: "thread-a",
-      pendingProjectId: "project-b",
-      pendingIssueId: "issue-b",
-    },
-  );
 });
 
 test("PATCH results can update only the snapshot for the thread that started the request", () => {
@@ -133,20 +109,6 @@ test("turn input cannot contain cwd, hidden context, model overrides or arbitrar
     message: "执行",
     dangerFullAccessConfirmed: true,
   });
-});
-
-test("runtime controls distinguish send, stop, danger confirmation and SSE refresh hints", () => {
-  assert.equal(chatPrimaryAction("running", "hello"), "stop");
-  assert.equal(chatPrimaryAction("idle", "hello"), "send");
-  assert.equal(chatPrimaryAction("idle", "  "), "disabled");
-  assert.equal(chatPrimaryAction("idle", "hello", true), "disabled");
-  assert.equal(chatPrimaryAction("running", "hello", true), "disabled");
-  assert.equal(needsDangerConfirmation("danger-full-access", false), true);
-  assert.equal(needsDangerConfirmation("danger-full-access", true), false);
-  assert.equal(needsDangerConfirmation("workspace-write", false), false);
-  assert.equal(shouldRefreshAiSnapshot("ai.event"), true);
-  assert.equal(shouldRefreshAiSnapshot("ai.run"), true);
-  assert.equal(shouldRefreshAiSnapshot("unrelated"), false);
 });
 
 test("visible activity keeps only the latest lifecycle item without merging messages", () => {

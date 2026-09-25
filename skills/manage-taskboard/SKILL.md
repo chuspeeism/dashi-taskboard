@@ -1,17 +1,22 @@
 ---
 name: manage-taskboard
-description: Manage Codex Taskboard / e-taskboard work with taskctl. Use for taskboard issue IDs, status sync, comments, or taskctl cloud setup—not for unrelated product docs.
+description: Manage Codex Taskboard issues and taskctl setup when the request names Codex Taskboard, e-taskboard, or taskctl, or the conversation already establishes that board as the target. Not for GitHub, Phabricator, other external trackers, or unrelated product docs.
 ---
 
 # Manage Taskboard
 
-Use `taskctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by the taskboard or supplied in the prompt. Never assume, derive, or rewrite an identifier prefix.
+This skill serves the local-first Codex Taskboard product, including its configured LAN and cloud services.
+
+Apply the workflow below only to work explicitly targeting Codex Taskboard or already established as belonging to it in the conversation. An issue identifier, repository, or generic request to manage tasks, sync status, or add comments does not establish that scope. For GitHub, Phabricator, or another external tracker, use that system's tools and workflow; do not query, claim, or mirror its issues in Taskboard unless the user asks for that board operation. When the target is unclear, clarify it before running `taskctl`.
+
+Within that scope, use `taskctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by the taskboard or supplied in the prompt. Never assume, derive, or rewrite an identifier prefix.
 
 Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed.
 
 ## Select the CLI and active service
 
 - Use the exact `taskctl` binary and Taskboard URL supplied by the task or injected runtime. Do not replace them with a global CLI, the default port, or another board.
+- On Windows, when no binary is injected and the desktop app is installed, use `& "$env:LOCALAPPDATA\Codex Taskboard\bin\taskctl.cmd" issue get ID --json` in PowerShell. The packaged wrapper reads the active launcher runtime. If this packaged path is absent, stop and ask for the exact installed `taskctl.cmd` path; do not switch to a global CLI or guess the service URL.
 - On macOS, when no binary is injected and the desktop app is installed, use `'/Applications/Codex Taskboard.app/Contents/Resources/bin/taskctl' issue get ID --json`. Keep the single quotes because the path contains a space. The packaged wrapper reads the active launcher runtime; do not search the filesystem for another CLI or reconstruct the tokenized URL.
 - On Linux, when no binary is injected and Codex was started by the desktop app, use `taskctl issue get ID --json`. The desktop app adds its packaged wrapper to the managed Codex `PATH`; do not search the filesystem for another CLI or reconstruct the tokenized URL.
 - If that exact command reaches a sandbox restriction on the loopback service, retry the same command with the required permission. Do not switch binaries or endpoints.
@@ -38,7 +43,7 @@ When writing Chinese, keep the English word or use **本地 companion** / **本�
 - Keep the project README focused on root overview and conventions; store detailed multi-page documentation in the local repository's `docs/` folder.
 - Preserve existing issue scope when adding requirements or acceptance details.
 - Add only relations that the work requires. Use parent for contained work, blocks or blocked_by for dependencies, and related for close association.
-- Let `taskctl` read `CODEX_THREAD_ID` for controller attribution. Outside Codex, pass the exact conversation ID with `--thread-id`. This value alone is not a complete task binding.
+- For Codex controller attribution, let `taskctl` read `CODEX_THREAD_ID` or pass the exact Codex conversation ID with `--thread-id`. This value alone is not a complete task binding. For Claude Code, Pi, AGY, or Grok session traceability, pass `--agent-platform claude|pi|agy|grok --session-id ID` instead; see [CLI session traceability](references/cli.md#external-toolsession-traceability). External metadata is not a Codex ownership binding and never substitutes for the five fields below.
 - Any issue that the current conversation claims or continues must store a complete `threadBinding`: `threadId`, `codexProjectId`, `codexProjectKind`, `codexHostId`, and `workspacePath`. For an unbound local issue launched with injected Taskboard context, use the current `CODEX_THREAD_ID`, the injected project id and workspace path, `local` project kind, and `local` host id. Pass all five explicit `--binding-*` options on the claim and every later `issue move` that retains ownership. If any identity field is unavailable, stop before moving the issue to `in_progress`; never create a legacy binding containing only `threadId`.
 - When an issue already has a complete `threadBinding`, preserve its exact five saved values on every status write. Do not rebuild or replace it from the current context, and never take over a binding owned by another conversation.
 - Use the latest returned `version` with `--if-version` for concurrent updates. On conflict, read the issue again and reconcile before retrying.

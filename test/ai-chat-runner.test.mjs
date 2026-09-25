@@ -15,7 +15,7 @@ import {
   composerReferencePersistence,
   decodeComposerReferenceKey,
   parseComposerReferenceUri,
-} from "../server/composer-reference.mjs";
+} from "../shared/composer-reference.mjs";
 import { createTaskboardServer } from "../server/index.mjs";
 import { normalizeCodexEvent } from "../server/ai-chat-process.mjs";
 

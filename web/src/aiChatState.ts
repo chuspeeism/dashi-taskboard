@@ -8,20 +8,9 @@ import type {
   AiChatThreadStatus,
   ComposerDocument,
   ComposerNode,
-  ComposerAgentCandidate,
-  ComposerAgentNode,
-  ComposerSkillCandidate,
-  ComposerSkillNode,
   ComposerTurnInput,
-  TaskboardCapabilities,
 } from "./types";
 import { COMPOSER_CONTRACT_VERSION } from "./types.ts";
-
-export interface AiChatRouteState {
-  selectedThreadId: string | null;
-  pendingProjectId: string | null;
-  pendingIssueId: string | null;
-}
 
 export const AI_CHAT_SKILL_MARKER = "\uFFFC";
 
@@ -48,27 +37,11 @@ export function parseAiChatComposerFragment(
   }
 }
 
-export function isAiChatCapabilityAvailable(capabilities?: TaskboardCapabilities): boolean {
-  return capabilities?.localAiChat === true;
-}
-
 export function buildThreadCreateInput(projectId: string, issueId: string | null) {
   if (!projectId) return null;
   return {
     projectId,
     ...(issueId ? { issueId } : {}),
-  };
-}
-
-export function routeChatState(
-  state: AiChatRouteState,
-  projectId: string | null,
-  issueId: string | null,
-): AiChatRouteState {
-  return {
-    ...state,
-    pendingProjectId: projectId,
-    pendingIssueId: issueId,
   };
 }
 
@@ -121,10 +94,6 @@ export function buildTurnInput(
   };
 }
 
-function composerNodeLength(node: ComposerNode): number {
-  return node.type === "text" ? node.text.length : 1;
-}
-
 export function createComposerDocument(text = ""): ComposerDocument {
   return {
     version: 1,
@@ -152,100 +121,6 @@ export function normalizeComposerDocument(document: ComposerDocument): ComposerD
     }
   }
   return { version: 1, nodes };
-}
-
-export function composerDocumentLength(document: ComposerDocument): number {
-  return document.nodes.reduce((length, node) => length + composerNodeLength(node), 0);
-}
-
-// Offsets use UTF-16 text units; each Skill is one atomic unit.
-function splitComposerNodes(
-  nodes: ComposerNode[],
-  requestedOffset: number,
-): [ComposerNode[], ComposerNode[]] {
-  const totalLength = nodes.reduce((length, node) => length + composerNodeLength(node), 0);
-  let offset = Math.max(0, Math.min(Math.trunc(requestedOffset), totalLength));
-  const before: ComposerNode[] = [];
-
-  for (let index = 0; index < nodes.length; index += 1) {
-    const node = nodes[index];
-    const nodeLength = composerNodeLength(node);
-    if (offset === 0) return [before, nodes.slice(index)];
-    if (offset >= nodeLength) {
-      before.push(node);
-      offset -= nodeLength;
-      continue;
-    }
-    if (node.type === "text") {
-      before.push({ type: "text", text: node.text.slice(0, offset) });
-      return [
-        before,
-        [{ type: "text", text: node.text.slice(offset) }, ...nodes.slice(index + 1)],
-      ];
-    }
-  }
-  return [before, []];
-}
-
-export function replaceComposerRange(
-  document: ComposerDocument,
-  start: number,
-  end: number,
-  replacement: ComposerNode[],
-): ComposerDocument {
-  const normalized = normalizeComposerDocument(document);
-  const rangeStart = Math.min(start, end);
-  const rangeEnd = Math.max(start, end);
-  const [throughEnd, after] = splitComposerNodes(normalized.nodes, rangeEnd);
-  const [before] = splitComposerNodes(throughEnd, rangeStart);
-  return normalizeComposerDocument({
-    version: 1,
-    nodes: [...before, ...replacement, ...after],
-  });
-}
-
-export function insertComposerText(
-  document: ComposerDocument,
-  offset: number,
-  text: string,
-): ComposerDocument {
-  return replaceComposerRange(document, offset, offset, [{ type: "text", text }]);
-}
-
-export function insertComposerSkill(
-  document: ComposerDocument,
-  start: number,
-  end: number,
-  candidate: ComposerSkillCandidate,
-): ComposerDocument {
-  const skill: ComposerSkillNode = {
-    type: "skill",
-    candidateRef: candidate.candidateRef,
-    label: candidate.label,
-  };
-  return replaceComposerRange(document, start, end, [skill]);
-}
-
-export function insertComposerAgent(
-  document: ComposerDocument,
-  start: number,
-  end: number,
-  candidate: ComposerAgentCandidate,
-): ComposerDocument {
-  const agent: ComposerAgentNode = {
-    type: "agent",
-    candidateRef: candidate.candidateRef,
-    label: candidate.label,
-  };
-  return replaceComposerRange(document, start, end, [agent]);
-}
-
-export function deleteComposerRange(
-  document: ComposerDocument,
-  start: number,
-  end: number,
-): ComposerDocument {
-  return replaceComposerRange(document, start, end, []);
 }
 
 export function serializeComposerDocument(document: ComposerDocument): ComposerDocument {
@@ -283,10 +158,6 @@ export function needsDangerConfirmation(
   confirmed: boolean,
 ): boolean {
   return sandbox === "danger-full-access" && !confirmed;
-}
-
-export function shouldRefreshAiSnapshot(type: string): boolean {
-  return type === "ai.event" || type === "ai.run";
 }
 
 const VISIBLE_EVENT_TYPES = new Set([

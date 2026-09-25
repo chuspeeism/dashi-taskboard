@@ -365,7 +365,7 @@ test("the app connects the selected realtime transport without reloading the pag
   assert.match(appSource, /createRevisionWebSocketClient\(\{/);
   assert.doesNotMatch(appSource, /revisionFallbackInterval|fallbackIntervalMs/);
   assert.match(appSource, /controller\.abort\(\);\s*poller\.stop\(\)/);
-  assert.match(appSource, /new EventSource\(resolveTaskboardUrl\("\/api\/events"\)\)/);
+  assert.match(appSource, /const eventsUrl = resolveTaskboardUrl\("\/api\/events"\);[\s\S]*new EventSource\(eventsUrl\)/);
   assert.doesNotMatch(appSource, /location\.reload\(/);
 
   const pollingEffect = appSource.slice(

@@ -17,15 +17,37 @@ concurrency:
 
 jobs:
   main-check-scope:
-    name: Select main Check scope
-    if: github.event_name == 'push'
+    name: Select Check scope
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       run_full: ${{ steps.scope.outputs.run_full }}
+      run_native: ${{ steps.native-scope.outputs.run_native }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Select native packaging for the PR merge tree
+        id: native-scope
+        if: github.event_name == 'pull_request'
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const { appendFileSync } = require('node:fs');
+          const paths = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', 'HEAD^1', 'HEAD'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+          const webOrDocsOnly = paths.every(path =>
+            path.startsWith('web/src/') || path === 'web/index.html' ||
+            (path.startsWith('web/public/') && path !== 'web/public/codex-app-icon.png') ||
+            path.startsWith('docs/') ||
+            /^(?:README(?:\.[^/]+)?\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
+          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${!webOrDocsOnly}\n`);
+          console.log(webOrDocsOnly ? 'Web/docs-only PR: run the ordinary Check.' : 'Native/runtime/build inputs changed: run all launcher checks.');
+          NODE
       - name: Reuse successful PR Check for the exact tested merge tree
         id: scope
+        if: github.event_name == 'push'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -241,7 +263,7 @@ jobs:
   macos-launcher:
     name: macOS launcher
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_native != 'false') }}
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -255,6 +277,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Remove unused preinstalled Rust toolchain
+        run: rustup toolchain uninstall stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: macos-universal
+          cache-bin: false
       - run: npm ci
       - run: npm run app:prepare -- --target universal-apple-darwin
       - name: Build the unsigned universal app bundle
@@ -277,7 +306,7 @@ jobs:
   windows-launcher:
     name: Windows x64 launcher
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_native != 'false') }}
     runs-on: windows-2025
     timeout-minutes: 40
     steps:
@@ -291,6 +320,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-x64
+          cache-bin: false
       - run: npm ci
       - name: Run the Windows Node.js test suite
         run: npm test
@@ -306,7 +340,7 @@ jobs:
   linux-launcher:
     name: Ubuntu 24.04 x64 launcher
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_native != 'false') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -320,6 +354,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ubuntu-24.04-x64
+          cache-bin: false
       - name: Install Ubuntu build dependencies
         run: |
           sudo apt-get update

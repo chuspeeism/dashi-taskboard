@@ -13,6 +13,4 @@ export const SECONDARY_STATUSES = [
   "canceled",
 ] as const satisfies readonly TaskStatus[];
 
-export type MainTaskStatus = (typeof MAIN_STATUSES)[number];
-export type SecondaryTaskStatus = (typeof SECONDARY_STATUSES)[number];
 export type OtherTaskTab = TaskStatus | "archived";

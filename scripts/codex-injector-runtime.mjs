@@ -38,6 +38,7 @@ function parseHostRequest(payload, parseAutomationRequest) {
   }
   if (
     request.action === "open-attachment"
+    && (request.operation === undefined || request.operation === "local-path" || request.operation === "reveal")
     && typeof request.attachmentId === "string"
     && /^[a-f0-9-]{36}$/i.test(request.attachmentId)
     && typeof request.filename === "string"

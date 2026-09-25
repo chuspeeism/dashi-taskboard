@@ -1,23 +1,43 @@
+import {
+  parseMove, parseVersionMutation, parseRelationMutation,
+  parseCommentCreate, parseCommentPatch, parseTaskCreate,
+  parseCloudTaskPatch as parseTaskPatch,
+  parseCloudTaskFilters as parseTaskFilters,
+  parseCloudTaskTreeQuery as parseTaskTreeQuery,
+  parseCloudProjectReadmeSave as parseProjectReadmeSave,
+} from "../../shared/task-input.mjs";
+import { taskRelationsQuery, taskRelationsFromRows } from "../../shared/task-relations.mjs";
+import {
+  commentConversationTitle,
+  agentSessionFromRow,
+  threadBindingFromRow,
+  legacyLocalThreadIdFromRow,
+  storedThreadBinding,
+  attachTaskActivity,
+  taskActivityFromRow,
+  taskFieldChanges,
+  taskTreeNode,
+  projectReadmeAttachmentFromRow,
+  projectPrefix,
+} from "../../shared/task-records.mjs";
+import {
+  ApiError,
+  validateProjectId,
+  assertPlainObject,
+  assertAllowedKeys,
+  stringField,
+  slugify,
+  parseProjectLabel,
+} from "../../shared/api-fields.mjs";
 import { DurableObject } from "cloudflare:workers";
 
-import { DEFAULT_LABEL_NAMES } from "../../shared/domain.mjs";
+import { DEFAULT_LABEL_NAMES, TASK_STATUSES, TASK_PRIORITIES } from "../../shared/domain.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
 const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
-const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
-const TASK_STATUSES = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "blocked",
-  "done",
-  "canceled",
-];
-const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];
 const INLINE_ATTACHMENT_TYPES = new Set([
   "application/pdf",
   "image/avif",
@@ -92,15 +112,6 @@ export class RealtimeHub extends DurableObject {
   }
 }
 
-class ApiError extends Error {
-  constructor(status, code, message, details) {
-    super(message);
-    this.status = status;
-    this.code = code;
-    this.details = details;
-  }
-}
-
 function json(status, value, headers = {}) {
   return new Response(JSON.stringify(value), {
     status,
@@ -123,151 +134,6 @@ function methodNotAllowed(allowed) {
   throw new ApiError(405, "METHOD_NOT_ALLOWED", "Method not allowed", {
     allowed,
   });
-}
-
-function assertPlainObject(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new ApiError(400, "INVALID_BODY", "Request body must be a JSON object");
-  }
-}
-
-function assertAllowedKeys(value, allowed) {
-  const unknown = Object.keys(value).filter((key) => !allowed.has(key));
-  if (unknown.length > 0) {
-    throw new ApiError(
-      400,
-      "UNKNOWN_FIELD",
-      `Unknown field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
-    );
-  }
-}
-
-function stringField(value, name, {
-  required = false,
-  nullable = false,
-  maxLength,
-} = {}) {
-  if (value === undefined) {
-    if (required) {
-      throw new ApiError(400, "INVALID_FIELD", `'${name}' is required`);
-    }
-    return undefined;
-  }
-  if (nullable && value === null) return null;
-  if (typeof value !== "string") {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      `'${name}' must be a string${nullable ? " or null" : ""}`,
-    );
-  }
-  const normalized = value.trim();
-  if (required && normalized.length === 0) {
-    throw new ApiError(400, "INVALID_FIELD", `'${name}' cannot be empty`);
-  }
-  if (normalized.length > maxLength) {
-    throw new ApiError(400, "INVALID_FIELD", `'${name}' cannot exceed ${maxLength} characters`);
-  }
-  return normalized;
-}
-
-function parseVersion(value, { allowZero = false } = {}) {
-  if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      `'version' must be a ${allowZero ? "non-negative" : "positive"} integer`,
-    );
-  }
-  return value;
-}
-
-function parseStatus(value, fallback) {
-  const status = value ?? fallback;
-  if (!TASK_STATUSES.includes(status)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      `'status' must be one of: ${TASK_STATUSES.join(", ")}`,
-    );
-  }
-  return status;
-}
-
-function parsePriority(value, fallback) {
-  const priority = value ?? fallback;
-  if (!TASK_PRIORITIES.includes(priority)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'priority' must be none, urgent, high, medium, or low",
-    );
-  }
-  return priority;
-}
-
-function parseLabels(value) {
-  if (!Array.isArray(value) || value.length > 20) {
-    throw new ApiError(400, "INVALID_FIELD", "'labels' must be an array with at most 20 entries");
-  }
-  const labels = value.map((label) => {
-    if (typeof label !== "string") {
-      throw new ApiError(400, "INVALID_FIELD", "Every label must be a string");
-    }
-    const normalized = label.trim();
-    if (normalized.length === 0 || normalized.length > 64) {
-      throw new ApiError(400, "INVALID_FIELD", "Labels must contain 1 to 64 characters");
-    }
-    return normalized;
-  });
-  if (new Set(labels).size !== labels.length) {
-    throw new ApiError(400, "INVALID_FIELD", "Labels must be unique");
-  }
-  return labels;
-}
-
-function parseSortOrder(value) {
-  if (
-    typeof value !== "number"
-    || !Number.isFinite(value)
-    || Math.abs(value) > 1_000_000_000_000
-  ) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'sortOrder' must be a finite number between -1000000000000 and 1000000000000",
-    );
-  }
-  return value;
-}
-
-function parseDueDate(value, name = "dueDate") {
-  const date = stringField(value, name, { nullable: true, maxLength: 10 });
-  if (date !== null && date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new ApiError(400, "INVALID_FIELD", `'${name}' must use YYYY-MM-DD`);
-  }
-  return date;
-}
-
-function parseRecurrence(value) {
-  if (value === null) return null;
-  assertPlainObject(value);
-  assertAllowedKeys(value, new Set(["interval", "unit"]));
-  if (!Number.isSafeInteger(value.interval) || value.interval < 1 || value.interval > 365) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'recurrence.interval' must be an integer from 1 to 365",
-    );
-  }
-  if (!["day", "week", "month", "year"].includes(value.unit)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'recurrence.unit' must be day, week, month, or year",
-    );
-  }
-  return { interval: value.interval, unit: value.unit };
 }
 
 function parseDevelopmentContext(value) {
@@ -309,100 +175,6 @@ function parseDevelopmentContext(value) {
     "INVALID_FIELD",
     "'developmentContext.type' must be branch or worktree",
   );
-}
-
-function parseThreadId(value) {
-  if (value === undefined) return undefined;
-  return stringField(value, "threadId", { required: true, maxLength: 256 });
-}
-
-function parseThreadBinding(value) {
-  if (value === undefined || value === null) return value;
-  assertPlainObject(value);
-  assertAllowedKeys(value, new Set([
-    "threadId",
-    "codexProjectId",
-    "codexProjectKind",
-    "codexHostId",
-    "workspacePath",
-  ]));
-  const threadId = stringField(value.threadId, "threadBinding.threadId", {
-    required: true,
-    maxLength: 256,
-  });
-  const identityFields = [
-    value.codexProjectId,
-    value.codexProjectKind,
-    value.codexHostId,
-    value.workspacePath,
-  ];
-  if (identityFields.every((field) => field === undefined)) return { threadId };
-  if (identityFields.some((field) => field === undefined)) {
-    throw new ApiError(400, "INVALID_FIELD", "Thread identity must include project, kind, host, and workspace");
-  }
-  const codexProjectId = stringField(value.codexProjectId, "threadBinding.codexProjectId", {
-    required: true,
-    maxLength: 256,
-  });
-  const codexProjectKind = value.codexProjectKind;
-  const codexHostId = stringField(value.codexHostId, "threadBinding.codexHostId", {
-    required: true,
-    maxLength: 256,
-  });
-  const workspacePath = stringField(value.workspacePath, "threadBinding.workspacePath", {
-    required: true,
-    maxLength: 4096,
-  });
-  if (
-    (codexProjectKind !== "local" && codexProjectKind !== "remote")
-    || (codexProjectKind === "local" && codexHostId !== "local")
-    || (codexProjectKind === "remote" && codexHostId === "local")
-    || workspacePath.includes("\0")
-  ) {
-    throw new ApiError(400, "INVALID_FIELD", "Thread project identity is invalid");
-  }
-  return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
-}
-
-function parseAssigneeTarget(value) {
-  if (value === undefined) return undefined;
-  if (!["current-user", "codex-agent"].includes(value)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'assigneeTarget' must be current-user or codex-agent",
-    );
-  }
-  return value;
-}
-
-function slugify(value) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-}
-
-function validateProjectId(value) {
-  const id = stringField(value, "id", { required: true, maxLength: 64 });
-  if (!PROJECT_ID_PATTERN.test(id)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'id' must be a lowercase slug containing letters, numbers, or hyphens",
-    );
-  }
-  return id;
-}
-
-function projectPrefix(project) {
-  const idPrefix = project.id.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
-  const existingPrefix = project.first_identifier?.replace(/-\d+$/, "");
-  if (existingPrefix && /^[A-Z0-9]+$/i.test(existingPrefix) && existingPrefix !== idPrefix) return existingPrefix;
-  if (idPrefix.length <= 5) return idPrefix;
-  const namePrefix = project.name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 3);
-  return namePrefix || idPrefix.slice(0, 3);
 }
 
 function now() {
@@ -695,57 +467,6 @@ function developmentContextFromRow(row) {
   return null;
 }
 
-function commentConversationTitle(body) {
-  const firstLine = String(body ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  if (!firstLine) return "评论";
-  const compact = firstLine.replace(/\s+/g, " ");
-  return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
-}
-
-function threadBindingFromRow(row) {
-  if (
-    !row.thread_id
-    || !row.thread_codex_project_id
-    || !row.thread_codex_project_kind
-    || !row.thread_codex_host_id
-    || !row.thread_workspace_path
-  ) return null;
-  return {
-    threadId: row.thread_id,
-    codexProjectId: row.thread_codex_project_id,
-    codexProjectKind: row.thread_codex_project_kind,
-    codexHostId: row.thread_codex_host_id,
-    workspacePath: row.thread_workspace_path,
-  };
-}
-
-function legacyLocalThreadIdFromRow(row) {
-  if (!row.thread_id) return null;
-  return [
-    row.thread_codex_project_id,
-    row.thread_codex_project_kind,
-    row.thread_codex_host_id,
-    row.thread_workspace_path,
-  ].every((value) => value == null)
-    ? row.thread_id
-    : null;
-}
-
-function storedThreadBinding(threadBinding, threadId) {
-  if (threadBinding === undefined && (threadId === undefined || threadId === null)) return undefined;
-  const binding = threadBinding === undefined ? { threadId } : threadBinding;
-  return [
-    binding?.threadId ?? null,
-    binding?.codexProjectId ?? null,
-    binding?.codexProjectKind ?? null,
-    binding?.codexHostId ?? null,
-    binding?.workspacePath ?? null,
-  ];
-}
-
 function storedThreadBindingForExisting(current, threadBinding, threadId) {
   const currentBinding = threadBindingFromRow(current);
   if (
@@ -756,113 +477,6 @@ function storedThreadBindingForExisting(current, threadBinding, threadId) {
     return storedThreadBinding(currentBinding, threadId);
   }
   return storedThreadBinding(threadBinding, threadId);
-}
-
-function attachTaskActivity(task, comments, activities, previewImage = null) {
-  const orderedComments = [...comments].sort((left, right) => left.id.localeCompare(right.id));
-  const orderedActivities = [...activities].sort((left, right) => left.id.localeCompare(right.id));
-  const participants = [];
-  const participantIds = new Set();
-  const addParticipant = (actor) => {
-    const key = `${actor.type}:${actor.id}`;
-    if (participantIds.has(key)) return;
-    participantIds.add(key);
-    participants.push(actor);
-  };
-  addParticipant({
-    type: task.creatorType,
-    id: task.creatorId,
-    name: task.creatorName,
-    avatarUrl: task.creatorAvatarUrl,
-  });
-  addParticipant(task.assignee);
-  for (const comment of orderedComments) {
-    addParticipant({
-      type: comment.author_type,
-      id: comment.author_id,
-      name: comment.author_name,
-      avatarUrl: comment.author_avatar_url,
-    });
-  }
-  for (const activity of orderedActivities) {
-    addParticipant({
-      type: activity.actor_type,
-      id: activity.actor_id,
-      name: activity.actor_name,
-      avatarUrl: activity.actor_avatar_url,
-    });
-  }
-  const conversationRefs = [];
-  if (task.threadBinding) {
-    conversationRefs.push({
-      ...task.threadBinding,
-      source: "task",
-      sourceId: task.id,
-      title: task.title,
-      updatedAt: task.updatedAt,
-    });
-  } else if (task.legacyLocalThreadId) {
-    conversationRefs.push({
-      threadId: task.legacyLocalThreadId,
-      legacyLocal: true,
-      source: "task",
-      sourceId: task.id,
-      title: task.title,
-      updatedAt: task.updatedAt,
-    });
-  }
-  for (const comment of orderedComments) {
-    const threadBinding = threadBindingFromRow(comment);
-    const legacyLocalThreadId = legacyLocalThreadIdFromRow(comment);
-    if (threadBinding || legacyLocalThreadId) {
-      conversationRefs.push({
-        ...(threadBinding ?? { threadId: legacyLocalThreadId, legacyLocal: true }),
-        source: "comment",
-        sourceId: comment.id,
-        title: commentConversationTitle(comment.body),
-        updatedAt: comment.updated_at,
-      });
-    }
-  }
-  task.conversationRefs = conversationRefs;
-  task.participants = participants;
-  task.previewImage = previewImage;
-  task.activityKey = JSON.stringify({
-    version: 1,
-    task: [task.id, task.version, task.updatedAt],
-    comments: orderedComments.map((comment) => [comment.id, comment.version, comment.updated_at]),
-    changes: orderedActivities.map((activity) => [activity.id, activity.created_at]),
-  });
-  task.activityUpdatedAt = [...orderedComments, ...orderedActivities].reduce(
-    (latest, activity) => {
-      const updatedAt = activity.updated_at ?? activity.created_at;
-      return updatedAt > latest ? updatedAt : latest;
-    },
-    task.updatedAt,
-  );
-  return task;
-}
-
-function taskActivityFromRow(row) {
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    actorType: row.actor_type,
-    actorId: row.actor_id,
-    actorName: row.actor_name,
-    actorAvatarUrl: row.actor_avatar_url,
-    changes: JSON.parse(row.changes),
-    createdAt: row.created_at,
-  };
-}
-
-function taskFieldChanges(task, changes) {
-  return Object.entries(changes).flatMap(([field, after]) => {
-    const before = task[field];
-    return JSON.stringify(before) === JSON.stringify(after)
-      ? []
-      : [{ field, before, after }];
-  });
 }
 
 function relationActivityValue(type, task) {
@@ -887,6 +501,7 @@ function taskFromRow(row) {
     threadId: row.thread_id,
     threadBinding: threadBindingFromRow(row),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
+    agentSession: agentSessionFromRow(row),
     creatorType: row.creator_type,
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -928,22 +543,6 @@ function taskRelationSummaryFromRow(row) {
   };
 }
 
-function taskTreeNode(row, parentId, depth, path) {
-  return {
-    id: row.id,
-    parentId,
-    depth,
-    path,
-    summary: {
-      identifier: row.identifier,
-      title: row.title,
-      status: row.status,
-      priority: row.priority,
-      archivedAt: row.archived_at,
-    },
-  };
-}
-
 function commentFromRow(row, attachments = []) {
   return {
     id: row.id,
@@ -952,6 +551,7 @@ function commentFromRow(row, attachments = []) {
     threadId: row.thread_id,
     threadBinding: threadBindingFromRow(row),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
+    agentSession: agentSessionFromRow(row),
     authorType: row.author_type,
     authorId: row.author_id,
     authorName: row.author_name,
@@ -969,18 +569,7 @@ function attachmentFromRow(row) {
     taskId: row.task_id,
     commentId: row.comment_id,
     kind: row.kind,
-    filename: row.filename,
-    contentType: row.content_type,
-    size: row.size,
-    createdAt: row.created_at,
-  };
-}
-
-function projectReadmeAttachmentFromRow(row) {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    kind: "inline",
+    bodyFallback: row.body_fallback === 1,
     filename: row.filename,
     contentType: row.content_type,
     size: row.size,
@@ -1068,98 +657,91 @@ async function hydrateComment(env, row) {
   return commentFromRow(row, await attachmentsForComment(env, row.id));
 }
 
-async function hydrateTask(env, row, activityComments = null, activityChanges = null) {
-  const task = taskFromRow(row);
-  const [parent, subIssues, blockedBy, blocks, related, previewImageRow] = await Promise.all([
-    env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.source_task_id
-      WHERE task_relations.relation_type = 'parent'
-        AND task_relations.target_task_id = ?
-    `).bind(task.id).first(),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.target_task_id
-      WHERE task_relations.relation_type = 'parent'
-        AND task_relations.source_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id)),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.source_task_id
-      WHERE task_relations.relation_type = 'blocks'
-        AND task_relations.target_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id)),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.target_task_id
-      WHERE task_relations.relation_type = 'blocks'
-        AND task_relations.source_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id)),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = CASE
-        WHEN task_relations.source_task_id = ? THEN task_relations.target_task_id
-        ELSE task_relations.source_task_id
-      END
-      WHERE task_relations.relation_type = 'related'
-        AND (
-          task_relations.source_task_id = ?
-          OR task_relations.target_task_id = ?
-        )
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id, task.id, task.id)),
-    env.DB.prepare(`
+async function hydrateComments(env, rows) {
+  const attachmentsByComment = new Map(rows.map((row) => [row.id, []]));
+  const commentIds = rows.map((row) => row.id);
+  const batches = [];
+  for (let offset = 0; offset < commentIds.length; offset += 80) {
+    const chunk = commentIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(`
+      SELECT * FROM attachments
+      WHERE comment_id IN (${placeholders})
+      ORDER BY comment_id, created_at, id
+    `).bind(...chunk)));
+  }
+  for (const attachments of await Promise.all(batches)) {
+    for (const attachment of attachments) {
+      attachmentsByComment.get(attachment.comment_id).push(attachmentFromRow(attachment));
+    }
+  }
+  return rows.map((row) => commentFromRow(row, attachmentsByComment.get(row.id)));
+}
+
+async function taskRelationsForTasks(env, taskIds) {
+  const relationsByTask = new Map();
+  const batches = [];
+  for (let offset = 0; offset < taskIds.length; offset += 80) {
+    const chunk = taskIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(taskRelationsQuery(placeholders)).bind(...chunk)).then(
+      (rows) => taskRelationsFromRows(chunk, rows, taskRelationSummaryFromRow),
+    ));
+  }
+  for (const batch of await Promise.all(batches)) {
+    for (const [taskId, relations] of batch) relationsByTask.set(taskId, relations);
+  }
+  return relationsByTask;
+}
+
+async function taskPreviewImages(env, taskIds) {
+  const imagesByTask = new Map();
+  const batches = [];
+  for (let offset = 0; offset < taskIds.length; offset += 80) {
+    const chunk = taskIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(`
       SELECT attachments.*
       FROM attachments
       JOIN tasks ON tasks.id = attachments.task_id
-      WHERE attachments.task_id = ?
+      WHERE attachments.task_id IN (${placeholders})
         AND attachments.comment_id IS NULL
         AND attachments.content_type LIKE 'image/%'
         AND instr(tasks.description, 'api/attachments/' || attachments.id || '/content') > 0
-      ORDER BY attachments.created_at, attachments.id
-      LIMIT 1
-    `).bind(task.id).first(),
+      ORDER BY attachments.task_id, attachments.created_at, attachments.id
+    `).bind(...chunk)));
+  }
+  for (const rows of await Promise.all(batches)) {
+    for (const row of rows) {
+      if (!imagesByTask.has(row.task_id)) imagesByTask.set(row.task_id, attachmentFromRow(row));
+    }
+  }
+  return imagesByTask;
+}
+
+async function hydrateTasks(env, rows) {
+  const taskIds = rows.map((row) => row.id);
+  const [relationsByTask, commentsByTask, activitiesByTask, previewImagesByTask] = await Promise.all([
+    taskRelationsForTasks(env, taskIds),
+    taskActivityComments(env, taskIds),
+    taskActivitiesForTasks(env, taskIds),
+    taskPreviewImages(env, taskIds),
   ]);
-  task.relations = {
-    parent: parent ? taskRelationSummaryFromRow(parent) : null,
-    subIssues: subIssues.map(taskRelationSummaryFromRow),
-    blockedBy: blockedBy.map(taskRelationSummaryFromRow),
-    blocks: blocks.map(taskRelationSummaryFromRow),
-    related: related.map(taskRelationSummaryFromRow),
-  };
-  const comments = activityComments ?? await all(env.DB.prepare(`
-    SELECT
-      id, task_id,
-      CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
-      thread_id, thread_codex_project_id, thread_codex_project_kind,
-      thread_codex_host_id, thread_workspace_path,
-      author_type, author_id, author_name,
-      author_avatar_url, version, updated_at
-    FROM comments
-    WHERE task_id = ?
-    ORDER BY id
-  `).bind(task.id));
-  const activities = activityChanges ?? await all(env.DB.prepare(`
-    SELECT
-      id, task_id, actor_type, actor_id, actor_name, actor_avatar_url, created_at
-    FROM task_activities
-    WHERE task_id = ?
-    ORDER BY created_at, id
-  `).bind(task.id));
-  return attachTaskActivity(
-    task,
-    comments,
-    activities,
-    previewImageRow ? attachmentFromRow(previewImageRow) : null,
-  );
+  return rows.map((row) => {
+    const task = taskFromRow(row);
+    task.relations = relationsByTask.get(row.id);
+    return attachTaskActivity(
+      task,
+      commentsByTask.get(row.id) ?? [],
+      activitiesByTask.get(row.id) ?? [],
+      previewImagesByTask.get(row.id) ?? null,
+    );
+  });
+}
+
+async function hydrateTask(env, row) {
+  const [task] = await hydrateTasks(env, [row]);
+  return task;
 }
 
 async function getTask(env, id) {
@@ -1243,9 +825,9 @@ async function taskActivityComments(env, taskIds) {
     batches.push(all(env.DB.prepare(`
       SELECT
         id, task_id,
-        CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
+        CASE WHEN thread_id IS NULL AND agent_session IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
         thread_id, thread_codex_project_id, thread_codex_project_kind,
-        thread_codex_host_id, thread_workspace_path,
+        thread_codex_host_id, thread_workspace_path, agent_session,
         author_type, author_id, author_name,
         author_avatar_url, version, updated_at
       FROM comments
@@ -1315,212 +897,6 @@ function parseClientStorageUpdate(body) {
     key,
     value: stringField(body.value, "value", { nullable: true, maxLength: 100_000 }),
   };
-}
-
-function parseProjectLabel(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["label"]));
-  return stringField(body.label, "label", { required: true, maxLength: 64 });
-}
-
-function parseTaskCreate(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set([
-    "projectId",
-    "title",
-    "description",
-    "status",
-    "priority",
-    "labels",
-    "sortOrder",
-    "threadId",
-    "threadBinding",
-    "assigneeTarget",
-    "developmentContext",
-    "startDate",
-    "dueDate",
-    "recurrence",
-  ]));
-  const input = {
-    projectId: validateProjectId(body.projectId ?? "local"),
-    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
-    description: stringField(body.description ?? "", "description", { maxLength: 100_000 }),
-    status: parseStatus(body.status, "backlog"),
-    priority: parsePriority(body.priority, "none"),
-    labels: body.labels === undefined ? [] : parseLabels(body.labels),
-    sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-    assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
-    developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
-    startDate: parseDueDate(body.startDate ?? null, "startDate"),
-    dueDate: parseDueDate(body.dueDate ?? null),
-    recurrence: parseRecurrence(body.recurrence ?? null),
-  };
-  if (input.recurrence && !input.dueDate) {
-    throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires 'dueDate'");
-  }
-  return input;
-}
-
-function parseTaskPatch(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set([
-    "version",
-    "projectId",
-    "title",
-    "description",
-    "status",
-    "priority",
-    "labels",
-    "threadId",
-    "threadBinding",
-    "assigneeTarget",
-    "developmentContext",
-    "startDate",
-    "dueDate",
-    "recurrence",
-  ]));
-  const changes = {};
-  if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
-  if (body.title !== undefined) {
-    changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
-  }
-  if (body.description !== undefined) {
-    changes.description = stringField(body.description, "description", { maxLength: 100_000 });
-  }
-  if (body.status !== undefined) changes.status = parseStatus(body.status);
-  if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
-  if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
-  if (body.developmentContext !== undefined) {
-    changes.developmentContext = parseDevelopmentContext(body.developmentContext);
-  }
-  if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
-  if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
-  if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);
-  const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
-  if (Object.keys(changes).length === 0 && assigneeTarget === undefined) {
-    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one task field");
-  }
-  return {
-    version: parseVersion(body.version),
-    changes,
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-    assigneeTarget,
-  };
-}
-
-function parseMove(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId", "threadBinding"]));
-  return {
-    version: parseVersion(body.version),
-    status: parseStatus(body.status),
-    sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-  };
-}
-
-function parseVersionMutation(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding"]));
-  return {
-    version: parseVersion(body.version),
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-  };
-}
-
-function parseRelationOrigin(value) {
-  if (value === undefined) return undefined;
-  if (value !== "manual" && value !== "mention") {
-    throw new ApiError(400, "INVALID_FIELD", "'origin' must be manual or mention");
-  }
-  return value;
-}
-
-function parseRelationMutation(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding", "origin"]));
-  return {
-    version: parseVersion(body.version),
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-    origin: parseRelationOrigin(body.origin),
-  };
-}
-
-function parseCommentCreate(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["body", "threadId", "threadBinding"]));
-  return {
-    body: stringField(body.body ?? "", "body", { maxLength: 100_000 }),
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-  };
-}
-
-function parseCommentPatch(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "body", "threadId", "threadBinding"]));
-  if (body.body === undefined) {
-    throw new ApiError(400, "INVALID_FIELD", "'body' is required");
-  }
-  return {
-    version: parseVersion(body.version),
-    body: stringField(body.body, "body", { maxLength: 100_000 }),
-    threadId: parseThreadId(body.threadId),
-    threadBinding: parseThreadBinding(body.threadBinding),
-  };
-}
-
-function parseTaskFilters(searchParams) {
-  const allowed = new Set(["projectId", "status", "archived"]);
-  for (const key of searchParams.keys()) {
-    if (!allowed.has(key)) {
-      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${key}`);
-    }
-    if (searchParams.getAll(key).length > 1) {
-      throw new ApiError(400, "INVALID_QUERY_PARAMETER", `'${key}' cannot be repeated`);
-    }
-  }
-  const projectId = searchParams.get("projectId");
-  const status = searchParams.get("status");
-  const archived = searchParams.get("archived") ?? "false";
-  if (projectId !== null) validateProjectId(projectId);
-  if (status !== null) parseStatus(status);
-  if (!["false", "true", "all"].includes(archived)) {
-    throw new ApiError(
-      400,
-      "INVALID_QUERY_PARAMETER",
-      "'archived' must be false, true, or all",
-    );
-  }
-  return { projectId, status, archived };
-}
-
-function parseTaskTreeQuery(searchParams) {
-  const allowed = new Set(["direction", "depth"]);
-  for (const key of searchParams.keys()) {
-    if (!allowed.has(key)) {
-      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${key}`);
-    }
-    if (searchParams.getAll(key).length !== 1) {
-      throw new ApiError(400, "INVALID_TREE_QUERY", `'${key}' cannot be repeated`);
-    }
-  }
-  const direction = searchParams.get("direction");
-  if (direction !== "descendants" && direction !== "ancestors") {
-    throw new ApiError(400, "INVALID_TREE_QUERY", "'direction' must be descendants or ancestors");
-  }
-  const rawDepth = searchParams.get("depth");
-  const depth = Number(rawDepth);
-  if (!/^\d+$/.test(rawDepth ?? "") || !Number.isSafeInteger(depth) || depth < 1 || depth > 25) {
-    throw new ApiError(400, "INVALID_TREE_QUERY", "'depth' must be an integer from 1 to 25");
-  }
-  return { direction, depth };
 }
 
 function parseAfterCursor(searchParams) {
@@ -1727,17 +1103,7 @@ async function listTasks(env, filters) {
         id
     `).bind(...values),
   );
-  const taskIds = rows.map((row) => row.id);
-  const [commentsByTask, activitiesByTask] = await Promise.all([
-    taskActivityComments(env, taskIds),
-    taskActivitiesForTasks(env, taskIds),
-  ]);
-  return Promise.all(rows.map((row) => hydrateTask(
-    env,
-    row,
-    commentsByTask.get(row.id) ?? [],
-    activitiesByTask.get(row.id) ?? [],
-  )));
+  return hydrateTasks(env, rows);
 }
 
 async function createTask(env, input, actor) {
@@ -1782,7 +1148,7 @@ async function createTask(env, input, actor) {
         assignee_type, assignee_id, assignee_name, assignee_avatar_url,
         development_context_type, development_branch,
         start_date, due_date, recurrence_interval, recurrence_unit,
-        archived_at, version, created_at, updated_at
+        archived_at, version, created_at, updated_at, agent_session
       )
       SELECT
         ?,
@@ -1801,7 +1167,7 @@ async function createTask(env, input, actor) {
         ?, ?, ?, ?,
         ?, ?,
         ?, ?, ?, ?,
-        NULL, 1, ?, ?
+        NULL, 1, ?, ?, ?
       FROM projects
       WHERE projects.id = ?
     `).bind(
@@ -1832,6 +1198,7 @@ async function createTask(env, input, actor) {
       input.recurrence?.unit ?? null,
       timestamp,
       timestamp,
+      input.agentSession ? JSON.stringify(input.agentSession) : null,
       input.projectId,
     ),
     env.DB.prepare(`
@@ -1983,6 +1350,10 @@ async function updateTask(env, id, input, actor) {
     );
     values.push(...storedBinding);
   }
+  if (input.agentSession !== undefined) {
+    assignments.push("agent_session = ?");
+    values.push(input.agentSession ? JSON.stringify(input.agentSession) : null);
+  }
   assignments.push("version = version + 1", "updated_at = ?");
   const timestamp = now();
   values.push(timestamp, current.id, input.version);
@@ -1995,6 +1366,17 @@ async function updateTask(env, id, input, actor) {
     SET ${assignments.join(", ")}
     WHERE id = ? AND version = ?${relationGuard}
   `).bind(...values)];
+  if (Object.hasOwn(input.changes, "description")) {
+    // Keep this immediately after the body UPDATE: changes() must describe that
+    // statement, including its version/relation guard, not a later batch write.
+    statements.push(env.DB.prepare(`
+      UPDATE attachments
+      SET body_fallback = 0,
+        change_revision = (SELECT revision + 1 FROM global_revision WHERE singleton = 1)
+      WHERE task_id = ? AND comment_id IS NULL AND body_fallback = 1
+        AND changes() = 1
+    `).bind(current.id));
+  }
   const activityChanges = taskFieldChanges(currentTask, activityValues);
   if (activityChanges.length > 0) {
     statements.push(taskActivityStatement(
@@ -2128,6 +1510,8 @@ async function moveTask(env, id, input, actor) {
   }
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
+  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2137,14 +1521,14 @@ async function moveTask(env, id, input, actor) {
     SET
       status = ?,
       sort_order = ?,
-      ${threadAssignment}
+      ${threadAssignment}${sessionAssignment}
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
   `).bind(
     input.status,
     sortOrder,
-    ...(storedBinding ?? []),
+    ...(storedBinding ?? []), ...sessionValues,
     timestamp,
     current.id,
     input.version,
@@ -2178,6 +1562,8 @@ async function archiveTask(env, id, input, actor) {
   assertTaskVersion(current, input.version);
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
+  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2186,11 +1572,11 @@ async function archiveTask(env, id, input, actor) {
     UPDATE tasks
     SET
       archived_at = ?,
-      ${threadAssignment}
+      ${threadAssignment}${sessionAssignment}
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
-  `).bind(timestamp, ...(storedBinding ?? []), timestamp, current.id, input.version),
+  `).bind(timestamp, ...(storedBinding ?? []), ...sessionValues, timestamp, current.id, input.version),
   taskActivityStatement(
     env,
     current.id,
@@ -2219,6 +1605,8 @@ async function restoreTask(env, id, input, actor) {
   }
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
+  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2227,11 +1615,11 @@ async function restoreTask(env, id, input, actor) {
     UPDATE tasks
     SET
       archived_at = NULL,
-      ${threadAssignment}
+      ${threadAssignment}${sessionAssignment}
       version = version + 1,
       updated_at = ?
     WHERE id = ? AND version = ?
-  `).bind(...(storedBinding ?? []), timestamp, current.id, input.version),
+  `).bind(...(storedBinding ?? []), ...sessionValues, timestamp, current.id, input.version),
   taskActivityStatement(
     env,
     current.id,
@@ -2334,6 +1722,8 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(task, input.threadBinding, input.threadId);
+  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2414,11 +1804,11 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
     env.DB.prepare(`
       UPDATE tasks
       SET
-        ${threadAssignment}
+        ${threadAssignment}${sessionAssignment}
         version = version + 1,
         updated_at = ?
       WHERE id = ? AND version = ?
-    `).bind(...(storedBinding ?? []), timestamp, task.id, input.version),
+    `).bind(...(storedBinding ?? []), ...sessionValues, timestamp, task.id, input.version),
   );
   const taskUpdateIndex = statements.length - 1;
   statements.push(taskActivityStatement(
@@ -2499,6 +1889,8 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
   }
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(task, input.threadBinding, input.threadId);
+  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2570,11 +1962,11 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
     env.DB.prepare(`
       UPDATE tasks
       SET
-        ${threadAssignment}
+        ${threadAssignment}${sessionAssignment}
         version = version + 1,
         updated_at = ?
       WHERE id = ? AND version = ?${mentionRemoval ? " AND changes() = 1" : ""}
-    `).bind(...(storedBinding ?? []), timestamp, task.id, input.version),
+    `).bind(...(storedBinding ?? []), ...sessionValues, timestamp, task.id, input.version),
     taskActivityStatement(
       env,
       task.id,
@@ -2722,7 +2114,7 @@ async function listComments(env, taskId) {
     ORDER BY created_at, id
   `).bind(task.id));
   return {
-    comments: await Promise.all(rows.map((row) => hydrateComment(env, row))),
+    comments: await hydrateComments(env, rows),
     nextCursor: nextCursor(rows, null),
   };
 }
@@ -2736,7 +2128,7 @@ async function listCommentsAfter(env, taskId, after) {
     ORDER BY change_revision
   `).bind(task.id, after.revision));
   return {
-    comments: await Promise.all(rows.map((row) => hydrateComment(env, row))),
+    comments: await hydrateComments(env, rows),
     nextCursor: nextCursor(rows, after),
   };
 }
@@ -2749,9 +2141,9 @@ async function createComment(env, taskId, input, actor) {
     INSERT INTO comments (
       id, task_id, body, thread_id, thread_codex_project_id, thread_codex_project_kind,
       thread_codex_host_id, thread_workspace_path, author_type, author_id, author_name,
-      author_avatar_url, version, created_at, updated_at, change_revision
+      author_avatar_url, version, created_at, updated_at, change_revision, agent_session
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?,
-      (SELECT revision + 1 FROM global_revision WHERE singleton = 1))
+      (SELECT revision + 1 FROM global_revision WHERE singleton = 1), ?)
   `).bind(
     id,
     task.id,
@@ -2763,6 +2155,7 @@ async function createComment(env, taskId, input, actor) {
     actor.avatarUrl,
     timestamp,
     timestamp,
+    input.agentSession ? JSON.stringify(input.agentSession) : null,
   ).run();
   const row = await env.DB.prepare("SELECT * FROM comments WHERE id = ?").bind(id).first();
   return hydrateComment(env, row);
@@ -2791,26 +2184,33 @@ async function updateComment(env, id, input) {
   const current = await requireCommentRow(env, id);
   assertCommentVersion(current, input.version);
   const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
     : "";
-  const result = await env.DB.prepare(`
+  const [result] = await env.DB.batch([env.DB.prepare(`
     UPDATE comments
     SET
       body = ?,
-      ${threadAssignment}
+      ${threadAssignment}${sessionAssignment}
       version = version + 1,
       updated_at = ?,
       change_revision = (SELECT revision + 1 FROM global_revision WHERE singleton = 1)
     WHERE id = ? AND version = ?
   `).bind(
     input.body,
-    ...(storedBinding ?? []),
+    ...(storedBinding ?? []), ...sessionValues,
     now(),
     current.id,
     input.version,
-  ).run();
+  ), env.DB.prepare(`
+    UPDATE attachments
+    SET body_fallback = 0,
+      change_revision = (SELECT revision + 1 FROM global_revision WHERE singleton = 1)
+    WHERE comment_id = ? AND body_fallback = 1 AND changes() = 1
+  `).bind(current.id)]);
   if (!changed(result)) {
     const latest = await requireCommentRow(env, current.id);
     throw new ApiError(
@@ -3223,23 +2623,11 @@ async function routeApi(request, env, actor, url) {
       return json(200, { readme: await getProjectReadme(env, projectId) });
     }
     if (request.method === "PUT") {
-      const body = await readJson(
+      const { content, version } = parseProjectReadmeSave(await readJson(
         request,
         PROJECT_README_BODY_LIMIT,
         "Project README request cannot exceed 3 MiB",
-      );
-      assertPlainObject(body);
-      assertAllowedKeys(body, new Set(["version", "content"]));
-      const version = body.version === undefined
-        ? undefined
-        : parseVersion(body.version, { allowZero: true });
-      const content = body.content ?? "";
-      if (typeof content !== "string") {
-        throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
-      }
-      if (content.length > 500_000) {
-        throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
-      }
+      ));
       return json(200, {
         readme: await saveProjectReadme(env, projectId, content, version),
       });
@@ -3255,7 +2643,7 @@ async function routeApi(request, env, actor, url) {
     }
     if (request.method === "POST") {
       return json(201, {
-        task: await createTask(env, parseTaskCreate(await readJson(request)), actor),
+        task: await createTask(env, parseTaskCreate(await readJson(request), parseDevelopmentContext), actor),
       });
     }
     methodNotAllowed(["GET", "POST"]);
@@ -3422,7 +2810,7 @@ async function routeApi(request, env, actor, url) {
         task: await updateTask(
           env,
           taskId,
-          parseTaskPatch(await readJson(request)),
+          parseTaskPatch(await readJson(request), parseDevelopmentContext),
           actor,
         ),
       });

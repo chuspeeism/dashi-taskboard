@@ -98,6 +98,7 @@ async function prepareRequest(request, {
     }
     if (
       isConversationMutation
+      && !payload.agentSession
       && typeof payload.threadId === "string"
       && !Object.hasOwn(payload, "threadBinding")
       && typeof resolveThreadBinding === "function"
@@ -162,20 +163,21 @@ async function localizeResponse(
         : config.projectMappings[payload.project.id] ?? null,
     };
   }
+  const contexts = new Map();
+  const scans = new Map();
+  const resolveOnce = resolveDevelopmentContext
+    ? (projectId, context) => {
+      const key = `${projectId ?? ""}\0${context.branch ?? ""}`;
+      if (!contexts.has(key)) {
+        contexts.set(key, resolveDevelopmentContext(projectId, context, scans));
+      }
+      return contexts.get(key);
+    }
+    : null;
   if (payload.task) {
-    payload.task = await localizeTask(payload.task, resolveDevelopmentContext);
+    payload.task = await localizeTask(payload.task, resolveOnce);
   }
   if (Array.isArray(payload.tasks)) {
-    const contexts = new Map();
-    const resolveOnce = resolveDevelopmentContext
-      ? (projectId, context) => {
-        const key = `${projectId ?? ""}\0${context.branch ?? ""}`;
-        if (!contexts.has(key)) {
-          contexts.set(key, resolveDevelopmentContext(projectId, context));
-        }
-        return contexts.get(key);
-      }
-      : null;
     payload.tasks = await Promise.all(
       payload.tasks.map((task) => localizeTask(task, resolveOnce)),
     );

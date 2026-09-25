@@ -1,3 +1,4 @@
+import { resolveInlineAttachments } from "../inlineAttachments";
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
@@ -10,13 +11,11 @@ import type { Project, ProjectReadme, Task, TaskRelationSummary } from "../types
 import { DescriptionDocument } from "./DescriptionDocument";
 import {
   createInlineMediaSegments,
-  InlineMediaComposer,
   inlineMediaImages,
-  resolveInlineMediaMarkdown,
   serializeInlineMedia,
-  type InlineMediaComposerHandle,
   type InlineMediaSegment,
-} from "./InlineMediaComposer";
+} from "../documentModel";
+import { InlineMediaComposer, type InlineMediaComposerHandle } from "./InlineMediaComposer";
 import { LinearIcon } from "./LinearIcon";
 import "./ProjectReadmeView.css";
 
@@ -115,7 +114,7 @@ export function ProjectReadmeView({
       const uploaded = await Promise.all(
         inlineImages.map((image) => uploadProjectReadmeAttachment(project.id, image.file)),
       );
-      const resolvedContent = resolveInlineMediaMarkdown(
+      const resolvedContent = resolveInlineAttachments(
         draftContent,
         inlineImages,
         uploaded,

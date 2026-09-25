@@ -1,7 +1,9 @@
+import { agentPlatformLabel, sessionResumeCommand } from "../agentSessions";
 import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import type { TaskConversationItem } from "../taskConversations";
 import { useTaskboardI18n } from "../i18n";
+import { listenForMenuViewportChange, listenForOutsidePointerDown } from "../menuEvents";
 import { ConversationIcon } from "./SemanticIcons";
 
 interface TaskConversationMenuProps {
@@ -14,6 +16,11 @@ function conversationSource(
   text: (chinese: string, english: string) => string,
 ) {
   if (conversation.kind === "local-ai") return text("内置 AI", "Built-in AI");
+  if (conversation.kind === "agent-session") {
+    return conversation.source === "comment"
+      ? text("评论对话 · 复制恢复命令", "Comment conversation · Copy resume command")
+      : text("任务对话 · 复制恢复命令", "Task conversation · Copy resume command");
+  }
   return conversation.source === "comment"
     ? text("评论对话", "Comment conversation")
     : text("任务对话", "Task conversation");
@@ -29,6 +36,7 @@ function conversationStatus(
     }
     return text("正在处理", "Processing");
   }
+  if (conversation.agentSession) return agentPlatformLabel(conversation.agentSession.platform);
   return conversation.kind === "local-ai" ? text("已暂停", "Paused") : "Codex";
 }
 
@@ -63,28 +71,19 @@ export function TaskConversationMenu({
 
   useEffect(() => {
     if (!open) return;
-    function closeFromOutside(event: PointerEvent) {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    }
+    const close = () => setOpen(false);
+    const stopOutside = listenForOutsidePointerDown([triggerRef, menuRef], close);
+    const stopViewport = listenForMenuViewportChange(menuRef, close);
     function closeFromEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       setOpen(false);
       triggerRef.current?.focus();
     }
-    function closeFromViewportChange() {
-      setOpen(false);
-    }
-    document.addEventListener("pointerdown", closeFromOutside);
     window.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      stopOutside();
+      stopViewport();
       window.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("resize", closeFromViewportChange);
-      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
   }, [open]);
 
@@ -100,21 +99,27 @@ export function TaskConversationMenu({
   }
 
   const multiple = conversations.length > 1;
+  const singleAgentSession = !multiple ? conversations[0].agentSession : undefined;
+  const singleAgentLabel = singleAgentSession ? agentPlatformLabel(singleAgentSession.platform) : "";
   return (
     <>
       <button
         ref={triggerRef}
-        className={`task-conversation-trigger${multiple ? " is-multiple" : ""}${open ? " is-open" : ""}`}
+        className={`task-conversation-trigger${multiple ? " is-multiple" : ""}${singleAgentSession ? " is-agent-session" : ""}${open ? " is-open" : ""}`}
         type="button"
         draggable={false}
         aria-label={multiple
           ? text(`查看 ${conversations.length} 个对话`, `View ${conversations.length} conversations`)
-          : text(`打开对话 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
+          : singleAgentSession
+            ? text(`复制 ${singleAgentLabel} 恢复命令`, `Copy ${singleAgentLabel} resume command`)
+            : text(`打开对话 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
         aria-haspopup={multiple ? "menu" : undefined}
         aria-expanded={multiple ? open : undefined}
         title={multiple
           ? text(`${conversations.length} 个对话`, `${conversations.length} conversations`)
-          : conversations[0].title}
+          : singleAgentSession
+            ? `${singleAgentLabel}: ${sessionResumeCommand(singleAgentSession.platform, singleAgentSession.sessionId)}`
+            : conversations[0].title}
         onPointerDown={stop}
         onDragStart={(event) => event.preventDefault()}
         onClick={(event) => {
@@ -125,6 +130,7 @@ export function TaskConversationMenu({
       >
         <ConversationIcon color="currentColor" size={16} />
         {multiple && <span>+{conversations.length}</span>}
+        {singleAgentSession && <span>{singleAgentLabel}</span>}
       </button>
       {open && multiple && createPortal(
         <div
@@ -145,6 +151,9 @@ export function TaskConversationMenu({
               key={conversation.key}
               type="button"
               role="menuitem"
+              title={conversation.agentSession
+                ? sessionResumeCommand(conversation.agentSession.platform, conversation.agentSession.sessionId)
+                : undefined}
               onClick={() => openConversation(conversation)}
             >
               <span className="task-conversation-menu-icon">

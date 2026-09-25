@@ -9,8 +9,13 @@ function requiredString(value, name) {
   return value;
 }
 
-function encodeReferenceKey(stableId) {
-  return Buffer.from(requiredString(stableId, "stableId"), "utf8").toString("base64url");
+export function encodeComposerReferenceKey(stableId) {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(requiredString(stableId, "stableId"))) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 export function decodeComposerReferenceKey(referenceKey) {
@@ -18,11 +23,27 @@ export function decodeComposerReferenceKey(referenceKey) {
   if (!/^[A-Za-z0-9_-]+$/.test(key)) {
     throw new TypeError("referenceKey must be unpadded base64url");
   }
-  const decoded = Buffer.from(key, "base64url").toString("utf8");
-  if (!decoded || encodeReferenceKey(decoded) !== key) {
+  let decoded;
+  try {
+    const padded = `${key.replace(/-/g, "+").replace(/_/g, "/")}${"=".repeat((4 - key.length % 4) % 4)}`;
+    const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+    decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new TypeError("referenceKey is not canonical base64url UTF-8");
+  }
+  if (!decoded || encodeComposerReferenceKey(decoded) !== key) {
     throw new TypeError("referenceKey is not canonical base64url UTF-8");
   }
   return decoded;
+}
+
+export function readComposerReferenceId(referenceKey, kind) {
+  try {
+    const stableId = decodeComposerReferenceKey(referenceKey);
+    return kind === "skill" && stableId !== stableId.normalize("NFC") ? null : stableId;
+  } catch {
+    return null;
+  }
 }
 
 function assertReferenceKind(kind) {
@@ -37,14 +58,14 @@ function escapedMarkdownLabel(label) {
 }
 
 export function composerReferenceUri(kind, stableId) {
-  return `${REFERENCE_PREFIX}/${assertReferenceKind(kind)}/${encodeReferenceKey(stableId)}`;
+  return `${REFERENCE_PREFIX}/${assertReferenceKind(kind)}/${encodeComposerReferenceKey(stableId)}`;
 }
 
 export function composerReferencePersistence(kind, stableId, label) {
   const normalizedStableId = kind === "skill"
     ? requiredString(stableId, "stableId").normalize("NFC")
     : requiredString(stableId, "stableId");
-  const referenceKey = encodeReferenceKey(normalizedStableId);
+  const referenceKey = encodeComposerReferenceKey(normalizedStableId);
   const uri = `${REFERENCE_PREFIX}/${assertReferenceKind(kind)}/${referenceKey}`;
   return {
     format: REFERENCE_FORMAT,

@@ -99,7 +99,7 @@ export function JiraConnectionDialog({
           />
         </label>
         <label>
-          <span>{text("用户名", "Username")}</span>
+          <span>{text("用户名 / Email", "Username / Email")}</span>
           <input
             required={!connection?.configured}
             autoComplete="username"
@@ -110,7 +110,7 @@ export function JiraConnectionDialog({
           />
         </label>
         <label>
-          <span>{text("密码", "Password")}</span>
+          <span>{text("密码 / API token", "Password / API token")}</span>
           <input
             required={!connection?.configured}
             type="password"
@@ -121,6 +121,7 @@ export function JiraConnectionDialog({
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
+        <p>{text("Jira Cloud 请使用 Atlassian Email 和 API token。", "For Jira Cloud, use your Atlassian email and API token.")}</p>
         {connection?.configured && connection.displayName && (
           <p>{text("当前账号：", "Current account: ")}{connection.displayName}</p>
         )}

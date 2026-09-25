@@ -1,6 +1,6 @@
 {
   "name": "codex-taskboard",
-  "version": "1.1.22",
+  "version": "1.1.25",
   "private": true,
   "type": "module",
   "engines": {
@@ -33,14 +33,14 @@
     "start": "node server/index.mjs",
     "taskctl": "node cli/taskctl.mjs",
     "test": "node --test && npm run test:components",
-    "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx --environment jsdom",
+    "test:components": "vitest run web/src/components/*.test.tsx --environment jsdom",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
     "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",
     "cloud:deploy:dry-run": "npm run build:web && wrangler deploy --dry-run",
     "cloud:deploy": "npm run build:web && wrangler deploy",
     "cloud:data": "node scripts/migrate-to-cloud.mjs",
-    "check": "npm run typecheck && npm run build && npm test"
+    "check": "npm run typecheck && npm run build:web && npm test"
   },
   "dependencies": {
     "dhtmlx-gantt": "^10.0.0",
