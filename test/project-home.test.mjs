@@ -72,6 +72,12 @@ test("the dashboard exposes recently completed issues as clickable cards", () =>
   assert.match(dashboardStyles, /\.dashboard-view \.dashboard-completed-row \{/);
 });
 
+test("the dashboard keeps every in-review issue visible for acceptance", () => {
+  assert.match(dashboardSource, /task\.status === "in_review"/);
+  assert.match(dashboardSource, /Needs attention \(review, unread, blocked\)/);
+  assert.match(dashboardSource, /rightReview - leftReview/);
+});
+
 test("new issues insert attachments into the description and upload them after creation", () => {
   assert.match(editorSource, /type="file"[\s\S]*?multiple/);
   assert.match(editorSource, /<InlineMediaComposer[\s\S]*?allowAttachments/);

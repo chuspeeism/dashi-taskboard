@@ -407,14 +407,20 @@ export function DashboardView({
   }
 
   const attentionItems = activeTasks
-    .filter((task) => task.status === "blocked" || presentations[task.id]?.unread)
+    .filter((task) => (
+      task.status === "in_review"
+      || task.status === "blocked"
+      || presentations[task.id]?.unread
+    ))
     .sort((left, right) => {
+      const leftReview = left.status === "in_review" ? 1 : 0;
+      const rightReview = right.status === "in_review" ? 1 : 0;
       const leftUnread = presentations[left.id]?.unread ? 1 : 0;
       const rightUnread = presentations[right.id]?.unread ? 1 : 0;
-      return rightUnread - leftUnread
+      return rightReview - leftReview
+        || rightUnread - leftUnread
         || right.activityUpdatedAt.localeCompare(left.activityUpdatedAt);
-    })
-    .slice(0, 5);
+    });
 
   const metrics = [
     {
@@ -581,7 +587,7 @@ export function DashboardView({
           </section>
 
           <section className="dashboard-panel dashboard-primary-panel dashboard-attention-panel">
-            <header><span>{text("需要关注（未读、阻塞）", "Needs attention (unread, blocked)")}</span></header>
+            <header><span>{text("需要关注（待验收、未读、阻塞）", "Needs attention (review, unread, blocked)")}</span></header>
             <div className="dashboard-task-list">
               {attentionItems.length ? attentionItems.map((task) => (
                 <button
