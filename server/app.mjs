@@ -2080,6 +2080,7 @@ export function createTaskboardServer(options = {}) {
             localAiChat: !configuredTrustedRequest
               && isLoopbackAddress(request.socket.remoteAddress),
           },
+          mode: capabilityCloudConfig?.remoteUrl ? "cloud" : "local",
           ...(capabilityCloudConfig?.remoteUrl
             ? {
               mode: "cloud",

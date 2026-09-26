@@ -114,6 +114,7 @@ test("health and the default local project are available", async () => {
   assert.deepEqual(metadata.body, {
     manageTaskboardSkillPath: skillPath,
     capabilities: { localAiChat: true },
+    mode: "local",
   });
 
   const result = await request(baseUrl, "/api/projects");
