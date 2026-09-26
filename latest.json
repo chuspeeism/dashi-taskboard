@@ -1,39 +1,39 @@
 {
-  "version": "1.1.25-beta.1",
-  "notes": "Codex Taskboard 1.1.25-beta.1",
-  "pub_date": "2026-09-24T10:57:52.400Z",
+  "version": "1.1.25-beta.2",
+  "notes": "Codex Taskboard 1.1.25-beta.2",
+  "pub_date": "2026-09-26T04:34:24.424Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXpGV05VRkJDK25jZmNPRTYzQ013ZCtBcWdaTnFnQ1pvaTV3SEVaSTc1ME5WY2k3WWcwMEIyNG5ONlNKcUU3NHQ5R0FBb0g0eGNwQzdhOXFsNk1VbEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3NDcyCWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5nego3R3dUMmRDQWFrZGF1Ky9pNFlqY0JLUHNXaFVNZ2hYNjVVbCtJYWNCYkFJSXJWWUJVSk1zN3F3dkFuUlpIb2xsNSs3eDEvU1lTUGd0Nk5selBTeGVDdz09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_universal.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTFvOUlqTmNEMGxUWE42dzlENHBNTXh4cUlxam5BYjEwQ0VTTjQ0WFhibWNVd3hQS2VlRzlqQ0haQnlHOVExais4YTdpZFA4eFZqMUZSNWM5bFNPQkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MjY0CWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5negpPcFhPYXhJRXBTSkNQTGNhZlgrTEt2YkZRNndlTCtudldudm5mT3lXNlRSdyt1dm1LSTRZMDFoNCtqYXVjbTdXZE10U04zSHBsZk12MVUrL0wzYlVBUT09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_universal.app.tar.gz"
     },
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXpGV05VRkJDK25jZmNPRTYzQ013ZCtBcWdaTnFnQ1pvaTV3SEVaSTc1ME5WY2k3WWcwMEIyNG5ONlNKcUU3NHQ5R0FBb0g0eGNwQzdhOXFsNk1VbEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3NDcyCWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5nego3R3dUMmRDQWFrZGF1Ky9pNFlqY0JLUHNXaFVNZ2hYNjVVbCtJYWNCYkFJSXJWWUJVSk1zN3F3dkFuUlpIb2xsNSs3eDEvU1lTUGd0Nk5selBTeGVDdz09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_universal.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTFvOUlqTmNEMGxUWE42dzlENHBNTXh4cUlxam5BYjEwQ0VTTjQ0WFhibWNVd3hQS2VlRzlqQ0haQnlHOVExais4YTdpZFA4eFZqMUZSNWM5bFNPQkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MjY0CWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5negpPcFhPYXhJRXBTSkNQTGNhZlgrTEt2YkZRNndlTCtudldudm5mT3lXNlRSdyt1dm1LSTRZMDFoNCtqYXVjbTdXZE10U04zSHBsZk12MVUrL0wzYlVBUT09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_universal.app.tar.gz"
     },
     "darwin-universal": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXpGV05VRkJDK25jZmNPRTYzQ013ZCtBcWdaTnFnQ1pvaTV3SEVaSTc1ME5WY2k3WWcwMEIyNG5ONlNKcUU3NHQ5R0FBb0g0eGNwQzdhOXFsNk1VbEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3NDcyCWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5nego3R3dUMmRDQWFrZGF1Ky9pNFlqY0JLUHNXaFVNZ2hYNjVVbCtJYWNCYkFJSXJWWUJVSk1zN3F3dkFuUlpIb2xsNSs3eDEvU1lTUGd0Nk5selBTeGVDdz09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_universal.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTFvOUlqTmNEMGxUWE42dzlENHBNTXh4cUlxam5BYjEwQ0VTTjQ0WFhibWNVd3hQS2VlRzlqQ0haQnlHOVExais4YTdpZFA4eFZqMUZSNWM5bFNPQkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MjY0CWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5negpPcFhPYXhJRXBTSkNQTGNhZlgrTEt2YkZRNndlTCtudldudm5mT3lXNlRSdyt1dm1LSTRZMDFoNCtqYXVjbTdXZE10U04zSHBsZk12MVUrL0wzYlVBUT09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_universal.app.tar.gz"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXpGV05VRkJDK25jZmNPRTYzQ013ZCtBcWdaTnFnQ1pvaTV3SEVaSTc1ME5WY2k3WWcwMEIyNG5ONlNKcUU3NHQ5R0FBb0g0eGNwQzdhOXFsNk1VbEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3NDcyCWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5nego3R3dUMmRDQWFrZGF1Ky9pNFlqY0JLUHNXaFVNZ2hYNjVVbCtJYWNCYkFJSXJWWUJVSk1zN3F3dkFuUlpIb2xsNSs3eDEvU1lTUGd0Nk5selBTeGVDdz09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_universal.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTFvOUlqTmNEMGxUWE42dzlENHBNTXh4cUlxam5BYjEwQ0VTTjQ0WFhibWNVd3hQS2VlRzlqQ0haQnlHOVExais4YTdpZFA4eFZqMUZSNWM5bFNPQkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MjY0CWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5negpPcFhPYXhJRXBTSkNQTGNhZlgrTEt2YkZRNndlTCtudldudm5mT3lXNlRSdyt1dm1LSTRZMDFoNCtqYXVjbTdXZE10U04zSHBsZk12MVUrL0wzYlVBUT09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_universal.app.tar.gz"
     },
     "darwin-x86_64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXpGV05VRkJDK25jZmNPRTYzQ013ZCtBcWdaTnFnQ1pvaTV3SEVaSTc1ME5WY2k3WWcwMEIyNG5ONlNKcUU3NHQ5R0FBb0g0eGNwQzdhOXFsNk1VbEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3NDcyCWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5nego3R3dUMmRDQWFrZGF1Ky9pNFlqY0JLUHNXaFVNZ2hYNjVVbCtJYWNCYkFJSXJWWUJVSk1zN3F3dkFuUlpIb2xsNSs3eDEvU1lTUGd0Nk5selBTeGVDdz09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_universal.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTFvOUlqTmNEMGxUWE42dzlENHBNTXh4cUlxam5BYjEwQ0VTTjQ0WFhibWNVd3hQS2VlRzlqQ0haQnlHOVExais4YTdpZFA4eFZqMUZSNWM5bFNPQkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MjY0CWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5negpPcFhPYXhJRXBTSkNQTGNhZlgrTEt2YkZRNndlTCtudldudm5mT3lXNlRSdyt1dm1LSTRZMDFoNCtqYXVjbTdXZE10U04zSHBsZk12MVUrL0wzYlVBUT09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_universal.app.tar.gz"
     },
     "darwin-universal-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXpGV05VRkJDK25jZmNPRTYzQ013ZCtBcWdaTnFnQ1pvaTV3SEVaSTc1ME5WY2k3WWcwMEIyNG5ONlNKcUU3NHQ5R0FBb0g0eGNwQzdhOXFsNk1VbEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3NDcyCWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5nego3R3dUMmRDQWFrZGF1Ky9pNFlqY0JLUHNXaFVNZ2hYNjVVbCtJYWNCYkFJSXJWWUJVSk1zN3F3dkFuUlpIb2xsNSs3eDEvU1lTUGd0Nk5selBTeGVDdz09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_universal.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTFvOUlqTmNEMGxUWE42dzlENHBNTXh4cUlxam5BYjEwQ0VTTjQ0WFhibWNVd3hQS2VlRzlqQ0haQnlHOVExais4YTdpZFA4eFZqMUZSNWM5bFNPQkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MjY0CWZpbGU6Q29kZXguVGFza2JvYXJkXzEuMS4yNV91bml2ZXJzYWwuYXBwLnRhci5negpPcFhPYXhJRXBTSkNQTGNhZlgrTEt2YkZRNndlTCtudldudm5mT3lXNlRSdyt1dm1LSTRZMDFoNCtqYXVjbTdXZE10U04zSHBsZk12MVUrL0wzYlVBUT09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_universal.app.tar.gz"
     },
     "linux-x86_64-deb": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXp0SHlMVWR3ckQrVFpoK2pGL1dqS0hnb2JRMjBhRUUwSGN2UzJTd2FoZDVIZmJtSStiSzFkWUkwZWxZOVlYRkpnb1Y3TStNZEs5RHh3ank1SnAyMlFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3MjQ3CWZpbGU6Q29kZXggVGFza2JvYXJkIEJldGFfMS4xLjI1X2FtZDY0LmRlYgpJT2crL0RpTExRS3dUNnlVQnFyWXdUdHhCL2dpQUZ5bU5yNjFUb0pnS05kQkJBNzhNTmpBdDhUY0tCeW1nRWxhU09aTmlHTFlDZnFyTDNZdmxPVmNEUT09Cg==",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_Ubuntu-24.04-x64.deb"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSXl2ekdkOS91Yml2UHFXVC9wb0RQWm5ESHlHUHZaRWlNck5FZnJtMjFPaWd1dXgrZEhLb24zMGJZM205V1Z2T0lpUDQzSG1lZUNGNU9zM2pFbklhemdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MDYxCWZpbGU6Q29kZXggVGFza2JvYXJkIEJldGFfMS4xLjI1X2FtZDY0LmRlYgpUNVc5L1NJamxrSUdlbWFKWUpzemJUbWwvV1F2Y2ZXWFVsRE8zazR5WmFMOTUwdHNEZzQ0QTkrM1hRc29yUXVid2ZzZzBmbTFHd3NhM05ZKzdQTnpBdz09Cg==",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_Ubuntu-24.04-x64.deb"
     },
     "linux-x86_64-appimage": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSThmcXc1b1RFK2lxU2E2MGI3cGFpNEtGSWFsVVJqK0JKNXYrMVdDT2NXVXVjeGJMcjJXV3FMVjRlNm41STJFYnN2OWhHOEJvZHVYekRDUk9tZUVsNHc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjQ3MjQ3CWZpbGU6Q29kZXggVGFza2JvYXJkIEJldGFfMS4xLjI1X2FtZDY0LkFwcEltYWdlCjVEcmF3Wmg3aWcxR2hlK0hxN0haRkhDZXd3M0YyTkVtZVd4YlhQU0wzWU9ZWU1TbEswNXowaVhvUE5aZEhDNmlVbGVOcFBDREI0SS9vRDBxNm1DdkJ3PT0K",
-      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.1/Codex.Taskboard_1.1.25_Ubuntu-24.04-x64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZHpPV1hKbnFSSTQzK0gwWU9zQkJqbXUvSGNFbitQNi92TERGcXd0Q3VUTmQrRVN4N3FEMHlKNlZDaWtudWxwSEc1bGh2ZWxHK2VNQ1JKVmN0UEh2UEF3NHVtenFhc3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMzk3MDYxCWZpbGU6Q29kZXggVGFza2JvYXJkIEJldGFfMS4xLjI1X2FtZDY0LkFwcEltYWdlCkJsMXhaaFU4ZUYyRFM3NW5HM0hxNzJ6MnE0dUdrZUFLZ2FTNENLdjNTNWNzUkpLZi9UNlo0VXZQOG50YzNMUWVaZE10Nll4c2t3UGZsUEZOcmhEekJnPT0K",
+      "url": "https://github.com/chuspeeism/dashi-taskboard/releases/download/v1.1.25-beta.2/Codex.Taskboard_1.1.25_Ubuntu-24.04-x64.AppImage"
     }
   }
 }
