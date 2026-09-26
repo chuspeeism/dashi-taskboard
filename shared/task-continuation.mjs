@@ -8,20 +8,32 @@ function sectionBody(markdown, headingPattern) {
   return match?.[1]?.trim() ?? "";
 }
 
+function withoutFencedCode(markdown) {
+  return markdown.replace(/^(?: {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1\s*$/gm, "");
+}
+
+function continuationScope(markdown) {
+  const match = markdown.match(/^#{2,6}\s*(?:Next task|下一步任務|下一步任务)\s*:?\s*$/im);
+  if (!match || match.index === undefined) return "";
+  const tail = markdown.slice(match.index + match[0].length);
+  const boundary = tail.search(/^#{2,6}\s*(?:Completion policy|完成策略|Next task|下一步任務|下一步任务)\s*:?\s*$/im);
+  return (boundary < 0 ? tail : tail.slice(0, boundary)).trim();
+}
+
 function field(body, name) {
   const match = body.match(new RegExp(`^(?:${name})\\s*:\\s*(.+)$`, "im"));
   return match?.[1]?.trim() ?? "";
 }
 
 export function parseTaskContinuation(description) {
-  const markdown = String(description ?? "");
+  const markdown = withoutFencedCode(String(description ?? ""));
   const policyBody = sectionBody(markdown, "Completion policy|完成策略");
   const rawPolicy = field(policyBody, "continuation").toLowerCase();
   const policy = ["auto", "approval", "stop"].includes(rawPolicy) ? rawPolicy : "none";
   const nextBody = sectionBody(markdown, "Next task|下一步任務|下一步任务");
   const title = field(nextBody, "Title|標題|标题");
   const goal = field(nextBody, "Goal|目標|目标");
-  const acceptanceBody = sectionBody(markdown, "Acceptance|驗收|验收");
+  const acceptanceBody = sectionBody(continuationScope(markdown), "Acceptance|驗收|验收");
   const acceptance = acceptanceBody
     .split(/\r?\n/)
     .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())

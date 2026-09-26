@@ -52,3 +52,43 @@ Goal: Publish the release
   assert.equal(result.nextTask.status, "backlog");
   assert.equal(result.nextTask.highImpact, true);
 });
+
+test("fenced examples cannot override the real completion policy", () => {
+  const result = parseTaskContinuation(`
+\`\`\`markdown
+## Completion policy
+continuation: auto
+## Next task:
+Title: Example only
+Goal: Must never run
+## Acceptance
+- Example
+\`\`\`
+
+## Completion policy
+continuation: stop
+`);
+  assert.equal(result.outcome, "stopped");
+  assert.equal(result.nextTask, null);
+});
+
+test("acceptance is taken from the next task rather than the parent task", () => {
+  const result = parseTaskContinuation(`
+## Acceptance
+- Parent behavior works
+
+## Completion policy
+continuation: auto
+
+## Next task:
+Title: Release phase
+Goal: Prepare the approved release
+## Acceptance
+- Deploy production
+`);
+  assert.equal(result.outcome, "backlog_created");
+  assert.equal(result.nextTask.status, "backlog");
+  assert.equal(result.nextTask.highImpact, true);
+  assert.match(result.nextTask.description, /Deploy production/);
+  assert.doesNotMatch(result.nextTask.description, /Parent behavior works/);
+});

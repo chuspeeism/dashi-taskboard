@@ -2671,7 +2671,11 @@ export function App() {
     )));
 
     try {
-      const completion = statusChanged && task.status === "in_review" && status === "done"
+      const completion = statusChanged
+        && task.status === "in_review"
+        && status === "done"
+        && task.source !== "jira"
+        && taskboardMetadata?.mode !== "cloud"
         ? await completeTaskRequest(task)
         : null;
       const moved = completion?.task ?? await moveTaskRequest(task, status, sortOrder);
@@ -2772,7 +2776,10 @@ export function App() {
     ));
 
     try {
-      const completion = task.status === "in_review" && changes.status === "done"
+      const completion = task.status === "in_review"
+        && changes.status === "done"
+        && task.source !== "jira"
+        && taskboardMetadata?.mode !== "cloud"
         ? await completeTaskRequest(task)
         : null;
       const updated = completion?.task
