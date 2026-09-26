@@ -2671,13 +2671,12 @@ export function App() {
     )));
 
     try {
-      const completion = statusChanged
-        && task.status === "in_review"
-        && status === "done"
-        && task.source !== "jira"
-        && taskboardMetadata?.mode === "local"
-        ? await completeTaskRequest(task)
-        : null;
+      let completion = null;
+      if (statusChanged && task.status === "in_review" && status === "done" && task.source !== "jira") {
+        const metadata = taskboardMetadata ?? await getTaskboardMetadata();
+        if (!taskboardMetadata) setTaskboardMetadata(metadata);
+        completion = metadata.mode === "local" ? await completeTaskRequest(task) : null;
+      }
       const moved = completion?.task ?? await moveTaskRequest(task, status, sortOrder);
       setTasks((current) => {
         const nextTask = completion?.continuation.nextTask;
@@ -2776,12 +2775,12 @@ export function App() {
     ));
 
     try {
-      const completion = task.status === "in_review"
-        && changes.status === "done"
-        && task.source !== "jira"
-        && taskboardMetadata?.mode === "local"
-        ? await completeTaskRequest(task)
-        : null;
+      let completion = null;
+      if (task.status === "in_review" && changes.status === "done" && task.source !== "jira") {
+        const metadata = taskboardMetadata ?? await getTaskboardMetadata();
+        if (!taskboardMetadata) setTaskboardMetadata(metadata);
+        completion = metadata.mode === "local" ? await completeTaskRequest(task) : null;
+      }
       const updated = completion?.task
         ?? await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
       setTasks((current) => {
