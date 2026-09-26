@@ -92,3 +92,53 @@ Goal: Prepare the approved release
   assert.match(result.nextTask.description, /Deploy production/);
   assert.doesNotMatch(result.nextTask.description, /Parent behavior works/);
 });
+
+test("longer closing and unclosed fences cannot supply continuation directives", () => {
+  const longerClose = parseTaskContinuation(`
+\`\`\`
+## Completion policy
+continuation: auto
+\`\`\`\`
+## Completion policy
+continuation: stop
+`);
+  assert.equal(longerClose.outcome, "stopped");
+
+  const unclosed = parseTaskContinuation(`
+\`\`\`
+## Completion policy
+continuation: auto
+## Next task:
+Title: Hidden
+Goal: Hidden
+`);
+  assert.equal(unclosed.outcome, "missing_next_task");
+});
+
+test("next task acceptance cannot be borrowed across another section", () => {
+  const result = parseTaskContinuation(`
+## Completion policy
+continuation: auto
+## Next task:
+Title: Incomplete child
+## Parent report
+### Acceptance
+- Parent evidence only
+`);
+  assert.equal(result.outcome, "missing_next_task");
+  assert.equal(result.nextTask, null);
+});
+
+test("a blank title cannot consume the following goal line", () => {
+  const result = parseTaskContinuation(`
+## Completion policy
+continuation: auto
+## Next task:
+Title:
+Goal: Work
+## Acceptance
+- Verified
+`);
+  assert.equal(result.outcome, "missing_next_task");
+  assert.equal(result.nextTask, null);
+});

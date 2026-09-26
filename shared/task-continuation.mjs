@@ -9,19 +9,43 @@ function sectionBody(markdown, headingPattern) {
 }
 
 function withoutFencedCode(markdown) {
-  return markdown.replace(/^(?: {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1\s*$/gm, "");
+  const lines = markdown.split(/\r?\n/);
+  const visible = [];
+  let fence = null;
+  for (const line of lines) {
+    if (!fence) {
+      const opening = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (!opening) visible.push(line);
+      else fence = { marker: opening[1][0], length: opening[1].length };
+      continue;
+    }
+    const closing = line.match(/^ {0,3}(`+|~+)\s*$/);
+    if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
+      fence = null;
+    }
+  }
+  return visible.join("\n");
 }
 
-function continuationScope(markdown) {
+function nextTaskSections(markdown) {
   const match = markdown.match(/^#{2,6}\s*(?:Next task|下一步任務|下一步任务)\s*:?\s*$/im);
-  if (!match || match.index === undefined) return "";
+  if (!match || match.index === undefined) return { fields: "", acceptance: "" };
   const tail = markdown.slice(match.index + match[0].length);
-  const boundary = tail.search(/^#{2,6}\s*(?:Completion policy|完成策略|Next task|下一步任務|下一步任务)\s*:?\s*$/im);
-  return (boundary < 0 ? tail : tail.slice(0, boundary)).trim();
+  const heading = /^#{2,6}\s*([^\r\n]+?)\s*:?\s*$/gm;
+  const first = heading.exec(tail);
+  if (!first || first.index === undefined) return { fields: tail.trim(), acceptance: "" };
+  const fields = tail.slice(0, first.index).trim();
+  if (!/^(?:Acceptance|驗收|验收)$/i.test(first[1].replace(/:\s*$/, "").trim())) {
+    return { fields, acceptance: "" };
+  }
+  const acceptanceStart = first.index + first[0].length;
+  const following = heading.exec(tail);
+  const acceptanceEnd = following?.index ?? tail.length;
+  return { fields, acceptance: tail.slice(acceptanceStart, acceptanceEnd).trim() };
 }
 
 function field(body, name) {
-  const match = body.match(new RegExp(`^(?:${name})\\s*:\\s*(.+)$`, "im"));
+  const match = body.match(new RegExp(`^(?:${name})[ \\t]*:[ \\t]*([^\\r\\n]+)$`, "im"));
   return match?.[1]?.trim() ?? "";
 }
 
@@ -30,10 +54,10 @@ export function parseTaskContinuation(description) {
   const policyBody = sectionBody(markdown, "Completion policy|完成策略");
   const rawPolicy = field(policyBody, "continuation").toLowerCase();
   const policy = ["auto", "approval", "stop"].includes(rawPolicy) ? rawPolicy : "none";
-  const nextBody = sectionBody(markdown, "Next task|下一步任務|下一步任务");
-  const title = field(nextBody, "Title|標題|标题");
-  const goal = field(nextBody, "Goal|目標|目标");
-  const acceptanceBody = sectionBody(continuationScope(markdown), "Acceptance|驗收|验收");
+  const nextSections = nextTaskSections(markdown);
+  const title = field(nextSections.fields, "Title|標題|标题");
+  const goal = field(nextSections.fields, "Goal|目標|目标");
+  const acceptanceBody = nextSections.acceptance;
   const acceptance = acceptanceBody
     .split(/\r?\n/)
     .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
