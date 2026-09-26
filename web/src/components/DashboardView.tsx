@@ -69,6 +69,27 @@ interface ProjectCompletion {
   percentage: number;
 }
 
+export function selectAttentionItems(
+  activeTasks: Task[],
+  presentations: Record<string, TaskCardPresentation>,
+) {
+  return activeTasks
+    .filter((task) => (
+      task.status === "in_review"
+      || task.status === "blocked"
+      || presentations[task.id]?.unread
+    ))
+    .sort((left, right) => {
+      const leftReview = left.status === "in_review" ? 1 : 0;
+      const rightReview = right.status === "in_review" ? 1 : 0;
+      const leftUnread = presentations[left.id]?.unread ? 1 : 0;
+      const rightUnread = presentations[right.id]?.unread ? 1 : 0;
+      return rightReview - leftReview
+        || rightUnread - leftUnread
+        || right.activityUpdatedAt.localeCompare(left.activityUpdatedAt);
+    });
+}
+
 function calculateProjectCompletion(tasks: Task[]): ProjectCompletion {
   const activeTasks = tasks.filter((task) => task.status !== "canceled");
   const taskById = new Map(activeTasks.map((task) => [task.id, task]));
@@ -708,15 +729,10 @@ export function DashboardView({
     (task) => presentations[task.id]?.processing.running,
   ), [presentations, tasks]);
 
-  const attentionItems = useMemo(() => activeTasks
-    .filter((task) => task.status === "blocked" || presentations[task.id]?.unread)
-    .sort((left, right) => {
-      const leftUnread = presentations[left.id]?.unread ? 1 : 0;
-      const rightUnread = presentations[right.id]?.unread ? 1 : 0;
-      return rightUnread - leftUnread
-        || right.activityUpdatedAt.localeCompare(left.activityUpdatedAt);
-    })
-    .slice(0, 5), [activeTasks, presentations]);
+  const attentionItems = useMemo(
+    () => selectAttentionItems(activeTasks, presentations),
+    [activeTasks, presentations],
+  );
 
   const summaryBody = isAllProjects
     ? text(
@@ -818,7 +834,7 @@ export function DashboardView({
           </section>
 
           <section className="dashboard-panel dashboard-primary-panel dashboard-attention-panel">
-            <header><span>{text("需要关注（未读、阻塞）", "Needs attention (unread, blocked)")}</span></header>
+            <header><span>{text("需要关注（待验收、未读、阻塞）", "Needs attention (review, unread, blocked)")}</span></header>
             <div className="dashboard-task-list">
               {attentionItems.length ? attentionItems.map((task) => (
                 <button

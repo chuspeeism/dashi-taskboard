@@ -18,6 +18,7 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
+  completeTask as completeTaskRequest,
   createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
@@ -147,6 +148,8 @@ import { createRevisionPoller, createRevisionWebSocketClient, getRevisionPolling
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
+type ThemeMode = "auto" | Theme;
+type Palette = "cobalt" | "aubergine" | "alpine" | "carbon";
 type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt";
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number; scrollLeft: number }
@@ -396,6 +399,24 @@ function getInitialTheme(): Theme {
     if (isTheme(stored)) return stored;
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === "auto" || isTheme(value);
+}
+
+function getInitialThemeMode(): ThemeMode {
+  const stored = taskboardStorage.getItem("taskboard.theme-mode");
+  return isThemeMode(stored) ? stored : "auto";
+}
+
+function isPalette(value: unknown): value is Palette {
+  return value === "cobalt" || value === "aubergine" || value === "alpine" || value === "carbon";
+}
+
+function getInitialPalette(): Palette {
+  const stored = taskboardStorage.getItem("taskboard.palette");
+  return isPalette(stored) ? stored : "carbon";
 }
 
 function readDeviceWorkspacePaths(): Record<string, string> {
@@ -737,7 +758,10 @@ export function App() {
   const host = query.get("host");
   const embedded = host === "codex" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
+  const [automaticTheme, setAutomaticTheme] = useState<Theme>(getInitialTheme);
+  const theme = themeMode === "auto" ? automaticTheme : themeMode;
+  const [palette, setPalette] = useState<Palette>(getInitialPalette);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const language = resolveTaskboardLanguage(
     hostContext?.language ?? query.get("lang") ?? navigator.language,
@@ -1720,9 +1744,18 @@ export function App() {
   }, [embedded, theme]);
 
   useEffect(() => {
+    taskboardStorage.setItem("taskboard.theme-mode", themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette;
+    taskboardStorage.setItem("taskboard.palette", palette);
+  }, [palette]);
+
+  useEffect(() => {
     if (embedded && window.parent !== window) return;
     const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
-    const syncTheme = () => setTheme(systemTheme.matches ? "dark" : "light");
+    const syncTheme = () => setAutomaticTheme(systemTheme.matches ? "dark" : "light");
     syncTheme();
     systemTheme.addEventListener("change", syncTheme);
     return () => systemTheme.removeEventListener("change", syncTheme);
@@ -1849,7 +1882,7 @@ export function App() {
       }
 
       if (message.type === "taskboard:theme" && isTheme(message.theme)) {
-        setTheme(message.theme);
+        setAutomaticTheme(message.theme);
         return;
       }
 
@@ -1879,7 +1912,7 @@ export function App() {
       const payload = message.payload as HostContext;
       setHostContext(payload);
       setCurrentUserActor(payload.user);
-      if (isTheme(payload.theme)) setTheme(payload.theme);
+      if (isTheme(payload.theme)) setAutomaticTheme(payload.theme);
       if (host === "codex") void publishHostRuntime(payload);
     }
 
@@ -2638,10 +2671,41 @@ export function App() {
     )));
 
     try {
-      const moved = await moveTaskRequest(task, status, sortOrder);
-      setTasks((current) => sortTasks(current.map((candidate) =>
-        candidate.id === moved.id ? moved : candidate,
-      )));
+      let completion = null;
+      if (statusChanged && task.status === "in_review" && status === "done" && task.source !== "jira") {
+        const metadata = taskboardMetadata ?? await getTaskboardMetadata();
+        if (!taskboardMetadata) setTaskboardMetadata(metadata);
+        completion = metadata.mode === "local" ? await completeTaskRequest(task) : null;
+      }
+      const moved = completion?.task ?? await moveTaskRequest(task, status, sortOrder);
+      setTasks((current) => {
+        const nextTask = completion?.continuation.nextTask;
+        const merged = current.map((candidate) => candidate.id === moved.id ? moved : candidate);
+        return sortTasks(nextTask && !merged.some((candidate) => candidate.id === nextTask.id)
+          ? [...merged, nextTask]
+          : merged);
+      });
+      if (statusChanged && status === "done") {
+        setOtherTasksTab("done");
+        setOtherTasksOpen(true);
+        const nextTask = completion?.continuation.nextTask;
+        setAnnouncement(nextTask
+          ? textRef.current(
+              `${moved.identifier} 已完成；已建立 ${nextTask.identifier}（${nextTask.status === "todo" ? "等待全域派工" : "等待你批准"}）。`,
+              `${moved.identifier} is complete; ${nextTask.identifier} was created (${nextTask.status === "todo" ? "waiting for global dispatch" : "waiting for your approval"}).`,
+            )
+          : textRef.current(
+              `${moved.identifier} 已完成；这张卡没有可自动接续的下一步。`,
+              `${moved.identifier} is complete; this card has no automatic continuation.`,
+            ));
+      }
+      const currentScopeProjectId = taskScopeProjectIdRef.current;
+      if (currentScopeProjectId) {
+        await Promise.all([
+          refreshTasks(currentScopeProjectId, { quiet: true }),
+          refreshProjectList(),
+        ]);
+      }
       pushUndo(null, async () => {
         const candidate = tasksRef.current.find((current) => current.id === moved.id);
         const current = candidate && candidate.version >= moved.version ? candidate : moved;
@@ -2711,10 +2775,42 @@ export function App() {
     ));
 
     try {
-      const updated = await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
-      setTasks((current) => sortTasks(current.map((candidate) =>
-        candidate.id === updated.id ? updated : candidate,
-      )));
+      let completion = null;
+      if (task.status === "in_review" && changes.status === "done" && task.source !== "jira") {
+        const metadata = taskboardMetadata ?? await getTaskboardMetadata();
+        if (!taskboardMetadata) setTaskboardMetadata(metadata);
+        completion = metadata.mode === "local" ? await completeTaskRequest(task) : null;
+      }
+      const updated = completion?.task
+        ?? await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
+      setTasks((current) => {
+        const nextTask = completion?.continuation.nextTask;
+        const merged = current.map((candidate) => candidate.id === updated.id ? updated : candidate);
+        return sortTasks(nextTask && !merged.some((candidate) => candidate.id === nextTask.id)
+          ? [...merged, nextTask]
+          : merged);
+      });
+      if (previous.status !== updated.status && updated.status === "done") {
+        setOtherTasksTab("done");
+        setOtherTasksOpen(true);
+        const nextTask = completion?.continuation.nextTask;
+        setAnnouncement(nextTask
+          ? textRef.current(
+              `${updated.identifier} 已完成；已建立 ${nextTask.identifier}（${nextTask.status === "todo" ? "等待全域派工" : "等待你批准"}）。`,
+              `${updated.identifier} is complete; ${nextTask.identifier} was created (${nextTask.status === "todo" ? "waiting for global dispatch" : "waiting for your approval"}).`,
+            )
+          : textRef.current(
+              `${updated.identifier} 已完成；这张卡没有可自动接续的下一步。`,
+              `${updated.identifier} is complete; this card has no automatic continuation.`,
+            ));
+        const currentScopeProjectId = taskScopeProjectIdRef.current;
+        if (currentScopeProjectId) {
+          await Promise.all([
+            refreshTasks(currentScopeProjectId, { quiet: true }),
+            refreshProjectList(),
+          ]);
+        }
+      }
       const previousAssigneeTarget = assigneeTargetForActor(previous.assignee, currentUser);
       if (!assigneeTarget || previousAssigneeTarget) {
         pushUndo(
@@ -3546,6 +3642,35 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
+            <label className="appearance-control theme-control">
+              <span className="sr-only">{text("底板模式", "Appearance mode")}</span>
+              <i aria-hidden="true" />
+              <select
+                aria-label={text("底板模式", "Appearance mode")}
+                title={text("底板模式", "Appearance mode")}
+                value={themeMode}
+                onChange={(event) => setThemeMode(event.target.value as ThemeMode)}
+              >
+                <option value="auto">{text("自動", "Auto")}</option>
+                <option value="light">{text("日間", "Light")}</option>
+                <option value="dark">{text("夜間", "Dark")}</option>
+              </select>
+            </label>
+            <label className="palette-control">
+              <span className="sr-only">{text("界面配色", "Interface palette")}</span>
+              <i aria-hidden="true" />
+              <select
+                aria-label={text("界面配色", "Interface palette")}
+                title={text("界面配色", "Interface palette")}
+                value={palette}
+                onChange={(event) => setPalette(event.target.value as Palette)}
+              >
+                <option value="cobalt">Cobalt Ember</option>
+                <option value="aubergine">Plum Voltage</option>
+                <option value="alpine">Alpine Copper</option>
+                <option value="carbon">Carbon Black</option>
+              </select>
+            </label>
             {selectedProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}

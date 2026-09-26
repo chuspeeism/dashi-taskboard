@@ -653,6 +653,68 @@
   transition: background 120ms ease;
 }
 
+.dashboard-view .dashboard-completed-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 50px;
+  gap: 10px;
+  padding: 10px 12px;
+  border: .5px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-hover);
+  color: inherit;
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.dashboard-view .dashboard-completed-row:hover {
+  border-color: color-mix(in srgb, var(--status-done) 32%, var(--border));
+  background: color-mix(in srgb, var(--status-done) 7%, var(--surface-hover));
+  transform: translateY(-1px);
+}
+
+.dashboard-view .dashboard-completed-check {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--status-done) 14%, transparent);
+  color: var(--status-done);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.dashboard-view .dashboard-completed-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dashboard-view .dashboard-completed-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-view .dashboard-completed-copy small,
+.dashboard-view .dashboard-completed-row time {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.dashboard-view .dashboard-completed-row time {
+  white-space: nowrap;
+}
+
 .dashboard-view .dashboard-attention-row:hover,
 .dashboard-view .dashboard-upcoming-row:hover {
   background: var(--surface-muted);
