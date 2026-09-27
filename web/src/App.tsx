@@ -745,6 +745,7 @@ export function App() {
   const { locale, text } = getTaskboardI18n(language);
   const [embeddedFrameChallenge, setEmbeddedFrameChallengeState] = useState("");
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
+  const [developmentScanProjectId, setDevelopmentScanProjectId] = useState<string | null>(null);
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
   const [manageTaskboardSkillPath, setManageTaskboardSkillPath] = useState("");
   const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
@@ -2097,6 +2098,7 @@ export function App() {
       ? developmentEditorProjectId ?? (standalone ? contextMenuTask?.projectId : null)
       : selectedProjectId;
     if (!developmentProjectId) {
+      setDevelopmentScanProjectId(null);
       setDevelopmentScan({ workspacePath: null, contexts: [] });
       setDevelopmentScanLoading(false);
       return;
@@ -2113,6 +2115,7 @@ export function App() {
         ? deviceWorkspacePaths[developmentEditorProjectId]
         : contextMenuWorkspacePath
       : selectedDeviceWorkspacePath;
+    setDevelopmentScanProjectId(developmentProjectId);
     setDevelopmentScan({ workspacePath: workspacePath ?? null, contexts: [] });
     setDevelopmentScanLoading(true);
     void listDevelopmentContexts(
@@ -2123,11 +2126,13 @@ export function App() {
       workspacePath,
     )
       .then((scan) => {
+        if (controller.signal.aborted) return;
         setDevelopmentScan(scan);
         if (scan.workspacePath) rememberDeviceWorkspacePath(developmentProjectId, scan.workspacePath);
       })
       .catch((error) => {
         if ((error as Error).name !== "AbortError") {
+          if (controller.signal.aborted) return;
           setDevelopmentScan({ workspacePath: workspacePath ?? null, contexts: [] });
         }
       })
@@ -4198,6 +4203,7 @@ export function App() {
           labels={projects.find((project) => project.id === editorProjectId)?.labels ?? []}
           currentUser={currentUser}
           developmentScan={developmentScan}
+          developmentScanProjectId={developmentScanProjectId}
           developmentScanLoading={developmentScanLoading}
           onCreateLabel={(label) => persistProjectLabel(label, editorProjectId ?? selectedProjectId)}
           onCancel={(draft) => {
