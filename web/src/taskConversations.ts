@@ -64,7 +64,7 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
     if (ref.agentSession) {
       const { platform, sessionId } = ref.agentSession;
       // External IDs are opaque: never apply Codex prefix normalization to them.
-      const key = `agent:${platform}:${sessionId}`;
+      const key = sessionId ? `agent:${platform}:${sessionId}` : `agent:${platform}:no-id`;
       const current = items.get(key);
       const next: TaskConversationItem = {
         key,

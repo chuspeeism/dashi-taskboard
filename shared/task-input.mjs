@@ -10,10 +10,11 @@ export function parseAgentSession(value) {
   if (value === undefined || value === null) return value;
   assertPlainObject(value);
   assertAllowedKeys(value, new Set(["platform", "sessionId"]));
-  if (!["claude", "pi", "agy", "grok"].includes(value.platform)) {
-    throw new ApiError(400, "INVALID_FIELD", "agentSession.platform must be claude, pi, agy, or grok");
+  if (!["claude", "pi", "agy", "grok", "chatgpt"].includes(value.platform)) {
+    throw new ApiError(400, "INVALID_FIELD", "agentSession.platform must be claude, pi, agy, grok, or chatgpt");
   }
   const { platform, sessionId } = value;
+  if (platform === "chatgpt" && sessionId === undefined) return { platform };
   const maxLength = platform === "pi" ? 4096 : 256;
   if (
     typeof sessionId !== "string"

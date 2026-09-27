@@ -17,6 +17,11 @@ function conversationSource(
 ) {
   if (conversation.kind === "local-ai") return text("内置 AI", "Built-in AI");
   if (conversation.kind === "agent-session") {
+    if (conversation.agentSession?.platform === "chatgpt") {
+      return conversation.source === "comment"
+        ? text("评论来源 · ChatGPT 网页", "Comment source · ChatGPT web")
+        : text("任务来源 · ChatGPT 网页", "Task source · ChatGPT web");
+    }
     return conversation.source === "comment"
       ? text("评论对话 · 复制恢复命令", "Comment conversation · Copy resume command")
       : text("任务对话 · 复制恢复命令", "Task conversation · Copy resume command");
@@ -101,6 +106,12 @@ export function TaskConversationMenu({
   const multiple = conversations.length > 1;
   const singleAgentSession = !multiple ? conversations[0].agentSession : undefined;
   const singleAgentLabel = singleAgentSession ? agentPlatformLabel(singleAgentSession.platform) : "";
+  if (singleAgentSession?.platform === "chatgpt" && !singleAgentSession.sessionId) {
+    return <span className="task-conversation-trigger is-agent-session" title={singleAgentLabel}>
+      <ConversationIcon color="currentColor" size={16} />
+      <span>{singleAgentLabel}</span>
+    </span>;
+  }
   return (
     <>
       <button
@@ -111,14 +122,16 @@ export function TaskConversationMenu({
         aria-label={multiple
           ? text(`查看 ${conversations.length} 个对话`, `View ${conversations.length} conversations`)
           : singleAgentSession
-            ? text(`复制 ${singleAgentLabel} 恢复命令`, `Copy ${singleAgentLabel} resume command`)
+            ? singleAgentSession.platform === "chatgpt"
+              ? text("复制 ChatGPT 网页会话 ID", "Copy ChatGPT web conversation ID")
+              : text(`复制 ${singleAgentLabel} 恢复命令`, `Copy ${singleAgentLabel} resume command`)
             : text(`打开对话 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
         aria-haspopup={multiple ? "menu" : undefined}
         aria-expanded={multiple ? open : undefined}
         title={multiple
           ? text(`${conversations.length} 个对话`, `${conversations.length} conversations`)
           : singleAgentSession
-            ? `${singleAgentLabel}: ${sessionResumeCommand(singleAgentSession.platform, singleAgentSession.sessionId)}`
+            ? `${singleAgentLabel}${singleAgentSession.sessionId ? `: ${sessionResumeCommand(singleAgentSession.platform, singleAgentSession.sessionId)}` : ""}`
             : conversations[0].title}
         onPointerDown={stop}
         onDragStart={(event) => event.preventDefault()}
@@ -151,7 +164,8 @@ export function TaskConversationMenu({
               key={conversation.key}
               type="button"
               role="menuitem"
-              title={conversation.agentSession
+              disabled={conversation.agentSession?.platform === "chatgpt" && !conversation.agentSession.sessionId}
+              title={conversation.agentSession?.sessionId
                 ? sessionResumeCommand(conversation.agentSession.platform, conversation.agentSession.sessionId)
                 : undefined}
               onClick={() => openConversation(conversation)}

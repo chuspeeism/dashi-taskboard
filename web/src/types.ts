@@ -396,11 +396,11 @@ export interface TaskRelations {
   related: TaskRelationSummary[];
 }
 
-export type AgentPlatform = "claude" | "pi" | "agy" | "grok";
+export type AgentPlatform = "claude" | "pi" | "agy" | "grok" | "chatgpt";
 
 export interface AgentSession {
   platform: AgentPlatform;
-  sessionId: string;
+  sessionId?: string;
 }
 
 interface TaskConversationRefBase {
@@ -430,6 +430,7 @@ export interface Task {
   threadBinding: CodexThreadBinding | null;
   legacyLocalThreadId: string | null;
   agentSession?: AgentSession | null;
+  chatgptSession?: AgentSession | null;
   conversationRefs: TaskConversationRef[];
   participants: ActorIdentity[];
   previewImage: Attachment | null;

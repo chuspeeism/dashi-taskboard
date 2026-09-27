@@ -2989,10 +2989,13 @@ export function App() {
   function openTaskConversation(conversation: TaskConversationItem) {
     if (conversation.kind === "agent-session" && conversation.agentSession) {
       const { platform, sessionId } = conversation.agentSession;
+      if (platform === "chatgpt" && !sessionId) return;
       const label = agentPlatformLabel(platform);
       void copyText(
         sessionResumeCommand(platform, sessionId),
-        text(`${label} 恢复命令已复制。`, `${label} resume command copied.`),
+        platform === "chatgpt"
+          ? text("ChatGPT 网页会话 ID 已复制。", "ChatGPT web conversation ID copied.")
+          : text(`${label} 恢复命令已复制。`, `${label} resume command copied.`),
       );
       return;
     }

@@ -7,12 +7,16 @@ export function agentPlatformLabel(platform: AgentPlatform | "codex") {
     case "pi": return "Pi";
     case "agy": return "Google Antigravity (AGY)";
     case "grok": return "Grok";
+    case "chatgpt": return "ChatGPT 网页";
   }
 }
 
-// These are fixed CLI entry points, not user-configurable command templates.
-// Quote for POSIX shells (sh/bash/zsh); preserve the complete, original argument.
-export function sessionResumeCommand(platform: AgentPlatform | "codex", sessionId: string) {
+// CLI agents use fixed resume commands. ChatGPT web has no verified resume route,
+// so return only its original ID for copying.
+// Quote CLI arguments for POSIX shells (sh/bash/zsh).
+export function sessionResumeCommand(platform: AgentPlatform | "codex", sessionId?: string) {
+  if (platform === "chatgpt") return sessionId ?? "";
+  if (!sessionId) return "";
   const argument = /^[A-Za-z0-9_./:@+-]+$/.test(sessionId)
     ? sessionId
     : "'" + sessionId.replace(/'/g, "'\"'\"'") + "'";

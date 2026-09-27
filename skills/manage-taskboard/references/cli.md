@@ -52,7 +52,7 @@ taskctl cloud logout [--json]
 
 `cloud login` reads the shared password from a private `Shared key:` prompt. The actor name is the display attribution sent through Basic Authentication. The local companion stores its configuration with mode `0600`; project mappings stay on the current device and can differ between collaborators. In cloud mode, failed upstream writes fail rather than falling back to or double-writing the local SQLite database.
 
-Every issue or comment write requires conversation attribution. For Codex, `taskctl` reads `CODEX_THREAD_ID` or accepts explicit `--thread-id ID` (which takes precedence). For Claude Code, Pi, Google Antigravity CLI (AGY), and xAI Grok CLI, pass **both** `--agent-platform claude|pi|agy|grok` and `--session-id ID`. External attribution ignores `CODEX_THREAD_ID` and cannot be combined with `--thread-id`. No external session environment variables are inferred. Read commands do not require a conversation ID.
+Every issue or comment write requires conversation attribution. For Codex, `taskctl` reads `CODEX_THREAD_ID` or accepts explicit `--thread-id ID` (which takes precedence). For Claude Code, Pi, Google Antigravity CLI (AGY), and xAI Grok CLI, pass **both** `--agent-platform claude|pi|agy|grok` and `--session-id ID`. For ChatGPT web, pass `--agent-platform chatgpt` and add `--session-id ID` only when the original stable web conversation ID is available. External attribution ignores `CODEX_THREAD_ID` and cannot be combined with `--thread-id`. No external session environment variables are inferred. Read commands do not require a conversation ID.
 
 Except for built-in help, every successful command writes one JSON object with `schemaVersion` to stdout. The current schema version is `2`. Errors write one JSON object to stderr. Exit codes are `0` for success, `2` for invalid input, `3` when the service is unavailable, `4` for API or response errors, and `5` for conflicts.
 
@@ -72,15 +72,21 @@ taskctl comment add ISSUE_ID --body 'Implementation notes' \
 
 taskctl comment update COMMENT_ID --body 'Updated implementation notes' --if-version N \
   --agent-platform grok --session-id '<grok-session-id>' --json
+
+# ChatGPT web is identifiable even when no stable conversation ID is available.
+taskctl comment add ISSUE_ID --body 'Web research update' \
+  --agent-platform chatgpt --json
+taskctl issue update ISSUE_ID --if-version N \
+  --agent-platform chatgpt --session-id '<actual-web-conversation-id>' --json
 ```
 
-The same two options are accepted by `issue move`, `issue archive`, `issue restore`, `issue relation add|remove`, and `comment delete`. A metadata-only `issue update` is supported. Read back with `issue get` and `comment list` (omit `--after` for a full reread). Deleting a comment deletes its metadata; it does not attach that session to another record.
+The same attribution options are accepted by `issue move`, `issue archive`, `issue restore`, `issue relation add|remove`, and `comment delete`. Only `chatgpt` may omit `--session-id`; supply it only when the original stable web conversation ID is actually available. A metadata-only `issue update` is supported. Read back with `issue get` and `comment list` (omit `--after` for a full reread). Deleting a comment deletes its metadata; it does not attach that session to another record.
 
-Task/comment JSON exposes `agentSession: { "platform": "pi", "sessionId": "..." }` or `null`. Local SQLite and cloud D1 both store it in nullable `agent_session` TEXT on `tasks` and `comments`. The cloud deployment must apply `0012_agent_sessions.sql` before serving the new worker. Omitting `agentSession` preserves the saved value; supplying a new object replaces the record's external session metadata; HTTP `agentSession: null` clears only that metadata. This field is not an append-only session history. Task `conversationRefs` includes separate external references from the task and its comments.
+Task/comment JSON exposes `agentSession: { "platform": "pi", "sessionId": "..." }` or `null`. ChatGPT web writes use the same input `agentSession` object, with `platform: "chatgpt"` and an optional original `sessionId`. On task reads, ChatGPT web metadata is returned separately as `chatgptSession`; other platforms remain in `agentSession`. Local SQLite and cloud D1 store task ChatGPT metadata in nullable `chatgpt_session` TEXT, so cloud deployment must apply `0014_chatgpt_sessions.sql`. Comments store their source in their own `agent_session` field. Omitting attribution preserves saved values. These fields are not append-only session history. Task `conversationRefs` includes separate references from the task and its comments.
 
-External attribution never writes to Codex `threadId` or the native five-field `threadBinding`. Existing native bindings remain intact. `issue move` and `comment add` still accept explicit, independent Codex `--binding-*` options; they must describe a real native Codex session, not the external controller. When both metadata and a native binding are present, the UI shows separate entries rather than relabeling a Codex session. Existing author/assignee identities are unchanged; the original tool is identified by the session metadata badge, not inferred from an actor name.
+External attribution never writes to Codex `threadId` or the native five-field `threadBinding`. Existing native bindings remain intact. `issue move` and `comment add` still accept explicit, independent Codex `--binding-*` options; they must describe a real native Codex session, not the external controller. When both metadata and a native binding are present, the UI shows separate entries rather than relabeling a Codex session. Existing author/assignee identities are unchanged; task activity entries append `ChatGPT 网页` to the acting name for web-attributed changes, and task/comment badges show the saved source.
 
-The detail view shows the original tool, ID/path, and copy button for both tasks and comments. The card conversation action copies for external sessions; it never sends them to `codex://` or the embedded Codex host. Copied commands use these fixed official entry points:
+The detail view shows the original tool and available ID/path for both tasks and comments. For CLI agents, the card action copies a resume command. For ChatGPT web, it displays the source and copies the original ID only when present; it does not invent a resume command or a `codex://` link. Other copied commands use these fixed official entry points:
 
 | Tool | Command |
 | --- | --- |
@@ -167,7 +173,7 @@ Use `issue move` to set `in_progress` before implementation and `in_review` afte
 
 `--thread-id` records the conversation performing the mutation; it does not create a complete task binding. `--binding-thread-id` can stand alone to preserve a legacy local binding. If any binding identity option is present, all four identity options are required. `--clear-binding-thread` conflicts with every `--binding-*` option. A conversation that claims or continues an issue must pass all five `--binding-*` options together. Reuse an existing complete binding exactly. For an unbound local issue launched with injected Taskboard context, use the current conversation id, injected project id and workspace path, `local` project kind, and `local` host id. Never leave an active issue with only a legacy local `threadId`. Use `--clear-binding-thread` only when the workflow explicitly requires an unbound issue.
 
-Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` retains the existing native Codex meaning; external sessions are stored separately in `agentSession`. Recurrence requires a due date.
+Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` retains the existing native Codex meaning; other external sessions are stored in `agentSession` and ChatGPT web task attribution in `chatgptSession`. Recurrence requires a due date.
 
 Changing only `--project` preserves the issue's existing linked conversation.
 

@@ -344,7 +344,7 @@ function ConversationLink({
   onOpen,
   onCopy,
 }: {
-  threadId: string;
+  threadId?: string;
   agentPlatform?: AgentPlatform;
   onOpen?: () => void;
   onCopy: (text: string, announcement: string) => void;
@@ -356,10 +356,10 @@ function ConversationLink({
   return (
     <div className="issue-conversation-actions">
       {agentPlatform ? (
-        <span className="issue-conversation-link" title={`${label}: ${threadId}`}>
+        <span className="issue-conversation-link" title={threadId ? `${label}: ${threadId}` : label}>
           <ConversationIcon color="currentColor" size={16} />
           <strong>{label}</strong>
-          <span className="issue-conversation-session-id">{threadId}</span>
+          {threadId && <span className="issue-conversation-session-id">{threadId}</span>}
         </span>
       ) : (
         <button
@@ -372,7 +372,7 @@ function ConversationLink({
           <strong>{text("查看对话", "View conversation")}</strong>
         </button>
       )}
-      <button
+      {platform !== "chatgpt" && <button
         className="issue-conversation-copy"
         type="button"
         title={`${text("复制恢复命令（POSIX shell）", "Copy resume command (POSIX shell)")}: ${command}`}
@@ -388,7 +388,7 @@ function ConversationLink({
           ? <img src={copyIdIcon} width={16} height={16} alt="" />
           : <CodexResumeIcon />}
         <span>{text("复制终端命令", "Copy terminal command")}</span>
-      </button>
+      </button>}
     </div>
   );
 }
@@ -1242,7 +1242,7 @@ export function TaskDetail({
                       : text("添加描述…", "Add description…")}
                   </div>
                 )}
-                {(currentTask.agentSession || currentTask.threadBinding || currentTask.legacyLocalThreadId) && (
+                {(currentTask.agentSession || currentTask.chatgptSession || currentTask.threadBinding || currentTask.legacyLocalThreadId) && (
                   <div
                     className="issue-conversation-list"
                     aria-label={text("处理此议题的对话", "Conversations for this issue")}
@@ -1251,6 +1251,13 @@ export function TaskDetail({
                       <ConversationLink
                         agentPlatform={currentTask.agentSession.platform}
                         threadId={currentTask.agentSession.sessionId}
+                        onCopy={onCopy}
+                      />
+                    )}
+                    {currentTask.chatgptSession && (
+                      <ConversationLink
+                        agentPlatform="chatgpt"
+                        threadId={currentTask.chatgptSession.sessionId}
                         onCopy={onCopy}
                       />
                     )}

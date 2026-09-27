@@ -10,6 +10,7 @@ import { taskRelationsQuery, taskRelationsFromRows } from "../../shared/task-rel
 import {
   commentConversationTitle,
   agentSessionFromRow,
+  chatgptSessionFromRow,
   threadBindingFromRow,
   legacyLocalThreadIdFromRow,
   storedThreadBinding,
@@ -502,6 +503,7 @@ function taskFromRow(row) {
     threadBinding: threadBindingFromRow(row),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
     agentSession: agentSessionFromRow(row),
+    chatgptSession: chatgptSessionFromRow(row),
     creatorType: row.creator_type,
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -588,7 +590,7 @@ function changed(result) {
   return result.meta.changes > 0;
 }
 
-function taskActivityStatement(env, taskId, actor, changes, timestamp, version) {
+function taskActivityStatement(env, taskId, actor, changes, timestamp, version, agentSession) {
   return env.DB.prepare(`
     INSERT INTO task_activities (
       id, task_id, actor_type, actor_id, actor_name, actor_avatar_url, changes, created_at
@@ -602,7 +604,7 @@ function taskActivityStatement(env, taskId, actor, changes, timestamp, version) 
     taskId,
     actor.type,
     actor.id,
-    actor.name,
+    agentSession?.platform === "chatgpt" ? `${actor.name} · ChatGPT 网页` : actor.name,
     actor.avatarUrl,
     JSON.stringify(changes),
     timestamp,
@@ -1148,7 +1150,7 @@ async function createTask(env, input, actor) {
         assignee_type, assignee_id, assignee_name, assignee_avatar_url,
         development_context_type, development_branch,
         start_date, due_date, recurrence_interval, recurrence_unit,
-        archived_at, version, created_at, updated_at, agent_session
+        archived_at, version, created_at, updated_at, agent_session, chatgpt_session
       )
       SELECT
         ?,
@@ -1167,7 +1169,7 @@ async function createTask(env, input, actor) {
         ?, ?, ?, ?,
         ?, ?,
         ?, ?, ?, ?,
-        NULL, 1, ?, ?, ?
+        NULL, 1, ?, ?, ?, ?
       FROM projects
       WHERE projects.id = ?
     `).bind(
@@ -1198,7 +1200,8 @@ async function createTask(env, input, actor) {
       input.recurrence?.unit ?? null,
       timestamp,
       timestamp,
-      input.agentSession ? JSON.stringify(input.agentSession) : null,
+      input.agentSession?.platform === "chatgpt" ? null : input.agentSession ? JSON.stringify(input.agentSession) : null,
+      input.agentSession?.platform === "chatgpt" ? JSON.stringify(input.agentSession) : null,
       input.projectId,
     ),
     env.DB.prepare(`
@@ -1351,7 +1354,7 @@ async function updateTask(env, id, input, actor) {
     values.push(...storedBinding);
   }
   if (input.agentSession !== undefined) {
-    assignments.push("agent_session = ?");
+    assignments.push(`${input.agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?`);
     values.push(input.agentSession ? JSON.stringify(input.agentSession) : null);
   }
   assignments.push("version = version + 1", "updated_at = ?");
@@ -1386,6 +1389,7 @@ async function updateTask(env, id, input, actor) {
       activityChanges,
       timestamp,
       input.version + 1,
+      input.agentSession,
     ));
   }
   if (projectChanged) {
@@ -1510,7 +1514,7 @@ async function moveTask(env, id, input, actor) {
   }
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
-  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionAssignment = input.agentSession === undefined ? "" : `${input.agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
   const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -1542,6 +1546,7 @@ async function moveTask(env, id, input, actor) {
       activityChanges,
       timestamp,
       input.version + 1,
+      input.agentSession,
     ));
   }
   const results = await env.DB.batch(statements);
@@ -1562,7 +1567,7 @@ async function archiveTask(env, id, input, actor) {
   assertTaskVersion(current, input.version);
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
-  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionAssignment = input.agentSession === undefined ? "" : `${input.agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
   const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -1584,6 +1589,7 @@ async function archiveTask(env, id, input, actor) {
     [{ field: "archivedAt", before: current.archived_at, after: timestamp }],
     timestamp,
     input.version + 1,
+    input.agentSession,
   )]);
   if (!changed(results[0])) {
     const latest = await requireTaskRow(env, current.id);
@@ -1605,7 +1611,7 @@ async function restoreTask(env, id, input, actor) {
   }
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
-  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionAssignment = input.agentSession === undefined ? "" : `${input.agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
   const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -1627,6 +1633,7 @@ async function restoreTask(env, id, input, actor) {
     [{ field: "archivedAt", before: current.archived_at, after: null }],
     timestamp,
     input.version + 1,
+    input.agentSession,
   )]);
   if (!changed(results[0])) {
     const latest = await requireTaskRow(env, current.id);
@@ -1722,7 +1729,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(task, input.threadBinding, input.threadId);
-  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionAssignment = input.agentSession === undefined ? "" : `${input.agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
   const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -1822,6 +1829,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
     }],
     timestamp,
     input.version + 1,
+    input.agentSession,
   ));
   let results;
   try {
@@ -1889,7 +1897,7 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
   }
   const timestamp = now();
   const storedBinding = storedThreadBindingForExisting(task, input.threadBinding, input.threadId);
-  const sessionAssignment = input.agentSession === undefined ? "" : "agent_session = ?,";
+  const sessionAssignment = input.agentSession === undefined ? "" : `${input.agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
   const sessionValues = input.agentSession === undefined ? [] : [input.agentSession ? JSON.stringify(input.agentSession) : null];
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -1978,6 +1986,7 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
       }],
       timestamp,
       input.version + 1,
+      input.agentSession,
     ),
   ]);
   if (!changed(results[1])) {

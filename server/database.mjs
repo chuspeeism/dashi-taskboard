@@ -3,6 +3,7 @@ import { taskRelationsQuery, taskRelationsFromRows } from "../shared/task-relati
 import {
   commentConversationTitle,
   agentSessionFromRow,
+  chatgptSessionFromRow,
   threadBindingFromRow,
   legacyLocalThreadIdFromRow,
   storedThreadBinding,
@@ -87,6 +88,7 @@ function taskFromRow(row) {
     threadBinding: threadBindingFromRow(row),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
     agentSession: agentSessionFromRow(row),
+    chatgptSession: chatgptSessionFromRow(row),
     creatorType: row.creator_type,
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -535,6 +537,9 @@ export class TaskboardDatabase {
     }
     this.#migrateTaskStatuses();
     const migratedTaskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
+    if (!migratedTaskColumns.some((column) => column.name === "chatgpt_session")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN chatgpt_session TEXT");
+    }
     if (!migratedTaskColumns.some((column) => column.name === "agent_session")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN agent_session TEXT");
     }
@@ -1865,8 +1870,8 @@ export class TaskboardDatabase {
           assignee_type, assignee_id, assignee_name, assignee_avatar_url,
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
-          archived_at, version, created_at, updated_at, agent_session
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?)
+          archived_at, version, created_at, updated_at, agent_session, chatgpt_session
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?, ?)
       `).run(
         id,
         identifier,
@@ -1895,7 +1900,8 @@ export class TaskboardDatabase {
         input.recurrence?.unit ?? null,
         timestamp,
         timestamp,
-        input.agentSession ? JSON.stringify(input.agentSession) : null,
+        input.agentSession?.platform === "chatgpt" ? null : input.agentSession ? JSON.stringify(input.agentSession) : null,
+        input.agentSession?.platform === "chatgpt" ? JSON.stringify(input.agentSession) : null,
       );
       this.database.exec("COMMIT");
       return this.getTask(id);
@@ -2006,7 +2012,7 @@ export class TaskboardDatabase {
       values.push(...storedBinding);
     }
     if (agentSession !== undefined) {
-      assignments.push("agent_session = ?");
+      assignments.push(`${agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?`);
       values.push(agentSession ? JSON.stringify(agentSession) : null);
     }
     assignments.push("version = version + 1", "updated_at = ?");
@@ -2041,7 +2047,7 @@ export class TaskboardDatabase {
           UPDATE projects SET labels = ?, updated_at = ? WHERE id = ?
         `).run(JSON.stringify(mergedLabels), timestamp, destinationProjectId);
       }
-      this.#recordTaskActivity(current.id, actor, activityChanges, timestamp);
+      this.#recordTaskActivity(current.id, actor, activityChanges, timestamp, agentSession);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -2074,7 +2080,7 @@ export class TaskboardDatabase {
 
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
-    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionAssignment = agentSession === undefined ? "" : `${agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
     const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -2095,6 +2101,7 @@ export class TaskboardDatabase {
         actor,
         taskFieldChanges(current, { status }),
         timestamp,
+        agentSession,
       );
       this.database.exec("COMMIT");
     } catch (error) {
@@ -2109,7 +2116,7 @@ export class TaskboardDatabase {
     this.#requireVersion(current, version);
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
-    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionAssignment = agentSession === undefined ? "" : `${agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
     const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -2130,6 +2137,7 @@ export class TaskboardDatabase {
         actor,
         [{ field: "archivedAt", before: current.archivedAt, after: timestamp }],
         timestamp,
+        agentSession,
       );
       this.database.exec("COMMIT");
     } catch (error) {
@@ -2147,7 +2155,7 @@ export class TaskboardDatabase {
     }
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
-    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionAssignment = agentSession === undefined ? "" : `${agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
     const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
@@ -2168,6 +2176,7 @@ export class TaskboardDatabase {
         actor,
         [{ field: "archivedAt", before: current.archivedAt, after: null }],
         timestamp,
+        agentSession,
       );
       this.database.exec("COMMIT");
     } catch (error) {
@@ -2254,7 +2263,7 @@ export class TaskboardDatabase {
         field: "relation",
         before: previousRelation,
         after: relationActivityValue(type, relatedTask),
-      }], timestamp);
+      }], timestamp, agentSession);
       this.database.exec("COMMIT");
       return {
         task: this.getTask(task.id),
@@ -2351,7 +2360,7 @@ export class TaskboardDatabase {
         field: "relation",
         before: relationActivityValue(type, relatedTask),
         after: null,
-      }], timestamp);
+      }], timestamp, agentSession);
       this.database.exec("COMMIT");
       return {
         task: this.getTask(task.id),
@@ -2792,7 +2801,7 @@ export class TaskboardDatabase {
     }
   }
 
-  #recordTaskActivity(taskId, actor, changes, timestamp) {
+  #recordTaskActivity(taskId, actor, changes, timestamp, agentSession) {
     if (changes.length === 0) return;
     this.database.prepare(`
       INSERT INTO task_activities (
@@ -2803,7 +2812,7 @@ export class TaskboardDatabase {
       taskId,
       actor.type,
       actor.id,
-      actor.name,
+      agentSession?.platform === "chatgpt" ? `${actor.name} · ChatGPT 网页` : actor.name,
       actor.avatarUrl,
       JSON.stringify(changes),
       timestamp,
@@ -2813,7 +2822,7 @@ export class TaskboardDatabase {
   #touchTask(id, version, threadId, threadBinding, timestamp, agentSession) {
     const current = this.#requireTask(id);
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
-    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionAssignment = agentSession === undefined ? "" : `${agentSession?.platform === "chatgpt" ? "chatgpt_session" : "agent_session"} = ?,`;
     const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,

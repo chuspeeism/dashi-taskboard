@@ -12,6 +12,10 @@ export function agentSessionFromRow(row) {
   return row.agent_session == null ? null : JSON.parse(row.agent_session);
 }
 
+export function chatgptSessionFromRow(row) {
+  return row.chatgpt_session == null ? null : JSON.parse(row.chatgpt_session);
+}
+
 export function threadBindingFromRow(row) {
   if (
     !row.thread_id
@@ -95,6 +99,15 @@ export function attachTaskActivity(task, comments, activities, previewImage = nu
   if (task.agentSession) {
     conversationRefs.push({
       agentSession: task.agentSession,
+      source: "task",
+      sourceId: task.id,
+      title: task.title,
+      updatedAt: task.updatedAt,
+    });
+  }
+  if (task.chatgptSession) {
+    conversationRefs.push({
+      agentSession: task.chatgptSession,
       source: "task",
       sourceId: task.id,
       title: task.title,
