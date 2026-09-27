@@ -2812,7 +2812,7 @@ export class TaskboardDatabase {
       taskId,
       actor.type,
       actor.id,
-      agentSession?.platform === "chatgpt" ? `${actor.name} · ChatGPT 网页` : actor.name,
+      agentSession?.platform === "chatgpt" ? "ChatGPT 网页" : actor.name,
       actor.avatarUrl,
       JSON.stringify(changes),
       timestamp,

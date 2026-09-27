@@ -1357,7 +1357,9 @@ export function TaskDetail({
                           />
                         </span>
                         <p>
-                          <strong>{activity.actorName}</strong>
+                          <strong>{activity.actorName.endsWith(" · ChatGPT 网页")
+                            ? "ChatGPT 网页"
+                            : activity.actorName}</strong>
                           {" "}
                           {change.field === "description" ? (
                             <>{text("更新了描述", "updated the description")}</>
