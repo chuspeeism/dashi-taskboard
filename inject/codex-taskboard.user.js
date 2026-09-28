@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.13";
+  const VERSION = "0.6.14";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -272,11 +272,19 @@
     const firstSection = scroll.querySelector("[data-app-action-sidebar-section]");
     if (!firstSection) return null;
     const sectionTop = firstSection.getBoundingClientRect().top;
-    return buttons.filter((button) => {
+    const beforeFirstSection = buttons.filter((button) => {
       const rect = button.getBoundingClientRect();
       return rect.height > 0
         && rect.bottom <= sectionTop;
-    }).at(-1) || null;
+    }).at(-1);
+    if (beforeFirstSection) return beforeFirstSection;
+
+    // Newer ChatGPT builds keep the primary actions outside the scroll
+    // container. Reuse the native New chat row as a visual template, then
+    // mount our entry at the top of the scroll area before its first section.
+    return Array.from(document.querySelectorAll('aside nav[role="navigation"] button'))
+      .find((button) => buttonMatches(button, ["new chat", "新聊天", "新建任务", "新对话"]))
+      || null;
   }
 
   function replaceEntryIcon(button) {
@@ -340,7 +348,12 @@
     const reference = findReferenceButton();
     if (!reference?.parentElement) return;
     if (!entry) entry = createEntry(reference);
-    if (entry.parentElement !== reference.parentElement || entry.previousElementSibling !== reference) {
+    const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
+    if (scroll && !scroll.contains(reference)) {
+      if (entry.parentElement !== scroll || entry !== scroll.firstElementChild) {
+        scroll.prepend(entry);
+      }
+    } else if (entry.parentElement !== reference.parentElement || entry.previousElementSibling !== reference) {
       reference.after(entry);
     }
     syncEntryState();
