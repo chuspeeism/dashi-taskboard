@@ -608,6 +608,25 @@ export async function moveTask(
   return data.task;
 }
 
+export interface TaskContinuationResult {
+  task: Task;
+  continuation: {
+    policy: "auto" | "approval" | "stop" | "none";
+    outcome: "todo_created" | "backlog_created" | "stopped" | "missing_next_task";
+    nextTask: Task | null;
+  };
+}
+
+export async function completeTask(task: Task): Promise<TaskContinuationResult> {
+  return request<TaskContinuationResult>(
+    `/api/tasks/${encodeURIComponent(task.id)}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: task.version }),
+    },
+  );
+}
+
 export async function archiveTask(task: Task, threadId?: string): Promise<Task> {
   const data = await request<{ task: Task }>(
     `/api/tasks/${encodeURIComponent(task.id)}/archive`,

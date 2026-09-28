@@ -654,6 +654,16 @@ export class TaskboardDatabase {
         ON task_relations(target_task_id)
         WHERE relation_type = 'parent';
 
+      CREATE TABLE IF NOT EXISTS task_continuations (
+        parent_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        next_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        policy TEXT NOT NULL CHECK (policy IN ('auto', 'approval', 'stop', 'none')),
+        outcome TEXT NOT NULL CHECK (outcome IN (
+          'todo_created', 'backlog_created', 'stopped', 'missing_next_task'
+        )),
+        created_at TEXT NOT NULL
+      );
+
       CREATE TRIGGER IF NOT EXISTS task_relations_require_same_project
       BEFORE INSERT ON task_relations
       BEGIN
@@ -2102,6 +2112,154 @@ export class TaskboardDatabase {
       throw error;
     }
     return this.getTask(current.id);
+  }
+
+  completeTask(id, version, continuation, threadId, threadBinding, actor, nextAssignee, agentSession) {
+    const current = this.#requireTask(id);
+    const alreadyProcessed = this.database.prepare(`
+      SELECT policy, outcome, next_task_id
+      FROM task_continuations
+      WHERE parent_task_id = ?
+    `).get(id);
+    if (alreadyProcessed && current.status === "done") {
+      return {
+        task: current,
+        continuation: {
+          policy: alreadyProcessed.policy,
+          outcome: alreadyProcessed.outcome,
+          nextTask: alreadyProcessed.next_task_id
+            ? this.getTask(alreadyProcessed.next_task_id)
+            : null,
+        },
+      };
+    }
+
+    this.#requireVersion(current, version);
+    if (current.archivedAt !== null) {
+      throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be completed");
+    }
+    if (current.status !== "in_review") {
+      throw new ApiError(409, "TASK_NOT_IN_REVIEW", "Only an In Review task can be completed");
+    }
+
+    const timestamp = now();
+    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
+    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
+    const donePlacement = this.database.prepare(`
+      SELECT MIN(sort_order) AS minimum
+      FROM tasks
+      WHERE project_id = ? AND status = 'done' AND archived_at IS NULL AND id != ?
+    `).get(current.projectId, current.id);
+    const doneSortOrder = donePlacement.minimum === null ? 1000 : donePlacement.minimum - 1000;
+    let nextTaskId = alreadyProcessed?.next_task_id ?? null;
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const threadAssignment = storedBinding
+        ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+          thread_codex_host_id = ?, thread_workspace_path = ?,`
+        : "";
+      const moved = this.database.prepare(`
+        UPDATE tasks
+        SET status = 'done', sort_order = ?, ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(doneSortOrder, ...(storedBinding ?? []), ...sessionValues, timestamp, current.id, version);
+      if (moved.changes !== 1) this.#throwMissingOrConflict(id, version);
+      this.#recordTaskActivity(
+        current.id,
+        actor,
+        taskFieldChanges(current, { status: "done" }),
+        timestamp,
+      );
+
+      if (continuation.nextTask && !alreadyProcessed) {
+        const project = this.database.prepare(`
+          SELECT id, name, labels, next_task_number,
+            (SELECT tasks.identifier FROM tasks WHERE tasks.project_id = projects.id
+              ORDER BY tasks.created_at, tasks.id LIMIT 1) AS first_identifier
+          FROM projects WHERE projects.id = ?
+        `).get(current.projectId);
+        const prefix = projectPrefix(project);
+        const maximum = this.database.prepare(`
+          SELECT MAX(CAST(substr(identifier, ?) AS INTEGER)) AS number
+          FROM tasks WHERE identifier GLOB ?
+        `).get(prefix.length + 2, `${prefix}-[0-9]*`).number;
+        const number = Math.max(project.next_task_number, maximum === null ? 1 : maximum + 1);
+        const identifier = `${prefix}-${number}`;
+        nextTaskId = randomUUID();
+        const nextPlacement = this.database.prepare(`
+          SELECT MIN(sort_order) AS minimum
+          FROM tasks
+          WHERE project_id = ? AND status = ? AND archived_at IS NULL
+        `).get(current.projectId, continuation.nextTask.status);
+        const nextSortOrder = nextPlacement.minimum === null ? 1000 : nextPlacement.minimum - 1000;
+
+        this.database.prepare(`
+          UPDATE projects SET next_task_number = ?, updated_at = ? WHERE id = ?
+        `).run(number + 1, timestamp, current.projectId);
+        this.database.prepare(`
+          INSERT INTO tasks (
+            id, identifier, project_id, title, description, status, priority, labels,
+            sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
+            thread_codex_host_id, thread_workspace_path,
+            creator_type, creator_id, creator_name, creator_avatar_url,
+            assignee_type, assignee_id, assignee_name, assignee_avatar_url,
+            git_branch, worktree_path, worktree_branch,
+            start_date, due_date, recurrence_interval, recurrence_unit,
+            archived_at, version, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL,
+            ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL, 1, ?, ?)
+        `).run(
+          nextTaskId,
+          identifier,
+          current.projectId,
+          continuation.nextTask.title,
+          continuation.nextTask.description,
+          continuation.nextTask.status,
+          current.priority,
+          JSON.stringify(current.labels),
+          nextSortOrder,
+          actor.type,
+          actor.id,
+          actor.name,
+          actor.avatarUrl,
+          nextAssignee.type,
+          nextAssignee.id,
+          nextAssignee.name,
+          nextAssignee.avatarUrl,
+          timestamp,
+          timestamp,
+        );
+        this.database.prepare(`
+          INSERT INTO task_relations (
+            relation_type, source_task_id, target_task_id, origin, created_at
+          ) VALUES ('parent', ?, ?, 'manual', ?)
+        `).run(current.id, nextTaskId, timestamp);
+      }
+
+      if (!alreadyProcessed) {
+        this.database.prepare(`
+          INSERT INTO task_continuations (
+            parent_task_id, next_task_id, policy, outcome, created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(current.id, nextTaskId, continuation.policy, continuation.outcome, timestamp);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+
+    return {
+      task: this.getTask(current.id),
+      continuation: {
+        policy: alreadyProcessed?.policy ?? continuation.policy,
+        outcome: alreadyProcessed?.outcome ?? continuation.outcome,
+        nextTask: nextTaskId ? this.getTask(nextTaskId) : null,
+      },
+    };
   }
 
   archiveTask(id, version, threadId, threadBinding, actor, agentSession) {
