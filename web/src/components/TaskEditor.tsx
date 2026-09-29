@@ -47,6 +47,11 @@ import {
   type PendingInlineAttachment,
   type PendingInlineImage,
 } from "../documentModel";
+import {
+  currentDevelopmentContext,
+  readTaskEditorDefaults,
+  saveTaskEditorDefaults,
+} from "../taskEditorDefaults";
 import { InlineMediaComposer, type InlineMediaComposerHandle } from "./InlineMediaComposer";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
@@ -105,6 +110,7 @@ interface TaskEditorProps {
   labels: string[];
   currentUser: ActorIdentity;
   developmentScan: DevelopmentScan;
+  developmentScanProjectId: string | null;
   developmentScanLoading: boolean;
   onCreateLabel: (label: string) => Promise<void>;
   onCancel: (draft: NewTaskEditorDraft | null) => void;
@@ -163,6 +169,7 @@ export function TaskEditor({
   labels: availableLabels,
   currentUser,
   developmentScan,
+  developmentScanProjectId,
   developmentScanLoading,
   onCreateLabel,
   onCancel,
@@ -176,17 +183,23 @@ export function TaskEditor({
   const descriptionComposerRef = useRef<InlineMediaComposerHandle>(null);
   const createSubmitIntentRef = useRef(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const developmentEditedRef = useRef(Boolean(initialDraft));
+  const defaultsScopeRef = useRef(`${projectId ?? ""}:${actorKey(currentUser)}`);
+  const editorDefaults = useMemo(
+    () => readTaskEditorDefaults(projectId, actorKey(currentUser), availableLabels),
+    [availableLabels, currentUser, projectId],
+  );
   const [title, setTitle] = useState(initialDraft?.title ?? "");
   const [descriptionSegments, setDescriptionSegments] = useState<InlineMediaSegment[]>(
     () => initialDraft?.descriptionSegments ?? createInlineMediaSegments(),
   );
   const [status, setStatus] = useState<TaskStatus>(initialStatus);
-  const [priority, setPriority] = useState<TaskPriority>(initialDraft?.priority ?? "none");
+  const [priority, setPriority] = useState<TaskPriority>(initialDraft?.priority ?? editorDefaults.priority);
   const [assignee, setAssignee] = useState<ActorIdentity>(initialDraft?.assignee ?? currentUser);
-  const [selectedLabels, setSelectedLabels] = useState<string[]>(initialDraft?.selectedLabels ?? []);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>(initialDraft?.selectedLabels ?? editorDefaults.labels);
   const [developmentContext, setDevelopmentContext] = useState<DevelopmentContext | null>(initialDraft?.developmentContext ?? null);
-  const [startDate] = useState(initialDraft?.startDate ?? "");
-  const [dueDate, setDueDate] = useState(initialDraft?.dueDate ?? "");
+  const [startDate, setStartDate] = useState(initialDraft?.startDate ?? isoDate(new Date()));
+  const [dueDate, setDueDate] = useState(initialDraft?.dueDate ?? isoDate(new Date()));
   const [recurrence, setRecurrence] = useState<Recurrence | null>(initialDraft?.recurrence ?? null);
   const [parentId, setParentId] = useState<string | null>(initialDraft?.relations.parentId ?? null);
   const [relatedIds, setRelatedIds] = useState<string[]>(initialDraft?.relations.relatedIds ?? []);
@@ -199,6 +212,24 @@ export function TaskEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<TaskEditorError | null>(null);
   const [attachmentError, setAttachmentError] = useState<TaskEditorError | null>(null);
+
+  useEffect(() => {
+    const scope = `${projectId ?? ""}:${actorKey(currentUser)}`;
+    if (defaultsScopeRef.current === scope) return;
+    defaultsScopeRef.current = scope;
+    developmentEditedRef.current = false;
+    const defaults = readTaskEditorDefaults(projectId, actorKey(currentUser), availableLabels);
+    setPriority(defaults.priority);
+    setSelectedLabels(defaults.labels);
+    setDevelopmentContext(null);
+  }, [availableLabels, currentUser, projectId]);
+
+  useEffect(() => {
+    if (initialDraft || developmentEditedRef.current || developmentScanLoading) return;
+    if (developmentScanProjectId !== projectId) return;
+    const context = currentDevelopmentContext(developmentScan);
+    if (context) setDevelopmentContext(context);
+  }, [developmentScan, developmentScanLoading, developmentScanProjectId, initialDraft, projectId]);
 
   const developmentOptions = useMemo(() => {
     const options = [...developmentScan.contexts];
@@ -389,6 +420,9 @@ export function TaskEditor({
         keepOpen: createMore,
         relations: { parentId, relatedIds, subIssueIds },
       });
+      if (!initialDraft) {
+        saveTaskEditorDefaults(projectId, actorKey(currentUser), priority, selectedLabels);
+      }
       if (createMore) {
         setTitle("");
         setDescriptionSegments(createInlineMediaSegments());
@@ -630,17 +664,32 @@ export function TaskEditor({
               ariaLabel={text("代码分支或 Worktree", "Code branch or worktree")}
               title={developmentScan.workspacePath ?? undefined}
               onOpenChange={(open) => setMenu(open ? "development" : null)}
-              onChange={(value) => setDevelopmentContext(value ? JSON.parse(value) as DevelopmentContext : null)}
+              onChange={(value) => {
+                developmentEditedRef.current = true;
+                setDevelopmentContext(value ? JSON.parse(value) as DevelopmentContext : null);
+              }}
             />
 
-            {dueDate && (
-              <button className="property-control" type="button" onClick={() => setMenu("due")}>
-                <span>{text(
-                  `截止 ${displayDate(dueDate, locale)}`,
-                  `Due ${displayDate(dueDate, locale)}`,
-                )}</span>
-              </button>
-            )}
+            <label className="property-control">
+              <DueDateIcon color="currentColor" />
+              <span>{text("开始", "Start")}</span>
+              <input
+                aria-label={text("开始日期", "Start date")}
+                type="date"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
+            </label>
+            <label className="property-control">
+              <DueDateIcon color="currentColor" />
+              <span>{text("截止", "Due")}</span>
+              <input
+                aria-label={text("截止日期", "Due date")}
+                type="date"
+                value={dueDate}
+                onChange={(event) => setDueDate(event.target.value)}
+              />
+            </label>
             {recurrence && (
               <button className="property-control" type="button" onClick={() => setMenu("recurrence")}>
                 <span>{text(
