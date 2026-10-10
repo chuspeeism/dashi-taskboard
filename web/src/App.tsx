@@ -3,6 +3,13 @@ import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import { resolveInlineAttachments } from "./inlineAttachments";
 import { sprintPoints } from "../../shared/sprint-points.mjs";
 import {
+  AGENT_LOOP_STORAGE_KEY,
+  MAX_CONCURRENT_LIMIT,
+  isAgentWorking,
+  parseAgentLoopSettings,
+  projectLoopSettings,
+} from "../../shared/agent-loop.mjs";
+import {
   Fragment,
   lazy,
   Suspense,
@@ -650,7 +657,10 @@ function LocalRealtimeSync({
       }
       if (
         event.type === "client-storage.updated"
-        && payload.key?.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+        && (
+          payload.key?.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+          || payload.key === AGENT_LOOP_STORAGE_KEY
+        )
       ) {
         void refreshProjectBoardDisplaySettings();
         return;
@@ -795,10 +805,14 @@ export function App() {
   const [projectBoardDisplaySettings, setProjectBoardDisplaySettings] = useState(
     readProjectBoardDisplaySettings,
   );
+  const [agentLoopSettings, setAgentLoopSettings] = useState(
+    () => parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY)),
+  );
   const refreshProjectBoardDisplaySettings = useCallback(async () => {
     try {
       await refreshProjectBoardDisplaySettingsStorage();
       setProjectBoardDisplaySettings(readProjectBoardDisplaySettings());
+      setAgentLoopSettings(parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY)));
     } catch (error) {
       console.error(error);
     }
@@ -2327,6 +2341,26 @@ export function App() {
     return () => 0;
   }, [language, taskSort]);
 
+  const isLocalProject = selectedProject?.source === "local";
+  const selectedLoopSettings = isLocalProject && selectedProject
+    ? projectLoopSettings(agentLoopSettings, selectedProject.id)
+    : null;
+  const activeAgentTasks = useMemo(
+    () => (isLocalProject ? tasks.filter(isAgentWorking).length : 0),
+    [isLocalProject, tasks],
+  );
+  const saveLoopSettings = (change: Partial<{ enabled: boolean; maxConcurrent: number }>) => {
+    if (!selectedProject || !selectedLoopSettings) return;
+    // Re-read storage so entries for other projects are kept.
+    const current = parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY));
+    const next = {
+      ...current,
+      [selectedProject.id]: { ...projectLoopSettings(current, selectedProject.id), ...change },
+    };
+    taskboardStorage.setItem(AGENT_LOOP_STORAGE_KEY, JSON.stringify(next));
+    setAgentLoopSettings(next);
+  };
+
   const linearSprintPoints = useMemo(
     () => (isLinearProject ? sprintPoints(tasks) : null),
     [isLinearProject, tasks],
@@ -3641,6 +3675,34 @@ export function App() {
                 onOpen={() => void reconcileProjectAutomation()}
                 onChange={(options) => void saveProjectAutomation(options)}
               />
+            )}
+            {selectedLoopSettings && (
+              <span
+                className="agent-loop-settings"
+                title={text(
+                  `代理循环：${activeAgentTasks} 个进行中 / 最多 ${selectedLoopSettings.maxConcurrent} 个`,
+                  `Agent loop: ${activeAgentTasks} active / ${selectedLoopSettings.maxConcurrent} max`,
+                )}
+              >
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={selectedLoopSettings.enabled}
+                    onChange={(event) => saveLoopSettings({ enabled: event.target.checked })}
+                  />
+                  {text("代理循环", "Agent loop")}
+                </label>
+                <span className="agent-loop-count">{activeAgentTasks} /</span>
+                <select
+                  value={selectedLoopSettings.maxConcurrent}
+                  onChange={(event) => saveLoopSettings({ maxConcurrent: Number(event.target.value) })}
+                  aria-label={text("最大并发任务数", "Max concurrent tasks")}
+                >
+                  {Array.from({ length: MAX_CONCURRENT_LIMIT }, (_, index) => index + 1).map((value) => (
+                    <option value={value} key={value}>{value}</option>
+                  ))}
+                </select>
+              </span>
             )}
             {isJiraProject && (
               <button
