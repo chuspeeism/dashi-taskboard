@@ -66,7 +66,7 @@ test("resolves current, previous and next cycles from the team's cycles", () => 
 function linearStub() {
   const issue = {
     id: "issue-1",
-    identifier: "MM7-1",
+    identifier: "MM7-2",
     title: "Demo",
     description: "",
     url: "https://linear.app/demo/issue/MM7-1",
@@ -79,7 +79,10 @@ function linearStub() {
     labels: { nodes: [{ name: "bug" }] },
     assignee: { id: "user-1", displayName: "Me" },
     creator: { id: "user-2", name: "PM" },
+    parent: { id: "parent-1" },
   };
+  // In another cycle, so only reachable through the sub-issue.
+  const parent = { ...issue, id: "parent-1", identifier: "MM7-1", branchName: null, parent: null };
   const calls = [];
   const stub = {
     calls,
@@ -99,6 +102,10 @@ function linearStub() {
         TaskboardAssignedIssues: () => ({
           viewer: { assignedIssues: { nodes: [issue], pageInfo: { hasNextPage: false, endCursor: null } } },
         }),
+        TaskboardParentIssues: () => {
+          assert.deepEqual(variables.ids, ["parent-1"]);
+          return { issues: { nodes: [parent] } };
+        },
         TaskboardIssueUpdate: () => {
           issue.state = stub.overrideStateAfterWrite
             ?? STATES.find((state) => state.id === variables.input.stateId);
@@ -136,8 +143,10 @@ test("syncs the current cycle and writes back only allowed moves", async () => {
   assert.equal(connection.cycle.number, 92);
   const filter = stub.calls.find((call) => call.operation === "TaskboardAssignedIssues").variables.filter;
   assert.deepEqual(filter.and[1], { cycle: { id: { eq: "c92" } } });
-  const [task] = syncCalls[0].tasks;
-  assert.equal(task.externalKey, "MM7-1");
+  const [task, parentTask] = syncCalls[0].tasks;
+  assert.equal(parentTask.externalKey, "MM7-1");
+  assert.equal(task.parentExternalId, "parent-1");
+  assert.equal(task.externalKey, "MM7-2");
   assert.equal(task.status, "todo");
   assert.equal(task.priority, "high");
   assert.equal(task.gitBranch, "user/mm7-1-demo");
@@ -145,7 +154,7 @@ test("syncs the current cycle and writes back only allowed moves", async () => {
 
   await linear.moveTask(task, "in_progress");
   const write = stub.calls.find((call) => call.operation === "TaskboardIssueUpdate");
-  assert.deepEqual(write.variables, { id: "MM7-1", input: { stateId: STATES[4].id } });
+  assert.deepEqual(write.variables, { id: "MM7-2", input: { stateId: STATES[4].id } });
 
   await linear.moveTask({ ...task, status: "in_review" }, "in_progress");
   assert.deepEqual(

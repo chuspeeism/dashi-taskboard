@@ -1069,9 +1069,11 @@ export class TaskboardDatabase {
         WHERE id = ?
       `);
 
+      const taskIdByExternalId = new Map();
       for (const issue of issues) {
         const existing = findExisting.get(source, issue.externalOrigin, issue.externalId);
         seenTaskIds.add(existing?.id ?? issue.id);
+        taskIdByExternalId.set(issue.externalId, existing?.id ?? issue.id);
         const labels = JSON.stringify(issue.labels);
         if (!existing) {
           insertTask.run(
@@ -1157,6 +1159,31 @@ export class TaskboardDatabase {
           issue.updatedAt,
           existing.id,
         );
+      }
+
+      // Mirror the source's parent links when the adapter provides them (Linear).
+      if (issues.some((issue) => issue.parentExternalId !== undefined)) {
+        const currentParent = this.database.prepare(`
+          SELECT source_task_id FROM task_relations
+          WHERE relation_type = 'parent' AND target_task_id = ?
+        `);
+        const deleteParent = this.database.prepare(`
+          DELETE FROM task_relations WHERE relation_type = 'parent' AND target_task_id = ?
+        `);
+        const insertParent = this.database.prepare(`
+          INSERT INTO task_relations (relation_type, source_task_id, target_task_id, origin, created_at)
+          VALUES ('parent', ?, ?, 'manual', ?)
+        `);
+        for (const issue of issues) {
+          const childId = taskIdByExternalId.get(issue.externalId);
+          const parentId = issue.parentExternalId
+            ? taskIdByExternalId.get(issue.parentExternalId) ?? null
+            : null;
+          const current = currentParent.get(childId)?.source_task_id ?? null;
+          if (current === parentId) continue;
+          if (current) deleteParent.run(childId);
+          if (parentId) insertParent.run(parentId, childId, timestamp);
+        }
       }
 
       if (archiveMissing) {
