@@ -1,6 +1,7 @@
 import { Toasts, showToast, dismissUndoToast } from "./components/Toasts";
 import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import { resolveInlineAttachments } from "./inlineAttachments";
+import { sprintPoints } from "../../shared/sprint-points.mjs";
 import {
   Fragment,
   lazy,
@@ -2326,6 +2327,10 @@ export function App() {
     return () => 0;
   }, [language, taskSort]);
 
+  const linearSprintPoints = useMemo(
+    () => (isLinearProject ? sprintPoints(tasks) : null),
+    [isLinearProject, tasks],
+  );
   const filteredTasks = useMemo(() => {
     return tasks.filter(
       (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
@@ -3651,6 +3656,20 @@ export function App() {
             )}
             {isLinearProject && (
               <>
+                {linearSprintPoints && (
+                  <span
+                    className="linear-sprint-points"
+                    title={TASK_STATUSES
+                      .filter((status) => linearSprintPoints.byStatus[status] !== undefined)
+                      .map((status) => `${taskStatusLabel(language, status)}: ${linearSprintPoints.byStatus[status]}`)
+                      .join("\n") || undefined}
+                  >
+                    {text(
+                      `${linearSprintPoints.total} 点 · 已完成 ${linearSprintPoints.completed} · 剩余 ${linearSprintPoints.remaining}`,
+                      `${linearSprintPoints.total} pts · ${linearSprintPoints.completed} done · ${linearSprintPoints.remaining} left`,
+                    )}
+                  </span>
+                )}
                 <select
                   className="linear-cycle-select"
                   value={linearConnection?.selectedCycle ?? "current"}

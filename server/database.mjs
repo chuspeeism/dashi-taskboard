@@ -107,6 +107,10 @@ function taskFromRow(row) {
     externalOrigin: row.external_origin ?? null,
     externalKey: row.external_key ?? null,
     externalUrl: row.external_url ?? null,
+    // Linear only: the story-point estimate, and whether the issue is in the
+    // synced cycle (false for parents pulled in for context). Null elsewhere.
+    estimate: row.estimate ?? null,
+    inScope: row.in_scope === null || row.in_scope === undefined ? null : row.in_scope === 1,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -317,6 +321,8 @@ export class TaskboardDatabase {
         external_id TEXT,
         external_key TEXT,
         external_url TEXT,
+        estimate REAL,
+        in_scope INTEGER,
         archived_at TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
@@ -568,6 +574,12 @@ export class TaskboardDatabase {
     }
     if (!migratedTaskColumns.some((column) => column.name === "external_url")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN external_url TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "estimate")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN estimate REAL");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "in_scope")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN in_scope INTEGER");
     }
     this.database.exec(`
       DROP INDEX IF EXISTS tasks_external_source_id;
@@ -1045,6 +1057,7 @@ export class TaskboardDatabase {
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           external_source, external_origin, external_id, external_key, external_url,
+          estimate, in_scope,
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1054,6 +1067,7 @@ export class TaskboardDatabase {
           ?, NULL, NULL,
           NULL, ?, NULL, NULL,
           ?, ?, ?, ?, ?,
+          ?, ?,
           NULL, 1, ?, ?
         )
       `);
@@ -1064,6 +1078,7 @@ export class TaskboardDatabase {
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           git_branch = CASE WHEN git_branch IS NULL AND worktree_path IS NULL THEN ? ELSE git_branch END,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
+          estimate = ?, in_scope = ?,
           archived_at = NULL,
           version = version + 1, updated_at = ?
         WHERE id = ?
@@ -1075,6 +1090,8 @@ export class TaskboardDatabase {
         seenTaskIds.add(existing?.id ?? issue.id);
         taskIdByExternalId.set(issue.externalId, existing?.id ?? issue.id);
         const labels = JSON.stringify(issue.labels);
+        const estimate = issue.estimate ?? null;
+        const inScope = issue.inScope === undefined ? null : issue.inScope ? 1 : 0;
         if (!existing) {
           insertTask.run(
             issue.id,
@@ -1101,6 +1118,8 @@ export class TaskboardDatabase {
             issue.externalId,
             issue.externalKey,
             issue.externalUrl,
+            estimate,
+            inScope,
             issue.createdAt,
             issue.updatedAt,
           );
@@ -1132,6 +1151,8 @@ export class TaskboardDatabase {
           || existing.external_id !== issue.externalId
           || existing.external_key !== issue.externalKey
           || existing.external_url !== issue.externalUrl
+          || existing.estimate !== estimate
+          || existing.in_scope !== inScope
           || existing.archived_at !== null;
         if (!changed) continue;
         updateTask.run(
@@ -1156,6 +1177,8 @@ export class TaskboardDatabase {
           issue.externalId,
           issue.externalKey,
           issue.externalUrl,
+          estimate,
+          inScope,
           issue.updatedAt,
           existing.id,
         );

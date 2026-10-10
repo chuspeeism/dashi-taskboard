@@ -8026,6 +8026,24 @@ kbd {
   text-overflow: ellipsis;
 }
 
+.estimate-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 20px;
+  min-width: 20px;
+  justify-content: center;
+  padding: 0 6px;
+  border: .5px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
 .priority-chip svg {
   width: 14px;
   height: 14px;
@@ -9769,6 +9787,14 @@ kbd {
 @media (max-width: 520px) {
   .dashboard-metric { border-top: var(--border-hairline) solid var(--border); }
   .dashboard-metric:first-child { border-top: 0; }
+}
+
+.linear-sprint-points {
+  margin-right: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
 }
 
 .linear-cycle-select {
