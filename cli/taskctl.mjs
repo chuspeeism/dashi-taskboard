@@ -914,10 +914,18 @@ async function nextIssue(api, options, overrides) {
   if (projectId === LINEAR_PROJECT_ID && !settings.repoPath) return result("repo_unmapped");
   if (active >= settings.maxConcurrent) return result("concurrency_limit");
 
+  // Blockers from other projects are not in `tasks`; their [merged] comment can still unblock a todo.
+  const commentTaskIds = new Set(tasks.filter(needsComments).map((task) => task.id));
+  for (const task of tasks) {
+    if (task.status !== "todo") continue;
+    for (const blocker of task.relations?.blockedBy ?? []) {
+      if (blocker.status === "in_review") commentTaskIds.add(blocker.id);
+    }
+  }
   const commentsByTaskId = new Map(await Promise.all(
-    tasks.filter(needsComments).map(async (task) => [
-      task.id,
-      (await api.request("GET", `${taskPath(task.id)}/comments`)).comments,
+    [...commentTaskIds].map(async (taskId) => [
+      taskId,
+      (await api.request("GET", `${taskPath(taskId)}/comments`)).comments,
     ]),
   ));
   const candidates = rankCandidates(tasks, commentsByTaskId);

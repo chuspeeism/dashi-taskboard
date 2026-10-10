@@ -7,6 +7,8 @@ export const MAX_CONCURRENT_LIMIT = 10;
 export const DECISION_REQUEST_MARKER = "[decision-request]";
 // A user comment starting with this marker on an in_review task asks for rework.
 export const REWORK_MARKER = "/rework";
+// An agent comment starting with this marker records that the issue's PR is merged.
+export const MERGED_MARKER = "[merged]";
 
 const KIND_RANK = { resume: 0, rework: 1, new: 2 };
 const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3, none: 4 };
@@ -75,7 +77,15 @@ export function reworkRequested(comments) {
   return false;
 }
 
-export function candidateKind(task, comments) {
+// A blocker stops blocking once it is done, or in review with a merged PR.
+function blockerSatisfied(blocker, commentsByTaskId) {
+  if (blocker.status === "done") return true;
+  return blocker.status === "in_review" && (commentsByTaskId.get(blocker.id) ?? []).some(
+    (comment) => comment.authorType === "agent" && startsWithMarker(comment, MERGED_MARKER),
+  );
+}
+
+export function candidateKind(task, comments, commentsByTaskId = new Map()) {
   if (task.archivedAt) return null;
   const decision = decisionState(comments);
   if (task.status === "blocked") return decision === "answered" ? "resume" : null;
@@ -83,7 +93,7 @@ export function candidateKind(task, comments) {
   if (task.status !== "todo" || decision === "waiting") return null;
   if (task.labels?.includes("hold")) return null;
   const blockers = task.relations?.blockedBy ?? [];
-  return blockers.every((blocker) => blocker.status === "done") ? "new" : null;
+  return blockers.every((blocker) => blockerSatisfied(blocker, commentsByTaskId)) ? "new" : null;
 }
 
 // Tasks whose comments decide eligibility; the caller fetches comments for these only.
@@ -95,7 +105,7 @@ export function rankCandidates(tasks, commentsByTaskId) {
   return tasks
     .flatMap((task) => {
       if (!needsComments(task)) return [];
-      const kind = candidateKind(task, commentsByTaskId.get(task.id) ?? []);
+      const kind = candidateKind(task, commentsByTaskId.get(task.id) ?? [], commentsByTaskId);
       return kind ? [{ task, kind }] : [];
     })
     .sort((left, right) => (
