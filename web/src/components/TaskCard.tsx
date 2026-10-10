@@ -452,6 +452,8 @@ export function TaskCard({
   const showsProperties = Boolean(projectName)
     || (!processingCard && (hasProperties || showsInlineParticipants || showsConversation));
   const propertyDisabled = savingProperty !== null;
+  // Linear tasks are read-only in v1 apart from the allowed status moves.
+  const linearReadOnly = task.source === "linear";
 
   function updateProperty(changes: Partial<TaskDraft>, property: NonNullable<typeof savingProperty>) {
     setSavingProperty(property);
@@ -496,7 +498,7 @@ export function TaskCard({
           <span className="task-identifier">ID: {displayIdentifier}</span>
         </span>
         {presentation.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
-        {task.status === "in_review" && onComplete && (
+        {task.status === "in_review" && onComplete && !linearReadOnly && (
           <button
             className="task-card-complete"
             type="button"
@@ -523,7 +525,7 @@ export function TaskCard({
               task={task}
               participants={task.participants.length ? task.participants : [creator]}
               currentUser={currentUser}
-              disabled={propertyDisabled || task.source === "jira"}
+              disabled={propertyDisabled || task.source !== "local"}
               open={propertyMenu === "assignee"}
               onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
@@ -551,7 +553,7 @@ export function TaskCard({
           {!processingCard && task.priority !== "none" && (
             <PriorityControl
               task={task}
-              disabled={propertyDisabled}
+              disabled={propertyDisabled || linearReadOnly}
               open={propertyMenu === "priority"}
               onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
               onChange={(priority) => updateProperty({ priority }, "priority")}
@@ -562,7 +564,7 @@ export function TaskCard({
               availableLabels={availableLabels}
               selectedLabels={task.labels}
               open={propertyMenu === "labels"}
-              disabled={propertyDisabled}
+              disabled={propertyDisabled || linearReadOnly}
               className="card-label-picker card-property-control"
               triggerClassName="card-label-trigger"
               triggerContent={<TaskLabels task={task} />}
@@ -574,7 +576,7 @@ export function TaskCard({
           {!processingCard && (
             <DueDateControl
               task={task}
-              disabled={propertyDisabled}
+              disabled={propertyDisabled || linearReadOnly}
               onChange={(dueDate) => updateProperty({
                 dueDate,
                 ...(dueDate ? {} : { recurrence: null }),
@@ -586,7 +588,7 @@ export function TaskCard({
               task={task}
               participants={task.participants}
               currentUser={currentUser}
-              disabled={propertyDisabled || task.source === "jira"}
+              disabled={propertyDisabled || task.source !== "local"}
               open={propertyMenu === "assignee"}
               onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}

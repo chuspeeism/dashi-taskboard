@@ -21,6 +21,8 @@ import type {
   IssueRelationOrigin,
   IssueRelationType,
   JiraConnection,
+  LinearConnection,
+  LinearCycleSelection,
   Project,
   ProjectReadme,
   ProjectReadmeAttachment,
@@ -196,6 +198,60 @@ export async function configureJiraConnection(input: {
 
 export async function syncJiraConnection(): Promise<JiraConnection> {
   const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection/sync", {
+    method: "POST",
+  });
+  return data.connection;
+}
+
+export async function getLinearConnection(signal?: AbortSignal): Promise<LinearConnection> {
+  try {
+    const data = await request<{ connection: LinearConnection }>("/api/local/linear-connection", { signal });
+    return data.connection;
+  } catch (error) {
+    if (
+      error instanceof ApiError
+      && (
+        error.code === "LOCAL_COMPANION_REQUIRED"
+        || (error.status === 403 && error.code === "LOCAL_ONLY")
+        || error.status === 404
+      )
+    ) {
+      return {
+        configured: false,
+        workspaceUrlKey: null,
+        displayName: null,
+        teamKey: null,
+        selectedCycle: "current",
+        cycle: null,
+        projectId: "linear-my-tasks",
+        lastSyncedAt: null,
+      };
+    }
+    throw error;
+  }
+}
+
+export async function configureLinearConnection(input: {
+  apiKey: string;
+  teamKey: string;
+}): Promise<LinearConnection> {
+  const data = await request<{ connection: LinearConnection }>("/api/local/linear-connection", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return data.connection;
+}
+
+export async function selectLinearCycle(selectedCycle: LinearCycleSelection): Promise<LinearConnection> {
+  const data = await request<{ connection: LinearConnection }>("/api/local/linear-connection", {
+    method: "PATCH",
+    body: JSON.stringify({ selectedCycle }),
+  });
+  return data.connection;
+}
+
+export async function syncLinearConnection(): Promise<LinearConnection> {
+  const data = await request<{ connection: LinearConnection }>("/api/local/linear-connection/sync", {
     method: "POST",
   });
   return data.connection;

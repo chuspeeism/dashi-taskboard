@@ -484,6 +484,8 @@ export function TaskDetail({
   const commentInlineFiles = inlineMediaFiles(commentSegments);
   const editingDraft = serializeInlineMedia(editingSegments);
   const displayIdentifier = currentTask.externalKey ?? currentTask.identifier;
+  // Linear tasks are read-only in v1 apart from the allowed status moves.
+  const linearReadOnly = currentTask.source === "linear";
   const editingInlineImages = inlineMediaImages(editingSegments);
   const editingInlineFiles = inlineMediaFiles(editingSegments);
 
@@ -796,6 +798,7 @@ export function TaskDetail({
   }
 
   function beginDescriptionEdit() {
+    if (linearReadOnly) return;
     const segments = createInlineMediaSegments(
       descriptionDocument, referenceTasks, descriptionAttachments,
     );
@@ -1079,6 +1082,7 @@ export function TaskDetail({
                   value={title}
                   aria-label={text("议题标题", "Issue title")}
                   disabled={savingProperty === "title"}
+                  readOnly={linearReadOnly}
                   onChange={(event) => {
                     setTitle(event.target.value.replace(/\n/g, ""));
                     resizeTextarea(event.currentTarget);
@@ -1684,7 +1688,11 @@ export function TaskDetail({
                   <span className="detail-copy-action-icon" aria-hidden="true">
                     <LinearIcon name="openExternal" />
                   </span>
-                  <span className="detail-copy-action-label">{text("打开 Jira", "Open Jira")}</span>
+                  <span className="detail-copy-action-label">
+                    {currentTask.source === "linear"
+                      ? text("打开 Linear", "Open Linear")
+                      : text("打开 Jira", "Open Jira")}
+                  </span>
                 </a>
               )}
               <button
@@ -1759,7 +1767,7 @@ export function TaskDetail({
                   className: `priority-${priority}`,
                 }))}
                 open={propertyMenu === "priority"}
-                disabled={savingProperty === "priority"}
+                disabled={savingProperty === "priority" || linearReadOnly}
                 className="detail-property-picker"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("优先级", "Priority")}
@@ -1779,7 +1787,7 @@ export function TaskDetail({
                   icon: <ActorAvatar actor={actor} className="task-property-assignee-avatar" />,
                 }))}
                 open={propertyMenu === "assignee"}
-                disabled={currentTask.source === "jira" || savingProperty === "assignee"}
+                disabled={currentTask.source !== "local" || savingProperty === "assignee"}
                 className="detail-property-picker"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("负责人", "Assignee")}
@@ -1802,7 +1810,7 @@ export function TaskDetail({
                 availableLabels={availableLabels}
                 selectedLabels={currentTask.labels}
                 open={propertyMenu === "labels"}
-                disabled={savingProperty === "labels"}
+                disabled={savingProperty === "labels" || linearReadOnly}
                 className="detail-label-picker"
                 triggerClassName="detail-label-trigger"
                 showSelectedAsChips
@@ -1810,7 +1818,7 @@ export function TaskDetail({
                 onOpenChange={(open) => setPropertyMenu(open ? "labels" : null)}
                 onChange={(nextLabels) => void saveTask({ labels: nextLabels }, "labels")}
                 onCreateLabel={onCreateLabel}
-                onDeleteLabel={currentTask.source === "jira" ? undefined : onDeleteLabel}
+                onDeleteLabel={currentTask.source !== "local" ? undefined : onDeleteLabel}
               />
             </div>
             <div className="detail-property-row development-property">
@@ -1870,7 +1878,7 @@ export function TaskDetail({
               <input
                 type="date"
                 value={currentTask.dueDate ?? ""}
-                disabled={savingProperty === "dueDate"}
+                disabled={savingProperty === "dueDate" || linearReadOnly}
                 onChange={(event) => void saveTask({
                   dueDate: event.target.value || null,
                   ...(event.target.value ? {} : { recurrence: null }),
