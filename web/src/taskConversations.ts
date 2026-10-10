@@ -28,6 +28,8 @@ export interface TaskProcessingPresentation {
   completed: number | null;
   total: number | null;
   startedAt: string | null;
+  agentSession: AgentSession | null;
+  codexThread: boolean;
 }
 
 export interface TaskCardPresentation {
@@ -203,6 +205,8 @@ export function taskCardPresentation(
       completed: latestTodo?.completed ?? null,
       total: latestTodo?.total ?? null,
       startedAt: runningAi?.currentRun?.startedAt ?? null,
+      agentSession: task.agentSession ?? null,
+      codexThread: conversations.some((conversation) => conversation.kind !== "agent-session"),
     },
   };
 }

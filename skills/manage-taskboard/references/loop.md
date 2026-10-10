@@ -41,6 +41,12 @@ Never claim `backlog`, and never take over an issue another session is working.
 
 Follow the core workflow in `SKILL.md`: read the issue, comments and attachments, do the work in your own branch or worktree, verify the direct path, and open a PR. For `resume`, start from the user's answer. For `rework`, start from the `/rework` comment.
 
+At each step, record activity so the `in_progress` card shows the agent as active (it shows no activity after 10 minutes without one):
+
+```bash
+taskctl issue heartbeat ISSUE_ID --agent-platform claude --session-id ID
+```
+
 ## Stopping for a decision
 
 Stop and ask instead of guessing when the next step needs any of these:

@@ -27,6 +27,11 @@ function now() {
   return new Date().toISOString();
 }
 
+// Any task write attributed to an agent session counts as that session's latest activity.
+function storedTaskAgentSession(agentSession) {
+  return agentSession ? JSON.stringify({ ...agentSession, heartbeatAt: now() }) : null;
+}
+
 function storedThreadBindingForExisting(current, threadBinding, threadId) {
   if (
     threadBinding === undefined
@@ -1966,7 +1971,7 @@ export class TaskboardDatabase {
         input.recurrence?.unit ?? null,
         timestamp,
         timestamp,
-        input.agentSession ? JSON.stringify(input.agentSession) : null,
+        storedTaskAgentSession(input.agentSession),
       );
       this.database.exec("COMMIT");
       return this.getTask(id);
@@ -2078,7 +2083,7 @@ export class TaskboardDatabase {
     }
     if (agentSession !== undefined) {
       assignments.push("agent_session = ?");
-      values.push(agentSession ? JSON.stringify(agentSession) : null);
+      values.push(storedTaskAgentSession(agentSession));
     }
     assignments.push("version = version + 1", "updated_at = ?");
     const timestamp = now();
@@ -2146,7 +2151,7 @@ export class TaskboardDatabase {
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
-    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
+    const sessionValues = agentSession === undefined ? [] : [storedTaskAgentSession(agentSession)];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2181,7 +2186,7 @@ export class TaskboardDatabase {
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
-    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
+    const sessionValues = agentSession === undefined ? [] : [storedTaskAgentSession(agentSession)];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2219,7 +2224,7 @@ export class TaskboardDatabase {
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
-    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
+    const sessionValues = agentSession === undefined ? [] : [storedTaskAgentSession(agentSession)];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2882,11 +2887,24 @@ export class TaskboardDatabase {
     );
   }
 
+  recordAgentHeartbeat(id, agentSession) {
+    const current = this.#requireTaskRecord(id);
+    if (
+      current.agentSession?.platform !== agentSession.platform
+      || current.agentSession?.sessionId !== agentSession.sessionId
+    ) {
+      throw new ApiError(409, "AGENT_SESSION_MISMATCH", "The issue is not attributed to this agent session");
+    }
+    this.database.prepare("UPDATE tasks SET agent_session = ? WHERE id = ?")
+      .run(storedTaskAgentSession(agentSession), current.id);
+    return this.getTask(current.id);
+  }
+
   #touchTask(id, version, threadId, threadBinding, timestamp, agentSession) {
     const current = this.#requireTask(id);
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
-    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
+    const sessionValues = agentSession === undefined ? [] : [storedTaskAgentSession(agentSession)];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`

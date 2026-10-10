@@ -1,7 +1,7 @@
 import {
   parseMove, parseVersionMutation, parseRelationMutation,
   parseCommentCreate, parseCommentPatch, parseTaskCreate,
-  parseTaskPatch, parseTaskFilters, parseTaskTreeQuery, parseProjectReadmeSave,
+  parseTaskPatch, parseTaskFilters, parseTaskTreeQuery, parseProjectReadmeSave, parseAgentSession,
 } from "../shared/task-input.mjs";
 import {
   ApiError,
@@ -2944,7 +2944,7 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -2956,6 +2956,16 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
         }
         const action = taskRoute[2];
+        if (action === "heartbeat" && request.method === "POST") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["agentSession"]));
+          const agentSession = parseAgentSession(body.agentSession);
+          if (!agentSession) throw new ApiError(400, "INVALID_FIELD", "agentSession is required");
+          const task = database.recordAgentHeartbeat(id, agentSession);
+          events.emit("task.updated", { task });
+          return sendJson(response, 200, { task });
+        }
         if (!action && request.method === "GET") {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/tasks/:id does not accept query parameters");
