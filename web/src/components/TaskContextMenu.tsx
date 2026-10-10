@@ -372,7 +372,7 @@ export function TaskContextMenu({
           onPointerEnter={closeSubmenu}
           onClick={() => closeThen(() => onEdit(task))}
         />
-        {task.source !== "jira" && (
+        {task.source === "local" && (
           <MenuItem
             label={text("创建副本", "Create copy")}
             icon={<LinearIcon name="copy" />}
@@ -423,7 +423,7 @@ export function TaskContextMenu({
         />
       </div>
 
-      {task.source !== "jira" && (
+      {task.source === "local" && (
         <>
           <div className="context-menu-divider" role="separator" />
           <div className="context-menu-group">

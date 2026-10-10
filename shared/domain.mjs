@@ -11,6 +11,7 @@ export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];
 
 export const DEFAULT_PROJECT_ID = "local";
 export const JIRA_PROJECT_ID = "jira-my-tasks";
+export const LINEAR_PROJECT_ID = "linear-my-tasks";
 export const DEFAULT_LABEL_NAMES = [
   "缺陷",
   "特性",

@@ -23,12 +23,14 @@ import {
   createProject as createProjectRequest,
   createTask as createTaskRequest,
   configureJiraConnection,
+  configureLinearConnection,
   deleteArchivedTask as deleteArchivedTaskRequest,
   deleteProjectLabel as deleteProjectLabelRequest,
   deleteProject as deleteProjectRequest,
   getAiChatCatalog,
   getCodexThreadProgress,
   getJiraConnection,
+  getLinearConnection,
   getTaskboardRevision,
   getTaskboardMetadata,
   listArchivedTasks,
@@ -45,6 +47,8 @@ import {
   setApiText,
   setCurrentUserActor,
   syncJiraConnection,
+  syncLinearConnection,
+  selectLinearCycle,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
@@ -64,6 +68,7 @@ import { DashboardView } from "./components/DashboardView";
 import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
+import { LinearConnectionDialog } from "./components/LinearConnectionDialog";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
   type PendingInlineAttachment,
@@ -136,6 +141,8 @@ import {
   type IssueRelationOrigin,
   type IssueRelationType,
   type JiraConnection,
+  type LinearConnection,
+  type LinearCycleSelection,
   type Project,
   type Task,
   type TaskboardMetadata,
@@ -839,6 +846,11 @@ export function App() {
   const [jiraSaving, setJiraSaving] = useState(false);
   const [jiraSyncing, setJiraSyncing] = useState(false);
   const [jiraError, setJiraError] = useState<string | null>(null);
+  const [linearDialogOpen, setLinearDialogOpen] = useState(false);
+  const [linearConnection, setLinearConnection] = useState<LinearConnection | null>(null);
+  const [linearSaving, setLinearSaving] = useState(false);
+  const [linearSyncing, setLinearSyncing] = useState(false);
+  const [linearError, setLinearError] = useState<string | null>(null);
   const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
   const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
@@ -933,6 +945,8 @@ export function App() {
   );
   const isAllProjects = selectedProjectId === ALL_PROJECTS_ID;
   const isJiraProject = selectedProject?.source === "jira";
+  const isLinearProject = selectedProject?.source === "linear";
+  const isExternalProject = isJiraProject || isLinearProject;
   const storedBoardDisplaySettings = projectBoardDisplaySettings[selectedProjectId]
     ?? (isAllProjects
       ? ALL_PROJECTS_DEFAULT_BOARD_DISPLAY_SETTINGS
@@ -992,7 +1006,7 @@ export function App() {
     && tasks.length === 0
     && selectedProject
     && selectedProject.id !== GLOBAL_PROJECT_ID
-    && !isJiraProject
+    && !isExternalProject
     && localAiChatAvailable
       ? selectedProject.id
       : null;
@@ -1233,7 +1247,7 @@ export function App() {
   const developmentEditorProjectId = isAllProjects && editor ? editorProjectId : null;
   const createTargetProjects = projectChoices.flatMap((choice) => {
     const project = projects.find((candidate) => candidate.id === choice.id);
-    return project && project.source !== "jira"
+    return project && project.source === "local"
       ? [{ id: choice.id, name: choice.name }]
       : [];
   });
@@ -1928,8 +1942,9 @@ export function App() {
         listDeviceWorkspaces(signal),
       ]);
       if (requestId !== projectsRequestRef.current) return;
-      const [nextJiraConnection, nextTemporaryTasks] = await Promise.all([
+      const [nextJiraConnection, nextLinearConnection, nextTemporaryTasks] = await Promise.all([
         getJiraConnection(signal),
+        getLinearConnection(signal),
         listTasks(GLOBAL_PROJECT_ID, signal),
       ]);
       if (requestId !== projectsRequestRef.current) return;
@@ -1960,6 +1975,7 @@ export function App() {
           }
         : project));
       setJiraConnection(nextJiraConnection);
+      setLinearConnection(nextLinearConnection);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
         if (fromQuery === ALL_PROJECTS_ID) return fromQuery;
@@ -2044,7 +2060,7 @@ export function App() {
       setTasks(sortTasks(nextTasks));
       setArchivedTasks(sortTasks(nextArchivedTasks));
       setProjects((current) => current.map((project) => {
-        if (project.id !== projectId || project.source !== "jira") return project;
+        if (project.id !== projectId || project.source === "local") return project;
         const labels = [...new Set(nextTasks.flatMap((task) => task.labels))];
         return JSON.stringify(labels) === JSON.stringify(project.labels)
           ? project
@@ -2078,12 +2094,19 @@ export function App() {
 
   useEffect(() => {
     const isAllProjectTaskScope = taskScopeProjectId === ALL_PROJECTS_ID;
-    if ((!isJiraProject && !(isAllProjectTaskScope && jiraConnection?.configured)) || !taskScopeProjectId) return;
+    const externalConfigured = jiraConnection?.configured || linearConnection?.configured;
+    if ((!isExternalProject && !(isAllProjectTaskScope && externalConfigured)) || !taskScopeProjectId) return;
     const timer = window.setInterval(() => {
       void refreshTasks(taskScopeProjectId, { quiet: true });
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [isJiraProject, jiraConnection?.configured, refreshTasks, taskScopeProjectId]);
+  }, [
+    isExternalProject,
+    jiraConnection?.configured,
+    linearConnection?.configured,
+    refreshTasks,
+    taskScopeProjectId,
+  ]);
 
   useEffect(() => {
     const standalone = !embedded || window.parent === window;
@@ -2269,7 +2292,7 @@ export function App() {
         && !event.metaKey
         && !event.ctrlKey
         && selectedProjectId
-        && !isJiraProject
+        && !isExternalProject
       ) {
         event.preventDefault();
         setEditor({ status: "todo" });
@@ -2290,7 +2313,7 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [boardView, contextMenu, detailTaskId, editor, isJiraProject, projectMenuOpen, selectedProjectId]);
+  }, [boardView, contextMenu, detailTaskId, editor, isExternalProject, projectMenuOpen, selectedProjectId]);
 
   const taskComparator = useMemo(() => {
     if (taskSort === "name") {
@@ -3269,6 +3292,57 @@ export function App() {
     }
   }
 
+  function openLinearDialog() {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setLinearError(null);
+    setLinearDialogOpen(true);
+  }
+
+  async function saveLinearConnection(input: { apiKey: string; teamKey: string }) {
+    if (linearSaving) return;
+    setLinearSaving(true);
+    setLinearError(null);
+    try {
+      const connection = await configureLinearConnection(input);
+      const nextProjects = await listProjects();
+      setLinearConnection(connection);
+      setProjects(nextProjects);
+      setLinearDialogOpen(false);
+      changeProject(connection.projectId);
+      await refreshTasks(connection.projectId);
+      setAnnouncement(text(
+        `已同步 ${connection.displayName} 的 Linear 任务`,
+        `Synced Linear issues for ${connection.displayName}`,
+      ));
+    } catch (error) {
+      setLinearError(errorMessage(error));
+    } finally {
+      setLinearSaving(false);
+    }
+  }
+
+  async function syncLinearNow(selectedCycle?: LinearCycleSelection) {
+    if (linearSyncing || !selectedProjectId) return;
+    setLinearSyncing(true);
+    setActionError(null);
+    try {
+      const connection = selectedCycle
+        ? await selectLinearCycle(selectedCycle)
+        : await syncLinearConnection();
+      setLinearConnection(connection);
+      await Promise.all([
+        refreshTasks(taskScopeProjectId, { quiet: true }),
+        refreshProjectList(),
+      ]);
+      setAnnouncement(text("Linear 任务已同步", "Linear issues synced"));
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setLinearSyncing(false);
+    }
+  }
+
   function openCreateProjectDialog() {
     setProjectMenuOpen(false);
     setProjectContextMenu(null);
@@ -3524,6 +3598,19 @@ export function App() {
                         type="button"
                         role="menuitem"
                         disabled={openingProjectId !== null}
+                        onClick={openLinearDialog}
+                      >
+                        <RelationIcon className="project-avatar" color="currentColor" size={16} />
+                        <span>
+                          {linearConnection?.configured
+                            ? text("Linear 设置", "Linear settings")
+                            : text("连接 Linear", "Connect Linear")}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={openingProjectId !== null}
                         onClick={openCreateProjectDialog}
                       >
                         <PlusIcon className="project-avatar" color="currentColor" size={16} />
@@ -3562,7 +3649,44 @@ export function App() {
                 <RefreshIcon color="currentColor" />
               </button>
             )}
-            {selectedProjectId && !isJiraProject && (
+            {isLinearProject && (
+              <>
+                <select
+                  className="linear-cycle-select"
+                  value={linearConnection?.selectedCycle ?? "current"}
+                  disabled={linearSyncing}
+                  onChange={(event) => void syncLinearNow(event.target.value as LinearCycleSelection)}
+                  aria-label={text("Linear 周期", "Linear cycle")}
+                  title={linearConnection?.cycle
+                    ? `${linearConnection.cycle.name ?? `Cycle ${linearConnection.cycle.number}`} · ${linearConnection.cycle.startsAt.slice(0, 10)} – ${linearConnection.cycle.endsAt.slice(0, 10)}`
+                    : undefined}
+                >
+                  {([
+                    ["current", text("当前周期", "Current")],
+                    ["previous", text("上一周期", "Previous")],
+                    ["next", text("下一周期", "Next")],
+                    ["all", text("全部周期", "All cycles")],
+                  ] as const).map(([value, label]) => (
+                    <option value={value} key={value}>
+                      {value === linearConnection?.selectedCycle && linearConnection.cycle
+                        ? `${label} · ${linearConnection.cycle.name ?? `#${linearConnection.cycle.number}`}`
+                        : label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={linearSyncing}
+                  onClick={() => void syncLinearNow()}
+                  aria-label={text("同步 Linear", "Sync Linear")}
+                  title={text("同步 Linear", "Sync Linear")}
+                >
+                  <RefreshIcon color="currentColor" />
+                </button>
+              </>
+            )}
+            {selectedProjectId && !isExternalProject && (
               <button
                 className="icon-button header-create-button"
                 type="button"
@@ -3902,7 +4026,7 @@ export function App() {
                         showCover={boardDisplaySettings.cover}
                         showBody={boardDisplaySettings.body}
                         showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
-                        createEnabled={!isJiraProject}
+                        createEnabled={!isExternalProject}
                         onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ status: initialStatus })}
                         onEdit={openTaskDetail}
@@ -3943,7 +4067,7 @@ export function App() {
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}
                     onTabChange={setOtherTasksTab}
-                    onCreate={isJiraProject
+                    onCreate={isExternalProject
                       ? undefined
                       : (initialStatus) => setEditor({ status: initialStatus })}
                     onRestore={(task) => void restoreArchivedTask(task)}
@@ -3996,6 +4120,18 @@ export function App() {
             if (!jiraSaving) setJiraDialogOpen(false);
           }}
           onSave={saveJiraConnection}
+        />
+      )}
+
+      {linearDialogOpen && (
+        <LinearConnectionDialog
+          connection={linearConnection}
+          saving={linearSaving}
+          error={linearError}
+          onClose={() => {
+            if (!linearSaving) setLinearDialogOpen(false);
+          }}
+          onSave={saveLinearConnection}
         />
       )}
 

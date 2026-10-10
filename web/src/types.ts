@@ -343,7 +343,7 @@ export interface Project {
   id: string;
   name: string;
   workspacePath: string | null;
-  source: "local" | "jira";
+  source: "local" | "jira" | "linear";
   labels: string[];
   issueCount: number;
   createdAt: string;
@@ -444,7 +444,7 @@ export interface Task {
   startDate: string | null;
   dueDate: string | null;
   recurrence: Recurrence | null;
-  source: "local" | "jira";
+  source: "local" | "jira" | "linear";
   externalOrigin?: string | null;
   externalKey?: string | null;
   externalUrl: string | null;
@@ -453,6 +453,25 @@ export interface Task {
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type LinearCycleSelection = "current" | "previous" | "next" | "all";
+
+export interface LinearConnection {
+  configured: boolean;
+  workspaceUrlKey: string | null;
+  displayName: string | null;
+  teamKey: string | null;
+  selectedCycle: LinearCycleSelection;
+  cycle: {
+    id: string;
+    number: number;
+    name: string | null;
+    startsAt: string;
+    endsAt: string;
+  } | null;
+  projectId: string;
+  lastSyncedAt: string | null;
 }
 
 export interface JiraConnection {
