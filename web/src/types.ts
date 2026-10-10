@@ -433,6 +433,8 @@ export interface Task {
   conversationRefs: TaskConversationRef[];
   participants: ActorIdentity[];
   previewImage: Attachment | null;
+  // The latest agent [decision-request] comment has no later user comment.
+  awaitingDecision: boolean;
   activityKey: string;
   activityUpdatedAt: string;
   creatorType: ActorType;

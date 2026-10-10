@@ -2678,7 +2678,8 @@ export class TaskboardDatabase {
           thread_id, thread_codex_project_id, thread_codex_project_kind,
           thread_codex_host_id, thread_workspace_path, agent_session,
           author_type, author_id, author_name,
-          author_avatar_url, version, updated_at
+          author_avatar_url, version, updated_at, created_at,
+          substr(ltrim(body, ' ' || char(9, 10, 13)), 1, 32) AS body_head
         FROM comments
         WHERE task_id IN (${placeholders})
         ORDER BY task_id, id

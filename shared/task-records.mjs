@@ -1,3 +1,5 @@
+import { decisionState } from "./agent-loop.mjs";
+
 export function commentConversationTitle(body) {
   const firstLine = String(body ?? "")
     .split(/\r?\n/)
@@ -146,6 +148,14 @@ export function attachTaskActivity(task, comments, activities, previewImage = nu
   task.conversationRefs = conversationRefs;
   task.participants = participants;
   task.previewImage = previewImage;
+  // Decision state reads comments oldest first, like `taskctl next`.
+  const chronologicalComments = [...comments].sort((left, right) => (
+    left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id)
+  ));
+  task.awaitingDecision = decisionState(chronologicalComments.map((comment) => ({
+    authorType: comment.author_type,
+    body: comment.body_head,
+  }))) === "waiting";
   task.activityKey = JSON.stringify({
     version: 1,
     task: [task.id, task.version, task.updatedAt],

@@ -1350,6 +1350,35 @@ test("issue comments can be created, edited, listed, and deleted", async () => {
   assert.equal(taskAfterDelete.body.task.threadId, null);
 });
 
+test("awaitingDecision follows the latest agent decision request", async () => {
+  const baseUrl = await startServer();
+  const task = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Needs a decision" },
+  })).body.task;
+  assert.equal(task.awaitingDecision, false);
+
+  const awaiting = async () => {
+    const single = (await request(baseUrl, `/api/tasks/${task.id}`)).body.task;
+    const listed = (await request(baseUrl, "/api/tasks")).body.tasks.find((item) => item.id === task.id);
+    assert.equal(listed.awaitingDecision, single.awaitingDecision);
+    return single.awaitingDecision;
+  };
+
+  await request(baseUrl, `/api/tasks/${task.id}/comments`, {
+    method: "POST",
+    headers: { "x-taskboard-client": "taskctl" },
+    body: { body: "[decision-request] A or B?" },
+  });
+  assert.equal(await awaiting(), true);
+
+  await request(baseUrl, `/api/tasks/${task.id}/comments`, {
+    method: "POST",
+    body: { body: "B" },
+  });
+  assert.equal(await awaiting(), false);
+});
+
 test("taskctl issue creation and comments use the Codex Agent identity", async () => {
   const baseUrl = await startServer();
   const agentHeaders = {

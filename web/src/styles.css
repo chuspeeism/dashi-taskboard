@@ -7963,6 +7963,19 @@ kbd {
   pointer-events: none;
 }
 
+.task-awaiting-decision {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  pointer-events: none;
+}
+
 .card-properties {
   display: flex;
   align-items: center;

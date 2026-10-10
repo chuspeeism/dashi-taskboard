@@ -497,6 +497,11 @@ export function TaskCard({
         <span className="card-reference">
           <span className="task-identifier">ID: {displayIdentifier}</span>
         </span>
+        {task.awaitingDecision && (
+          <span className="task-awaiting-decision" title={text("等待你的决定", "Waiting for your decision")}>
+            {text("待决定", "Decision")}
+          </span>
+        )}
         {presentation.unread && <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />}
         {task.status === "in_review" && onComplete && !linearReadOnly && (
           <button
