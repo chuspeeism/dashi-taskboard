@@ -30,12 +30,16 @@ Invoke the CLI from the repository as `node cli/taskctl.mjs …`. Use this sessi
 3. When a subagent finishes, check its handoff: the PR URL, the exact head SHA, the verification, and the final issue status. If the issue is still `in_progress` with no handoff comment, add a comment saying what happened and move it to `blocked` with a `[decision-request]`, so it surfaces to the user.
 4. Run step 1 again to refill freed slots.
 
+## After a merge
+
+When the user has authorized a merge and you merge an issue's PR, add an agent comment to that issue right away: `[merged] <PR URL> <merge SHA>`, using the same `--agent-platform claude --session-id S`. Leave the issue `in_review`. `taskctl next` treats an `in_review` blocker with that comment as satisfied, so issues blocked by it become `new` candidates.
+
 ## Pacing
 
 Use `/loop` without an interval (self-paced). Subagent completion notifications wake the coordinator, so do not poll for them. When nothing is running and `next` returns `no_eligible` or only waiting work, schedule the next tick 20 to 30 minutes out.
 
 ## Never
 
-- Merge a PR, move an issue to `done`, or mark user acceptance.
+- Merge a PR without the user's authorization, move an issue to `done`, or mark user acceptance.
 - Work issues outside the given project. A Linear project (`linear-my-tasks`) is processed only when the user names it, its loop is enabled and a repository is mapped.
 - Raise `maxConcurrent` yourself. The user sets it.

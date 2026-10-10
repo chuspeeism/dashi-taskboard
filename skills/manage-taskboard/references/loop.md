@@ -42,9 +42,11 @@ Candidates are tried in this order, then by priority and board order:
 
 1. `resume`: a `blocked` issue whose latest `[decision-request]` agent comment has a later user comment, meaning the user answered.
 2. `rework`: an `in_review` issue whose latest user comment starts with `/rework` and has no later agent comment.
-3. `new`: a `todo` issue whose blockers are all `done`. It must not have the `hold` label or an unanswered decision request. For Linear issues `todo` means the Ready For Dev state.
+3. `new`: a `todo` issue whose blockers are all satisfied. A blocker is satisfied when it is `done`, or when it is `in_review` and has an agent comment starting with `[merged]`. It must not have the `hold` label or an unanswered decision request. For Linear issues `todo` means the Ready For Dev state.
 
 Never claim `backlog`, and never take over an issue another session is working.
+
+Issues are not moved to `done` without user acceptance, so a merge is recorded with a comment instead. Right after the coordinator merges an issue's PR (only when the user authorized the merge), it adds an agent comment `[merged] <PR URL> <merge SHA>` to that issue and leaves it `in_review`. `taskctl next` reads that comment from Taskboard only; it makes no GitHub calls.
 
 ## Working an issue
 
