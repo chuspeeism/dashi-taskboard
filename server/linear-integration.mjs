@@ -67,28 +67,41 @@ const TEAM_QUERY = `
   }
 `;
 
+const ISSUE_FIELDS = `
+  id
+  identifier
+  title
+  description
+  url
+  branchName
+  priority
+  dueDate
+  createdAt
+  updatedAt
+  state { id name type }
+  labels(first: 50) { nodes { name } }
+  assignee { id name displayName avatarUrl }
+  creator { id name displayName avatarUrl }
+  parent { id }
+`;
+
 const ASSIGNED_ISSUES_QUERY = `
   query TaskboardAssignedIssues($after: String, $filter: IssueFilter) {
     viewer {
       assignedIssues(first: 100, after: $after, filter: $filter, orderBy: updatedAt) {
-        nodes {
-          id
-          identifier
-          title
-          description
-          url
-          branchName
-          priority
-          dueDate
-          createdAt
-          updatedAt
-          state { id name type }
-          labels(first: 50) { nodes { name } }
-          assignee { id name displayName avatarUrl }
-          creator { id name displayName avatarUrl }
-        }
+        nodes { ${ISSUE_FIELDS} }
         pageInfo { hasNextPage endCursor }
       }
+    }
+  }
+`;
+
+// Parents of pulled sub-issues that fall outside the filter (another cycle or assignee),
+// shown for context the way Linear does.
+const PARENT_ISSUES_QUERY = `
+  query TaskboardParentIssues($ids: [ID!]) {
+    issues(first: 100, filter: { id: { in: $ids } }) {
+      nodes { ${ISSUE_FIELDS} }
     }
   }
 `;
@@ -194,6 +207,7 @@ function normalizeIssue(issue, config, index = 0) {
     assignee: actorFromLinear(issue.assignee, config.displayName),
     dueDate: typeof issue.dueDate === "string" ? issue.dueDate : null,
     gitBranch: gitBranch || null,
+    parentExternalId: typeof issue.parent?.id === "string" ? issue.parent.id : null,
     externalOrigin: config.originId,
     externalId,
     externalKey,
@@ -356,6 +370,14 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     const issues = cycle === null
       ? []
       : await fetchAssignedIssues(config, buildLinearFilter({ teamKey: config.teamKey, cycleId: cycle?.id }));
+    const pulledIds = new Set(issues.map((issue) => issue.id));
+    const missingParentIds = [...new Set(issues.flatMap((issue) => (
+      issue.parent?.id && !pulledIds.has(issue.parent.id) ? [issue.parent.id] : []
+    )))];
+    if (missingParentIds.length > 0) {
+      const parents = (await graphql(config, PARENT_ISSUES_QUERY, { ids: missingParentIds })).issues?.nodes ?? [];
+      issues.push(...parents);
+    }
     return { cycle: cycle ?? null, issues };
   }
 
