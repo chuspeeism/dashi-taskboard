@@ -22,6 +22,7 @@ import type {
   IssueRelationType,
   JiraConnection,
   LinearConnection,
+  LinearPlanning,
   LinearCycleSelection,
   Project,
   ProjectReadme,
@@ -248,6 +249,10 @@ export async function selectLinearCycle(selectedCycle: LinearCycleSelection): Pr
     body: JSON.stringify({ selectedCycle }),
   });
   return data.connection;
+}
+
+export async function getLinearPlanning(signal?: AbortSignal): Promise<LinearPlanning> {
+  return request<LinearPlanning>("/api/local/linear-connection/planning", { signal });
 }
 
 export async function syncLinearConnection(): Promise<LinearConnection> {

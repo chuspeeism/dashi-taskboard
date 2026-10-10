@@ -9849,3 +9849,65 @@ kbd {
   font: inherit;
   font-size: 12px;
 }
+
+.linear-plan-button {
+  height: 24px;
+  margin-right: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.linear-planning-panel {
+  width: min(560px, 100%);
+}
+
+.linear-planning-candidates {
+  max-height: 50vh;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.linear-planning-candidates label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  border-bottom: var(--border-hairline) solid var(--border);
+  cursor: pointer;
+}
+
+.linear-planning-key,
+.linear-planning-status {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.linear-planning-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linear-planning-estimate {
+  flex: none;
+  min-width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.delete-dialog .linear-planning-total {
+  margin-top: 12px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.delete-dialog .linear-planning-total.over {
+  color: var(--danger);
+  font-weight: 590;
+}

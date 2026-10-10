@@ -63,7 +63,7 @@ const TEAM_QUERY = `
         id
         key
         states(first: 100) { nodes { id name type } }
-        cycles(first: 100) { nodes { id number name startsAt endsAt isActive } }
+        cycles(first: 100) { nodes { id number name startsAt endsAt completedAt isActive } }
       }
     }
   }
@@ -86,6 +86,7 @@ const ISSUE_FIELDS = `
   assignee { id name displayName avatarUrl }
   creator { id name displayName avatarUrl }
   parent { id }
+  cycle { id }
 `;
 
 const ASSIGNED_ISSUES_QUERY = `
@@ -488,7 +489,61 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     }
   }
 
+  // Sprint planning (read-only): capacity from the last 3 finished cycles,
+  // the current cycle's scope, and my open issues with no cycle.
+  async function planning() {
+    const config = await configStore.read();
+    if (!config) throw new ApiError(409, "LINEAR_NOT_CONFIGURED", "Linear 尚未配置");
+    const team = await fetchTeam(config);
+    const cycles = team.cycles?.nodes ?? [];
+    const finished = cycles
+      .filter((cycle) => cycle.completedAt)
+      .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))
+      .slice(0, 3);
+    const current = resolveLinearCycle(cycles, "current");
+    const teamFilter = { team: { key: { eq: config.teamKey } } };
+    const cycleIds = [...finished, ...(current ? [current] : [])].map((cycle) => cycle.id);
+    const cycleIssues = cycleIds.length > 0
+      ? await fetchAssignedIssues(config, { and: [teamFilter, { cycle: { id: { in: cycleIds } } }] })
+      : [];
+    const candidates = await fetchAssignedIssues(config, {
+      and: [
+        teamFilter,
+        { cycle: { null: true } },
+        { state: { type: { nin: ["completed", "canceled", "duplicate"] } } },
+      ],
+    });
+    const points = (cycleId, include) => cycleIssues
+      .filter((issue) => issue.cycle?.id === cycleId && typeof issue.estimate === "number")
+      .filter((issue) => include(taskStatusFromLinear(issue.state)))
+      .reduce((sum, issue) => sum + issue.estimate, 0);
+    const previousCycles = finished.map((cycle) => ({
+      number: Number(cycle.number),
+      name: typeof cycle.name === "string" && cycle.name.trim() ? cycle.name.trim() : null,
+      completedPoints: points(cycle.id, (status) => status === "done"),
+    }));
+    const capacity = previousCycles.length > 0
+      ? Math.round((previousCycles.reduce((sum, cycle) => sum + cycle.completedPoints, 0) / previousCycles.length) * 10) / 10
+      : 0;
+    return {
+      capacity,
+      previousCycles,
+      currentScope: {
+        total: current ? points(current.id, (status) => status !== "canceled") : 0,
+        completed: current ? points(current.id, (status) => status === "done") : 0,
+      },
+      candidates: candidates.map((issue) => ({
+        externalKey: issue.identifier,
+        title: issue.title,
+        estimate: typeof issue.estimate === "number" ? issue.estimate : null,
+        status: taskStatusFromLinear(issue.state),
+        url: typeof issue.url === "string" ? issue.url : null,
+      })),
+    };
+  }
+
   return {
+    planning,
     async status() {
       return safeConfig(await configStore.read(), lastSyncedAt, lastCycle);
     },
