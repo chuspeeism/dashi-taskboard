@@ -455,6 +455,9 @@ export interface Task {
   estimate?: number | null;
   inScope?: boolean | null;
   externalState?: string | null;
+  // Agent loop: the user paused the agent / resumed it and no agent has claimed it yet.
+  pausedAt?: string | null;
+  resumedAt?: string | null;
   archivedAt: string | null;
   relations: TaskRelations;
   version: number;

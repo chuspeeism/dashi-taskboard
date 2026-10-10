@@ -12,7 +12,7 @@ taskctl loop config --project PROJECT_ID --disable
 ```
 
 - `enabled`: the loop hands out work only when true. The default is false.
-- `maxConcurrent`: the most issues agents may work at once, from 1 to 10. The default is 2. An issue counts as worked while it is `in_progress` with an agent session or a Codex thread binding.
+- `maxConcurrent`: the most issues agents may work at once, from 1 to 10. The default is 2. An issue counts as worked while it is `in_progress` with an agent session or a Codex thread binding and is not paused.
 - `repoPath`: the repository the agent works in. Required for the Linear project (`linear-my-tasks`), which has no workspace of its own.
 - `labelRepos`: optional per-label overrides. An issue with a mapped label uses that repository instead of `repoPath`.
 
@@ -40,13 +40,19 @@ taskctl next --project PROJECT_ID --claim --agent-platform claude --session-id I
 
 Candidates are tried in this order, then by priority and board order:
 
-1. `resume`: a `blocked` issue whose latest `[decision-request]` agent comment has a later user comment, meaning the user answered.
-2. `rework`: an `in_review` issue whose latest user comment starts with `/rework` and has no later agent comment.
-3. `new`: a `todo` issue whose blockers are all satisfied. A blocker is satisfied when it is `done`, or when it is `in_review` and has an agent comment starting with `[merged]`. It must not have the `hold` label or an unanswered decision request. For Linear issues `todo` means the Ready For Dev state.
+1. `resume`: a `blocked` issue whose `[decision-request]` agent comment has a user comment written after the agent comment's last edit, meaning the user answered; or an `in_progress` issue the user paused and then resumed.
+2. `rework`: an `in_review` issue whose latest `/rework` user comment was written after the agent comment's last edit.
+3. `new`: a `todo` issue whose blockers are all satisfied. A blocker is satisfied when it is `done`, or when it is `in_review` and its agent comment starts with `[merged]`. It must not have the `hold` label or an unanswered decision request. For Linear issues `todo` means the Ready For Dev state.
 
-Never claim `backlog`, and never take over an issue another session is working.
+Never claim `backlog`, never hand out a paused issue, and never take over an issue another session is working.
 
-Issues are not moved to `done` without user acceptance, so a merge is recorded with a comment instead. Right after the coordinator merges an issue's PR (only when the user authorized the merge), it adds an agent comment `[merged] <PR URL> <merge SHA>` to that issue and leaves it `in_review`. `taskctl next` reads that comment from Taskboard only; it makes no GitHub calls.
+Issues are not moved to `done` without user acceptance, so a merge is recorded in the agent comment instead. Right after the coordinator merges an issue's PR (only when the user authorized the merge), it edits that issue's agent comment to start with `[merged] <PR URL> <merge SHA>` and leaves the issue `in_review`. `taskctl next` reads that comment from Taskboard only; it makes no GitHub calls.
+
+## One agent comment per ticket
+
+Each issue holds at most one agent comment. The claim note, progress, the handoff, a `[decision-request]` and the `[merged]` record all go into that comment. Add it once with `taskctl comment add`, then edit it with `taskctl comment update COMMENT_ID --body ... --if-version N` instead of adding another. When a marker applies, it leads the body.
+
+`taskctl next` compares user comments with the agent comment's last edit time, not its position in the list: a `[decision-request]` counts as answered only by a user comment written after that edit, and a `/rework` counts only when the agent comment has not been edited since.
 
 ## Working an issue
 
@@ -60,6 +66,8 @@ At each step, record activity so the `in_progress` card shows the agent as activ
 taskctl issue heartbeat ISSUE_ID --agent-platform claude --session-id ID
 ```
 
+The user can pause an agent issue from its detail view. The issue stays `in_progress` (a Linear issue stays In Development) and its card shows "Paused (you)". While it is paused, `heartbeat` returns `paused: true`: stop at that point, record in the agent comment where you stopped, and end your run without moving the issue. When the user presses Resume, `taskctl next` returns the issue with `kind: "resume"`; start from that comment. An `in_progress` issue without an agent session or Codex thread shows "Manual (you)": the user is working it by hand, so leave it alone.
+
 ## Stopping for a decision
 
 Stop and ask instead of guessing when the next step needs any of these:
@@ -70,7 +78,7 @@ Stop and ask instead of guessing when the next step needs any of these:
 - A production deploy, release, or anything outside the repository.
 - Credentials, payments, or access you do not have.
 
-To stop, add one comment and move the issue to `blocked`:
+To stop, edit the agent comment to start with the decision request and move the issue to `blocked`:
 
 ```text
 [decision-request] <one-line question>
@@ -87,7 +95,7 @@ The user answers with a normal comment. The next `taskctl next` then returns the
 
 ## Handing off
 
-When the work is done and verified, add one comment and move the issue to `in_review`. Never move it to `done` and never merge.
+When the work is done and verified, rewrite the agent comment into the handoff and move the issue to `in_review`. Never move it to `done` and never merge.
 
 ```text
 Done: <what changed>

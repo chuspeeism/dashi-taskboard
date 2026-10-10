@@ -25,14 +25,16 @@ Invoke the CLI from the repository as `node cli/taskctl.mjs …`. Use this sessi
 2. For each claimed issue, start a background Agent with `isolation: "worktree"`. Give it:
    - the issue id, `kind` (`new`, `resume`, `rework`), the project id, the Taskboard URL and its own `--session-id`;
    - when `repoPath` is set (always for Linear), the instruction to work in that repository: create the worktree from it, branch from its current default branch, and follow its own `AGENTS.md` or `CLAUDE.md`;
-   - the instruction to follow `skills/manage-taskboard/references/loop.md` and `AGENTS.md` (the mapped repository's own rules when `repoPath` is set): branch from its current default branch, implement the smallest real path, verify it, open a PR, then either hand off to `in_review` or post a `[decision-request]` and move to `blocked`;
-   - for `resume` or `rework`, the instruction to read the latest user comment first.
-3. When a subagent finishes, check its handoff: the PR URL, the exact head SHA, the verification, and the final issue status. If the issue is still `in_progress` with no handoff comment, add a comment saying what happened and move it to `blocked` with a `[decision-request]`, so it surfaces to the user.
+   - the instruction to follow `skills/manage-taskboard/references/loop.md` and `AGENTS.md` (the mapped repository's own rules when `repoPath` is set): branch from its current default branch, implement the smallest real path, verify it, open a PR, then either hand off to `in_review` or turn its agent comment into a `[decision-request]` and move to `blocked`;
+   - the one-agent-comment rule: the issue holds a single agent comment (claim note, handoff, `[decision-request]`, `[merged]`), added once and then edited with `taskctl comment update`, with the marker leading the body when it applies;
+   - the instruction to stop when `taskctl issue heartbeat` returns `paused: true`, recording in the agent comment where it stopped;
+   - for `resume` or `rework`, the instruction to read the agent comment and the latest user comment first.
+3. When a subagent finishes, check its handoff: the PR URL, the exact head SHA, the verification, and the final issue status. A paused issue that stays `in_progress` is expected. If an unpaused issue is still `in_progress` with no handoff, edit its agent comment to start with a `[decision-request]` saying what happened and move it to `blocked`, so it surfaces to the user.
 4. Run step 1 again to refill freed slots.
 
 ## After a merge
 
-When the user has authorized a merge and you merge an issue's PR, add an agent comment to that issue right away: `[merged] <PR URL> <merge SHA>`, using the same `--agent-platform claude --session-id S`. Leave the issue `in_review`. `taskctl next` treats an `in_review` blocker with that comment as satisfied, so issues blocked by it become `new` candidates.
+When the user has authorized a merge and you merge an issue's PR, edit that issue's agent comment right away so it starts with `[merged] <PR URL> <merge SHA>` (`taskctl comment update`, same `--agent-platform claude --session-id S`); do not add a second comment. Leave the issue `in_review`. `taskctl next` treats an `in_review` blocker whose agent comment starts with `[merged]` as satisfied, so issues blocked by it become `new` candidates.
 
 ## Pacing
 

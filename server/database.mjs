@@ -118,6 +118,10 @@ function taskFromRow(row) {
     inScope: row.in_scope === null || row.in_scope === undefined ? null : row.in_scope === 1,
     // Linear only: the source workflow state name. Null elsewhere.
     externalState: row.external_state ?? null,
+    // Agent loop: set while the user has paused the agent, and after Resume
+    // until an agent claims the task again.
+    pausedAt: row.paused_at ?? null,
+    resumedAt: row.resumed_at ?? null,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -331,6 +335,8 @@ export class TaskboardDatabase {
         estimate REAL,
         in_scope INTEGER,
         external_state TEXT,
+        paused_at TEXT,
+        resumed_at TEXT,
         archived_at TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
@@ -591,6 +597,12 @@ export class TaskboardDatabase {
     }
     if (!migratedTaskColumns.some((column) => column.name === "external_state")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN external_state TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "paused_at")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN paused_at TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "resumed_at")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN resumed_at TEXT");
     }
     this.database.exec(`
       DROP INDEX IF EXISTS tasks_external_source_id;
@@ -2165,6 +2177,7 @@ export class TaskboardDatabase {
 
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
+    // An agent move (taskctl next --claim, handoff) ends a pause or a pending resume.
     const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
     const sessionValues = agentSession === undefined ? [] : [storedTaskAgentSession(agentSession)];
     const threadAssignment = storedBinding
@@ -2175,7 +2188,9 @@ export class TaskboardDatabase {
     try {
       const result = this.database.prepare(`
         UPDATE tasks
-        SET status = ?, sort_order = ?, ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?
+        SET status = ?, sort_order = ?, ${threadAssignment}${sessionAssignment}
+          ${agentSession === undefined && !storedBinding ? "" : "paused_at = NULL, resumed_at = NULL,"}
+          version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
       `).run(status, sortOrder, ...(storedBinding ?? []), ...sessionValues, timestamp, current.id, version);
       if (result.changes !== 1) {
@@ -2912,6 +2927,17 @@ export class TaskboardDatabase {
     }
     this.database.prepare("UPDATE tasks SET agent_session = ? WHERE id = ?")
       .run(storedTaskAgentSession(agentSession), current.id);
+    return this.getTask(current.id);
+  }
+
+  // Pause stops the agent loop on the task; Resume asks `taskctl next` to hand it out again.
+  setTaskPaused(id, paused) {
+    const current = this.#requireTask(id);
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE tasks SET paused_at = ?, resumed_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(paused ? timestamp : null, paused ? null : timestamp, timestamp, current.id);
     return this.getTask(current.id);
   }
 

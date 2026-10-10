@@ -16,9 +16,13 @@ export function isAgentWorking(task: {
   agentSession?: unknown;
   threadBinding?: unknown;
   threadId?: unknown;
+  pausedAt?: string | null;
+  resumedAt?: string | null;
 }): boolean;
 export const DECISION_REQUEST_MARKER: string;
 export function decisionState(comments: ReadonlyArray<{
   authorType: string;
   body: string;
+  createdAt: string;
+  updatedAt?: string;
 }>): "none" | "waiting" | "answered";

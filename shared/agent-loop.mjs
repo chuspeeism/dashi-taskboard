@@ -43,8 +43,11 @@ export function repoForTask(settings, task) {
   return label ? settings.labelRepos[label] : settings.repoPath;
 }
 
+// Paused tasks, and resumed tasks no agent has claimed again yet, do not count toward maxConcurrent.
 export function isAgentWorking(task) {
   return task.status === "in_progress"
+    && !task.pausedAt
+    && !task.resumedAt
     && Boolean(task.agentSession || task.threadBinding || task.threadId);
 }
 
@@ -52,29 +55,36 @@ function startsWithMarker(comment, marker) {
   return typeof comment?.body === "string" && comment.body.trimStart().startsWith(marker);
 }
 
+// An agent keeps one comment per ticket and edits it, so its last edit time,
+// not its position in the list, says when the agent last spoke.
+function editedAt(comment) {
+  return comment.updatedAt ?? comment.createdAt ?? "";
+}
+
 // "none" | "waiting" | "answered": the latest agent decision request and
-// whether the user has commented after it. Comments are oldest first.
+// whether the user has commented after its last edit.
 export function decisionState(comments) {
-  let requestIndex = -1;
-  comments.forEach((comment, index) => {
-    if (comment.authorType === "agent" && startsWithMarker(comment, DECISION_REQUEST_MARKER)) {
-      requestIndex = index;
+  let request = null;
+  for (const comment of comments) {
+    if (
+      comment.authorType === "agent"
+      && startsWithMarker(comment, DECISION_REQUEST_MARKER)
+      && (!request || editedAt(comment) >= editedAt(request))
+    ) {
+      request = comment;
     }
-  });
-  if (requestIndex === -1) return "none";
-  return comments.slice(requestIndex + 1).some((comment) => comment.authorType === "user")
+  }
+  if (!request) return "none";
+  return comments.some((comment) => comment.authorType === "user" && comment.createdAt > editedAt(request))
     ? "answered"
     : "waiting";
 }
 
-// A user /rework comment that no agent comment has followed yet.
+// The latest user /rework comment, unless an agent comment was written or edited after it.
 export function reworkRequested(comments) {
-  for (let index = comments.length - 1; index >= 0; index -= 1) {
-    const comment = comments[index];
-    if (comment.authorType === "agent") return false;
-    if (startsWithMarker(comment, REWORK_MARKER)) return true;
-  }
-  return false;
+  const rework = comments.findLast((comment) => comment.authorType === "user" && startsWithMarker(comment, REWORK_MARKER));
+  if (!rework) return false;
+  return !comments.some((comment) => comment.authorType === "agent" && editedAt(comment) > rework.createdAt);
 }
 
 // A blocker stops blocking once it is done, or in review with a merged PR.
@@ -87,6 +97,8 @@ function blockerSatisfied(blocker, commentsByTaskId) {
 
 export function candidateKind(task, comments, commentsByTaskId = new Map()) {
   if (task.archivedAt) return null;
+  // The user pressed Resume on a paused task: hand it out again until an agent claims it.
+  if (task.status === "in_progress") return task.resumedAt && !task.pausedAt ? "resume" : null;
   const decision = decisionState(comments);
   if (task.status === "blocked") return decision === "answered" ? "resume" : null;
   if (task.status === "in_review") return reworkRequested(comments) ? "rework" : null;
@@ -104,7 +116,6 @@ export function needsComments(task) {
 export function rankCandidates(tasks, commentsByTaskId) {
   return tasks
     .flatMap((task) => {
-      if (!needsComments(task)) return [];
       const kind = candidateKind(task, commentsByTaskId.get(task.id) ?? [], commentsByTaskId);
       return kind ? [{ task, kind }] : [];
     })

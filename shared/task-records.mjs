@@ -155,6 +155,8 @@ export function attachTaskActivity(task, comments, activities, previewImage = nu
   task.awaitingDecision = decisionState(chronologicalComments.map((comment) => ({
     authorType: comment.author_type,
     body: comment.body_head,
+    createdAt: comment.created_at,
+    updatedAt: comment.updated_at,
   }))) === "waiting";
   task.activityKey = JSON.stringify({
     version: 1,
