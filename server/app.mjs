@@ -2124,6 +2124,11 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "PUT", "PATCH"]);
       }
 
+      if (pathname === "/api/local/linear-connection/planning") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        return sendJson(response, 200, await linear.planning());
+      }
+
       if (pathname === "/api/local/linear-connection/sync") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         if ([...url.searchParams.keys()].length > 0) {

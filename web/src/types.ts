@@ -479,6 +479,19 @@ export interface LinearConnection {
   lastSyncedAt: string | null;
 }
 
+export interface LinearPlanning {
+  capacity: number;
+  previousCycles: { number: number; name: string | null; completedPoints: number }[];
+  currentScope: { total: number; completed: number };
+  candidates: {
+    externalKey: string;
+    title: string;
+    estimate: number | null;
+    status: TaskStatus;
+    url: string | null;
+  }[];
+}
+
 export interface JiraConnection {
   configured: boolean;
   baseUrl: string | null;

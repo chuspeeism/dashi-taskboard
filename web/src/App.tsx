@@ -77,6 +77,7 @@ import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { LinearConnectionDialog } from "./components/LinearConnectionDialog";
+import { LinearPlanningPanel } from "./components/LinearPlanningPanel";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
   type PendingInlineAttachment,
@@ -862,6 +863,7 @@ export function App() {
   const [jiraSyncing, setJiraSyncing] = useState(false);
   const [jiraError, setJiraError] = useState<string | null>(null);
   const [linearDialogOpen, setLinearDialogOpen] = useState(false);
+  const [linearPlanningOpen, setLinearPlanningOpen] = useState(false);
   const [linearConnection, setLinearConnection] = useState<LinearConnection | null>(null);
   const [linearSaving, setLinearSaving] = useState(false);
   const [linearSyncing, setLinearSyncing] = useState(false);
@@ -3756,6 +3758,14 @@ export function App() {
                   ))}
                 </select>
                 <button
+                  className="button secondary linear-plan-button"
+                  type="button"
+                  disabled={!linearConnection?.configured}
+                  onClick={() => setLinearPlanningOpen(true)}
+                >
+                  {text("规划", "Plan")}
+                </button>
+                <button
                   className="icon-button"
                   type="button"
                   disabled={linearSyncing}
@@ -4215,6 +4225,8 @@ export function App() {
           onSave={saveLinearConnection}
         />
       )}
+
+      {linearPlanningOpen && <LinearPlanningPanel onClose={() => setLinearPlanningOpen(false)} />}
 
       {projectCreateOpen && (
         <div
