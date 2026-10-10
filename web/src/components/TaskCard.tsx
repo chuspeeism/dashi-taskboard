@@ -11,6 +11,7 @@ import {
   type TaskDraft,
   type TaskPriority,
 } from "../types";
+import { agentPlatformLabel } from "../agentSessions";
 import { labelPresentation } from "../labels";
 import { taskPriorityLabel, useTaskboardI18n } from "../i18n";
 import { CODEX_AGENT_ACTOR, actorKey, assigneeTargetForActor } from "../actors";
@@ -195,9 +196,33 @@ function ProcessingProgress({
   );
 }
 
-function ProcessingLabel({ processing }: { processing: TaskCardPresentation["processing"] }) {
+const AGENT_ACTIVE_WINDOW_MS = 10 * 60_000;
+
+type AgentHeartbeatState = { active: boolean; minutes: number | null };
+
+function useAgentHeartbeat(processing: TaskCardPresentation["processing"]): AgentHeartbeatState {
+  const heartbeatAt = processing.running ? undefined : processing.agentSession?.heartbeatAt;
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!heartbeatAt) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [heartbeatAt]);
+  if (!heartbeatAt) return { active: false, minutes: null };
+  const age = Math.max(0, now - new Date(heartbeatAt).getTime());
+  return { active: age < AGENT_ACTIVE_WINDOW_MS, minutes: Math.floor(age / 60_000) };
+}
+
+function ProcessingLabel({
+  processing,
+  heartbeat,
+}: {
+  processing: TaskCardPresentation["processing"];
+  heartbeat: AgentHeartbeatState;
+}) {
   const { text } = useTaskboardI18n();
-  const { running, startedAt } = processing;
+  const { running, startedAt, agentSession, codexThread } = processing;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!running || !startedAt) return;
@@ -206,13 +231,25 @@ function ProcessingLabel({ processing }: { processing: TaskCardPresentation["pro
     return () => window.clearInterval(timer);
   }, [running, startedAt]);
   const elapsed = elapsedTime(startedAt, now);
-  return (
-    <span className="task-processing-label">
-      {running
-        ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
-        : text("暂停处理", "Processing paused")}
-    </span>
-  );
+  let label: string;
+  if (running) {
+    label = elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing...");
+  } else if (agentSession) {
+    const platform = agentPlatformLabel(agentSession.platform);
+    const { active, minutes } = heartbeat;
+    label = `${platform} · ${
+      minutes === null
+        ? text("无活动", "no activity")
+        : active
+          ? text(`${minutes} 分钟前活跃`, `active ${minutes}m ago`)
+          : text(`${minutes} 分钟无活动`, `no activity for ${minutes}m`)
+    }`;
+  } else if (codexThread) {
+    label = text("Codex 线程空闲", "Codex thread idle");
+  } else {
+    label = text("未关联智能体", "No agent attached");
+  }
+  return <span className="task-processing-label">{label}</span>;
 }
 
 function ProcessingStatusRow({
@@ -222,11 +259,12 @@ function ProcessingStatusRow({
   presentation: TaskCardPresentation;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }) {
-  const running = presentation.processing.running;
+  const heartbeat = useAgentHeartbeat(presentation.processing);
+  const running = presentation.processing.running || heartbeat.active;
   return (
     <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
-      <ProcessingLabel processing={presentation.processing} />
+      <ProcessingLabel processing={presentation.processing} heartbeat={heartbeat} />
       <span className="task-processing-spacer" aria-hidden="true" />
       {presentation.conversations.length > 0 && (
         <TaskConversationMenu

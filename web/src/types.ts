@@ -401,6 +401,7 @@ export type AgentPlatform = "claude" | "pi" | "agy" | "grok";
 export interface AgentSession {
   platform: AgentPlatform;
   sessionId: string;
+  heartbeatAt?: string;
 }
 
 interface TaskConversationRefBase {
