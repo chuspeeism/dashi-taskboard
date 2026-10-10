@@ -490,6 +490,7 @@ export function TaskCard({
   const hasProperties = task.priority !== "none" || task.labels.length > 0 || task.dueDate || hasEstimate;
   const showsProperties = Boolean(projectName)
     || hasEstimate
+    || task.labels.length > 0
     || (!processingCard && (hasProperties || showsInlineParticipants || showsConversation));
   const propertyDisabled = savingProperty !== null;
   // Linear tasks are read-only in v1 apart from the allowed status moves.
@@ -609,7 +610,7 @@ export function TaskCard({
               {task.estimate}
             </span>
           )}
-          {!processingCard && task.labels.length > 0 && (
+          {task.labels.length > 0 && (
             <LabelPicker
               availableLabels={availableLabels}
               selectedLabels={task.labels}
