@@ -9862,6 +9862,34 @@ kbd {
   cursor: default;
 }
 
+.agent-loop-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.agent-loop-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.agent-loop-settings select {
+  height: 24px;
+  padding: 0 4px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
 .linear-cycle-select {
   height: 24px;
   margin-right: 4px;

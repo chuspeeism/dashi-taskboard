@@ -1,3 +1,5 @@
+import { AGENT_LOOP_STORAGE_KEY } from "../../shared/agent-loop.mjs";
+
 const memoryStorage = new Map<string, string>();
 export const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
 const RETRY_DELAY_MS = 250;
@@ -11,16 +13,21 @@ function isProjectBoardDisplaySettingsKey(key: string) {
   return key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX);
 }
 
+// Keys kept in server client storage even when localStorage exists, so taskctl sees them.
+function isServerSharedKey(key: string) {
+  return isProjectBoardDisplaySettingsKey(key) || key === AGENT_LOOP_STORAGE_KEY;
+}
+
 async function readServerStorage() {
   const response = await fetch(new URL("api/client-storage", document.baseURI));
   if (!response.ok) throw new Error(`Taskboard storage returned ${response.status}`);
   const payload = await response.json() as { entries: Record<string, string> };
   if (localStorageBackend) {
     for (const key of memoryStorage.keys()) {
-      if (isProjectBoardDisplaySettingsKey(key)) memoryStorage.delete(key);
+      if (isServerSharedKey(key)) memoryStorage.delete(key);
     }
     for (const [key, value] of Object.entries(payload.entries)) {
-      if (isProjectBoardDisplaySettingsKey(key)) memoryStorage.set(key, value);
+      if (isServerSharedKey(key)) memoryStorage.set(key, value);
     }
     return;
   }
@@ -85,11 +92,11 @@ export function projectBoardDisplaySettingsStorageEntries() {
 
 export const taskboardStorage: Pick<Storage, "getItem" | "setItem" | "removeItem"> = {
   getItem(key) {
-    if (isProjectBoardDisplaySettingsKey(key)) return memoryStorage.get(key) ?? null;
+    if (isServerSharedKey(key)) return memoryStorage.get(key) ?? null;
     return localStorageBackend?.getItem(key) ?? memoryStorage.get(key) ?? null;
   },
   setItem(key, value) {
-    if (isProjectBoardDisplaySettingsKey(key)) {
+    if (isServerSharedKey(key)) {
       memoryStorage.set(key, value);
       persist(key, value);
       return;
@@ -102,7 +109,7 @@ export const taskboardStorage: Pick<Storage, "getItem" | "setItem" | "removeItem
     if (serverBacked) persist(key, value);
   },
   removeItem(key) {
-    if (isProjectBoardDisplaySettingsKey(key)) {
+    if (isServerSharedKey(key)) {
       memoryStorage.delete(key);
       persist(key, null);
       return;
