@@ -15,6 +15,7 @@ import {
   type MouseEvent,
 } from "react";
 import { taskboardStorage } from "../storage";
+import { DECISION_REQUEST_MARKER, decisionState } from "../../../shared/agent-loop.mjs";
 import {
   ApiError,
   attachmentDownloadUrl,
@@ -451,6 +452,8 @@ export function TaskDetail({
   );
   const [changeStatusToTodo, setChangeStatusToTodo] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [decisionAnswer, setDecisionAnswer] = useState("");
+  const [answeringDecision, setAnsweringDecision] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingSegments, setEditingSegments] = useState<InlineMediaSegment[]>(
@@ -919,6 +922,23 @@ export function TaskDetail({
     }
   }
 
+  // The answer is a normal user comment; the task stays blocked so `taskctl next` resumes it.
+  async function submitDecisionAnswer() {
+    const body = decisionAnswer.trim();
+    if (!body || answeringDecision) return;
+    setAnsweringDecision(true);
+    setCommentsError(null);
+    try {
+      const comment = await createComment(task.id, body);
+      setComments((current) => [...current, comment]);
+      setDecisionAnswer("");
+    } catch (error) {
+      setCommentsError(messageFor(error));
+    } finally {
+      setAnsweringDecision(false);
+    }
+  }
+
   function handleSubmitShortcut(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -1064,6 +1084,16 @@ export function TaskDetail({
   ].sort((left, right) => (
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
   ));
+  const chronologicalComments = activityTimeline.flatMap((item) => (
+    item.kind === "comment" ? [item.comment] : []
+  ));
+  const decision = decisionState(chronologicalComments);
+  const decisionRequest = [...chronologicalComments].reverse().find((comment) => (
+    comment.authorType === "agent" && comment.body.trimStart().startsWith(DECISION_REQUEST_MARKER)
+  ));
+  const showDecisionPanel = !commentsLoading && decisionRequest && (
+    decision === "waiting" || (decision === "answered" && currentTask.status === "blocked")
+  );
 
   return (
     <section
@@ -1291,6 +1321,59 @@ export function TaskDetail({
                 () => onRemoveRelation(anchor, type, relatedTaskId),
               )}
             />
+
+            {showDecisionPanel && (
+              <section className="decision-request-panel" aria-labelledby="decision-request-heading">
+                <header className="decision-request-heading">
+                  <h2 id="decision-request-heading">{text("等待你的决定", "Waiting for your decision")}</h2>
+                  <span>{decisionRequest.authorName}</span>
+                  <time title={exactTime(decisionRequest.createdAt, locale)}>{relativeTime(decisionRequest.createdAt, locale)}</time>
+                </header>
+                <div className="comment-body">
+                  <DescriptionDocument
+                    value={appendUnreferencedAttachments(decisionRequest.body, decisionRequest.attachments)}
+                    referenceTasks={referenceTasks}
+                    onOpenTask={onOpenTask}
+                    attachments={decisionRequest.attachments}
+                    enableImagePreview
+                    onOpenAttachment={handleAttachmentDownload}
+                    onCopyAttachmentPath={onCopy}
+                  />
+                </div>
+                {decision === "waiting" ? (
+                  <form
+                    className="decision-request-answer"
+                    onSubmit={(event) => { event.preventDefault(); void submitDecisionAnswer(); }}
+                  >
+                    <textarea
+                      value={decisionAnswer}
+                      rows={3}
+                      placeholder={text("写下你的决定…", "Write your answer…")}
+                      aria-label={text("回答决定请求", "Answer the decision request")}
+                      disabled={answeringDecision}
+                      onChange={(event) => setDecisionAnswer(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                          event.preventDefault();
+                          void submitDecisionAnswer();
+                        }
+                      }}
+                    />
+                    <button
+                      className="button primary"
+                      type="submit"
+                      disabled={!decisionAnswer.trim() || answeringDecision}
+                    >
+                      {answeringDecision ? text("发送中…", "Answering…") : text("回答", "Answer")}
+                    </button>
+                  </form>
+                ) : (
+                  <p className="decision-request-answered" role="status">
+                    {text("已回答，等待智能体继续", "Answered, waiting for the agent to resume")}
+                  </p>
+                )}
+              </section>
+            )}
 
             <section className="activity-section" aria-labelledby="activity-heading">
               <header className="activity-heading">
