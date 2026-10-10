@@ -10,6 +10,15 @@ import { promisify } from "node:util";
 import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
 import {
+  AGENT_LOOP_STORAGE_KEY,
+  MAX_CONCURRENT_LIMIT,
+  isAgentWorking,
+  needsComments,
+  parseAgentLoopSettings,
+  projectLoopSettings,
+  rankCandidates,
+} from "../shared/agent-loop.mjs";
+import {
   DEFAULT_PROJECT_ID,
   TASK_STATUSES,
   isTaskPriority,
@@ -27,7 +36,7 @@ const sourceRuntimeFile = path.resolve(
   ".data",
   "launcher-runtime.json",
 );
-const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread", "help"]);
+const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread", "help", "claim", "enable", "disable"]);
 const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
@@ -118,6 +127,8 @@ const COMMAND_OPTIONS = new Map([
   ["attachment download", new Set(["output", "json"])],
   ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
   ["context current", new Set(["cwd", "json"])],
+  ["next", new Set(["project", "claim", "thread-id", "agent-platform", "session-id", "json"])],
+  ["loop config", new Set(["project", "enable", "disable", "max-concurrent", "json"])],
 ]);
 
 const HELP_TEXT = new Map([
@@ -140,6 +151,8 @@ Commands:
   attachment list (--task ISSUE_ID | --comment COMMENT_ID) [--after CURSOR]
   attachment download ATTACHMENT_ID --output PATH
   attachment upload --file PATH (--task ISSUE_ID | --comment COMMENT_ID)
+  next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)]
+  loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N]
 
 Global options:
   --runtime-file FILE  Use an explicit launcher runtime descriptor
@@ -340,7 +353,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current, next, loop config",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -401,6 +414,11 @@ async function execute(parsed, overrides) {
     case "issue list":
       expectOperandCount(parsed, 0);
       return listIssues(api, parsed.options);
+    case "next":
+      return nextIssue(api, parsed.options, overrides);
+    case "loop config":
+      expectOperandCount(parsed, 0);
+      return configureLoop(api, parsed.options);
     case "issue get":
       expectOperandCount(parsed, 1);
       return api.request("GET", taskPath(parsed.operands[0]));
@@ -854,6 +872,83 @@ async function listIssues(api, options) {
   if (options.archived !== undefined) search.set("archived", options.archived);
   const query = search.size > 0 ? `?${search}` : "";
   return api.request("GET", `/api/tasks${query}`);
+}
+
+async function readLoopSettings(api) {
+  const { entries } = await api.request("GET", "/api/client-storage");
+  return parseAgentLoopSettings(entries?.[AGENT_LOOP_STORAGE_KEY]);
+}
+
+async function nextIssue(api, options, overrides) {
+  const projectId = requiredOption(options, "project");
+  const attribution = options.claim ? resolveConversationAttribution(options, overrides) : undefined;
+  const [{ tasks }, loopSettings] = await Promise.all([
+    api.request("GET", `/api/tasks?${new URLSearchParams({ projectId })}`),
+    readLoopSettings(api),
+  ]);
+  const settings = projectLoopSettings(loopSettings, projectId);
+  const active = tasks.filter(isAgentWorking).length;
+  const result = (reason, candidate = null, activeCount = active) => ({
+    task: candidate?.task ?? null,
+    kind: candidate?.kind ?? null,
+    reason,
+    active: activeCount,
+    maxConcurrent: settings.maxConcurrent,
+    enabled: settings.enabled,
+  });
+  if (!settings.enabled) return result("disabled");
+  if (active >= settings.maxConcurrent) return result("concurrency_limit");
+
+  const commentsByTaskId = new Map(await Promise.all(
+    tasks.filter(needsComments).map(async (task) => [
+      task.id,
+      (await api.request("GET", `${taskPath(task.id)}/comments`)).comments,
+    ]),
+  ));
+  const candidates = rankCandidates(tasks, commentsByTaskId);
+  if (candidates.length === 0) return result("no_eligible");
+  if (!options.claim) return result("available", candidates[0]);
+
+  for (const candidate of candidates.slice(0, 3)) {
+    try {
+      const { task } = await api.request("POST", `${taskPath(candidate.task.id)}/move`, {
+        status: "in_progress",
+        ...attribution,
+        version: candidate.task.version,
+      });
+      return result("claimed", { task, kind: candidate.kind }, active + 1);
+    } catch (error) {
+      // Another writer or a sync changed this task since it was listed; try the next one.
+      if (error instanceof TaskctlError && error.code === "VERSION_CONFLICT") continue;
+      throw error;
+    }
+  }
+  return result("conflict");
+}
+
+async function configureLoop(api, options) {
+  const projectId = requiredOption(options, "project");
+  if (options.enable && options.disable) throw usageError("Use either --enable or --disable, not both");
+  let maxConcurrent;
+  if (options["max-concurrent"] !== undefined) {
+    maxConcurrent = Number(options["max-concurrent"]);
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > MAX_CONCURRENT_LIMIT) {
+      throw usageError(`--max-concurrent must be an integer from 1 to ${MAX_CONCURRENT_LIMIT}`);
+    }
+  }
+  const loopSettings = await readLoopSettings(api);
+  const current = projectLoopSettings(loopSettings, projectId);
+  const settings = {
+    enabled: options.enable ? true : options.disable ? false : current.enabled,
+    maxConcurrent: maxConcurrent ?? current.maxConcurrent,
+  };
+  if (settings.enabled !== current.enabled || settings.maxConcurrent !== current.maxConcurrent) {
+    await api.request("PATCH", "/api/client-storage", {
+      key: AGENT_LOOP_STORAGE_KEY,
+      value: JSON.stringify({ ...loopSettings, [projectId]: settings }),
+    });
+  }
+  return { projectId, settings };
 }
 
 async function createIssue(api, options, overrides) {

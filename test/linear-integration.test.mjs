@@ -39,6 +39,7 @@ test("maps every MM7 workflow state by name", () => {
     assert.equal(taskStatusFromLinear(state), state.status, state.name);
   }
   assert.equal(taskStatusFromLinear({ name: "Something New", type: "started" }), "in_progress");
+  assert.equal(taskStatusFromLinear({ name: "Todo", type: "unstarted" }), "backlog");
 });
 
 test("maps Linear priorities 1:1", () => {
@@ -145,6 +146,12 @@ test("syncs the current cycle and writes back only allowed moves", async () => {
   await linear.moveTask(task, "in_progress");
   const write = stub.calls.find((call) => call.operation === "TaskboardIssueUpdate");
   assert.deepEqual(write.variables, { id: "MM7-1", input: { stateId: STATES[4].id } });
+
+  await linear.moveTask({ ...task, status: "in_review" }, "in_progress");
+  assert.deepEqual(
+    stub.calls.filter((call) => call.operation === "TaskboardIssueUpdate").at(-1).variables.input,
+    { stateId: STATES[4].id },
+  );
 
   await assert.rejects(
     linear.moveTask({ ...task, status: "in_progress" }, "done"),

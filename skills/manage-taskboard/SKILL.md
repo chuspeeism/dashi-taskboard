@@ -11,7 +11,7 @@ Apply the workflow below only to work explicitly targeting Codex Taskboard or al
 
 Within that scope, use `taskctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by the taskboard or supplied in the prompt. Never assume, derive, or rewrite an identifier prefix.
 
-Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed.
+Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed. When working issues in a loop with `taskctl next`, also follow [references/loop.md](references/loop.md).
 
 ## Select the CLI and active service
 
