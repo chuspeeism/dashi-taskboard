@@ -91,7 +91,7 @@ import {
   RefreshIcon,
   RelationIcon,
 } from "./components/SemanticIcons";
-import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { automationOptions, ProjectAutomationMenu, type AutoRunRunner } from "./components/ProjectAutomationMenu";
 import { TaskboardIcon } from "./components/TaskboardIcon";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
@@ -812,6 +812,7 @@ export function App() {
   const [agentLoopSettings, setAgentLoopSettings] = useState(
     () => parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY)),
   );
+  const [autoRunRunners, setAutoRunRunners] = useState<Record<string, AutoRunRunner>>({});
   const refreshProjectBoardDisplaySettings = useCallback(async () => {
     try {
       await refreshProjectBoardDisplaySettingsStorage();
@@ -2387,6 +2388,31 @@ export function App() {
     taskboardStorage.setItem(AGENT_LOOP_STORAGE_KEY, JSON.stringify(next));
     setAgentLoopSettings(next);
   };
+  // One Auto-run runner per project: Claude Code (agent loop) or Codex (scheduled automation).
+  const selectedRunner: AutoRunRunner = !selectedLoopSettings
+    ? "codex"
+    : autoRunRunners[selectedProjectId]
+      ?? (selectedLoopSettings.enabled || !selectedProjectAutomation?.enabledByUser ? "claude" : "codex");
+  const setAutoRun = (runner: AutoRunRunner, enabled: boolean) => {
+    setAutoRunRunners((current) => ({ ...current, [selectedProjectId]: runner }));
+    const codexOptions = automationOptions(automationModels, selectedProjectAutomation);
+    if (runner === "claude") {
+      saveLoopSettings({ enabled });
+      if (enabled && selectedProjectAutomation?.enabledByUser) {
+        saveProjectAutomation({ ...codexOptions, enabledByUser: false });
+      }
+      return;
+    }
+    if (enabled && selectedLoopSettings?.enabled) saveLoopSettings({ enabled: false });
+    saveProjectAutomation({ ...codexOptions, enabledByUser: enabled });
+  };
+  const changeAutoRunRunner = (runner: AutoRunRunner) => {
+    const running = selectedRunner === "claude"
+      ? Boolean(selectedLoopSettings?.enabled)
+      : Boolean(selectedProjectAutomation?.enabledByUser);
+    if (running) setAutoRun(runner, true);
+    else setAutoRunRunners((current) => ({ ...current, [selectedProjectId]: runner }));
+  };
 
   const linearSprintPoints = useMemo(
     () => (isLinearProject ? sprintPoints(tasks) : null),
@@ -3703,6 +3729,16 @@ export function App() {
             )}
             {selectedProject && (
               <ProjectAutomationMenu
+                runner={selectedRunner}
+                loop={selectedLoopSettings && {
+                  enabled: selectedLoopSettings.enabled,
+                  maxConcurrent: selectedLoopSettings.maxConcurrent,
+                  active: activeAgentTasks,
+                  limit: MAX_CONCURRENT_LIMIT,
+                }}
+                onRunnerChange={changeAutoRunRunner}
+                onEnabledChange={(enabled) => setAutoRun(selectedRunner, enabled)}
+                onMaxConcurrentChange={(maxConcurrent) => saveLoopSettings({ maxConcurrent })}
                 automation={selectedProjectAutomation}
                 models={automationModels}
                 pending={automationPending || automationCatalogLoading}
@@ -3711,34 +3747,6 @@ export function App() {
                 onOpen={() => void reconcileProjectAutomation()}
                 onChange={(options) => void saveProjectAutomation(options)}
               />
-            )}
-            {selectedLoopSettings && (
-              <span
-                className="agent-loop-settings"
-                title={text(
-                  `代理循环：${activeAgentTasks} 个进行中 / 最多 ${selectedLoopSettings.maxConcurrent} 个`,
-                  `Agent loop: ${activeAgentTasks} active / ${selectedLoopSettings.maxConcurrent} max`,
-                )}
-              >
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={selectedLoopSettings.enabled}
-                    onChange={(event) => saveLoopSettings({ enabled: event.target.checked })}
-                  />
-                  {text("代理循环", "Agent loop")}
-                </label>
-                <span className="agent-loop-count">{activeAgentTasks} /</span>
-                <select
-                  value={selectedLoopSettings.maxConcurrent}
-                  onChange={(event) => saveLoopSettings({ maxConcurrent: Number(event.target.value) })}
-                  aria-label={text("最大并发任务数", "Max concurrent tasks")}
-                >
-                  {Array.from({ length: MAX_CONCURRENT_LIMIT }, (_, index) => index + 1).map((value) => (
-                    <option value={value} key={value}>{value}</option>
-                  ))}
-                </select>
-              </span>
             )}
             {isJiraProject && (
               <button

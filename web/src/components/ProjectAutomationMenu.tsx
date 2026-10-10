@@ -31,7 +31,15 @@ interface AutomationState extends AutomationOptions {
   };
 }
 
+export type AutoRunRunner = "claude" | "codex";
+
 interface ProjectAutomationMenuProps {
+  runner: AutoRunRunner;
+  // Claude Code agent loop settings; null when the project has no agent loop.
+  loop: { enabled: boolean; maxConcurrent: number; active: number; limit: number } | null;
+  onRunnerChange: (runner: AutoRunRunner) => void;
+  onEnabledChange: (enabled: boolean) => void;
+  onMaxConcurrentChange: (maxConcurrent: number) => void;
   automation?: Partial<AutomationState>;
   models: AiChatModel[];
   pending: boolean;
@@ -50,7 +58,7 @@ const EFFORT_LABELS: Record<string, readonly [string, string]> = {
   ultra: ["极高 (ultra)", "Ultra"],
 };
 
-function automationOptions(
+export function automationOptions(
   models: AiChatModel[],
   automation?: Partial<AutomationState>,
 ): AutomationOptions {
@@ -62,12 +70,17 @@ function automationOptions(
     enabledByUser: automation?.enabledByUser ?? false,
     quotaAware: automation?.quotaAware ?? false,
     intervalMinutes: automation?.intervalMinutes ?? 5,
-    model: model?.slug ?? "",
-    reasoningEffort: reasoningEffort ?? "",
+    model: model?.slug ?? automation?.model ?? "",
+    reasoningEffort: reasoningEffort ?? automation?.reasoningEffort ?? "",
   };
 }
 
 export function ProjectAutomationMenu({
+  runner,
+  loop,
+  onRunnerChange,
+  onEnabledChange,
+  onMaxConcurrentChange,
   automation,
   models,
   pending,
@@ -104,6 +117,14 @@ export function ProjectAutomationMenu({
             : text("已暂停", "Paused"));
   const selectedModel = models.find((model) => model.slug === draft.model) ?? models[0];
   const disabled = pending || !selectedModel || Boolean(unavailableReason);
+  const isCodex = runner === "codex";
+  const enabled = isCodex ? draft.enabledByUser : Boolean(loop?.enabled);
+  const active = isCodex ? status === "ACTIVE" : Boolean(loop?.enabled);
+  const triggerLabel = isCodex
+    ? idleLabel ?? (status === "ACTIVE" ? text("自动认领中", "Auto-claiming") : text("自动运行", "Auto-run"))
+    : loop?.enabled
+      ? `Claude Code ${loop.active}/${loop.maxConcurrent}`
+      : text("自动运行", "Auto-run");
 
   useEffect(() => {
     if (!open) return;
@@ -162,31 +183,68 @@ export function ProjectAutomationMenu({
       ref={menuRef}
       className="project-automation-menu no-drag"
       role="dialog"
-      aria-label={text("自动认领待办设置", "Auto-claim settings")}
+      aria-label={text("自动运行设置", "Auto-run settings")}
       style={{ left: position.left, top: position.top, visibility: position.ready ? "visible" : "hidden" }}
     >
       <div className="project-automation-menu-heading">
-        <strong>{text("自动认领待办", "Auto-claim tasks")}</strong>
-        <span className={status === "ACTIVE" ? "is-active" : "is-paused"}>
-          {stateLabel}
+        <strong>{text("自动运行", "Auto-run")}</strong>
+        <span className={active ? "is-active" : "is-paused"}>
+          {isCodex ? stateLabel : loop?.enabled ? text("运行中", "Running") : text("已暂停", "Paused")}
         </span>
       </div>
+      {loop && (
+        <div className="project-automation-runner" role="radiogroup" aria-label={text("运行器", "Runner")}>
+          {([["claude", "Claude Code"], ["codex", "Codex"]] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={runner === value}
+              className={runner === value ? "is-selected" : undefined}
+              disabled={pending}
+              onClick={() => runner !== value && onRunnerChange(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="project-automation-switch">
-        <span>{text("自动认领开关", "Auto-claim")}</span>
+        <span>{text("自动运行开关", "Auto-run")}</span>
         <button
           type="button"
-          className={`board-setting-switch${draft.enabledByUser ? " is-on" : ""}`}
+          className={`board-setting-switch${enabled ? " is-on" : ""}`}
           role="switch"
-          aria-checked={draft.enabledByUser}
-          disabled={disabled}
-          onClick={() => submitChange({
-            ...draft,
-            enabledByUser: !draft.enabledByUser,
-          })}
+          aria-checked={enabled}
+          disabled={isCodex && disabled}
+          onClick={() => {
+            if (isCodex) setDraft({ ...draft, enabledByUser: !enabled });
+            onEnabledChange(!enabled);
+          }}
         >
           <span aria-hidden="true" />
         </button>
       </div>
+      {loop && (
+        <div className="project-automation-field">
+          <span>{text("进行中 / 最大并发", "Active / max concurrent")}</span>
+          <span className="project-automation-count">
+            {loop.active} /
+            <select
+              className="project-automation-select"
+              value={loop.maxConcurrent}
+              onChange={(event) => onMaxConcurrentChange(Number(event.target.value))}
+              aria-label={text("最大并发任务数", "Max concurrent tasks")}
+            >
+              {Array.from({ length: loop.limit }, (_, index) => index + 1).map((value) => (
+                <option value={value} key={value}>{value}</option>
+              ))}
+            </select>
+          </span>
+        </div>
+      )}
+      {isCodex && (
+        <>
       <div className="project-automation-switch">
         <span>{text("根据额度启用/关闭", "Use quota limits")}</span>
         <button
@@ -317,6 +375,8 @@ export function ProjectAutomationMenu({
       )}
       {unavailableReason && <p className="project-automation-note">{unavailableReason}</p>}
       {error && error !== unavailableReason && <p className="project-automation-error" role="alert">{error}</p>}
+        </>
+      )}
     </div>,
     document.body,
   ) : null;
@@ -326,16 +386,12 @@ export function ProjectAutomationMenu({
       <button
         ref={triggerRef}
         type="button"
-        className={`project-automation-trigger no-drag ${status === "ACTIVE" ? "is-active" : "is-paused"}`}
-        aria-label={idleLabel ?? (status === "ACTIVE"
-          ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation"))}
+        className={`project-automation-trigger no-drag ${active ? "is-active" : "is-paused"}`}
+        aria-label={triggerLabel}
         aria-busy={pending}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={idleLabel ?? (status === "ACTIVE"
-          ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation"))}
+        title={triggerLabel}
         onClick={() => {
           if (!open) {
             setPosition((current) => ({ ...current, ready: false }));
@@ -344,10 +400,8 @@ export function ProjectAutomationMenu({
           setOpen((current) => !current);
         }}
       >
-        <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
-        <span>{idleLabel ?? (status === "ACTIVE"
-          ? text("自动认领中", "Auto-claiming")
-          : text("自动化", "Automation"))}</span>
+        <TaskboardIcon name={active ? "automationPause" : "automationPlay"} />
+        <span>{triggerLabel}</span>
       </button>
       {menu}
     </>
