@@ -1,5 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { TaskboardDatabase } from "../server/database.mjs";
+import { LINEAR_PROJECT_ID } from "../shared/domain.mjs";
+import { sprintPoints } from "../shared/sprint-points.mjs";
 
 import {
   buildLinearFilter,
@@ -87,6 +94,7 @@ function linearStub() {
   const stub = {
     calls,
     issue,
+    parent,
     overrideStateAfterWrite: null,
     async fetch(url, init) {
       assert.equal(url, "https://api.linear.app/graphql");
@@ -176,4 +184,27 @@ test("syncs the current cycle and writes back only allowed moves", async () => {
     linear.moveTask({ ...task, status: "in_progress" }, "in_review"),
     { code: "LINEAR_STATE_CONFLICT" },
   );
+});
+
+test("stores estimates and the in-scope flag; context parents stay out of sprint points", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-linear-points-"));
+  const database = new TaskboardDatabase(path.join(directory, "taskboard.sqlite"));
+  try {
+    const stub = linearStub();
+    stub.issue.estimate = 3;
+    stub.parent.estimate = 8;
+    const linear = createLinearIntegration({ configStore: memoryConfigStore(), database, fetch: stub.fetch });
+    await linear.configure({ apiKey: "lin_api_test" });
+
+    const tasks = database.listTasks({ projectId: LINEAR_PROJECT_ID });
+    const byKey = Object.fromEntries(tasks.map((task) => [task.externalKey, task]));
+    assert.equal(byKey["MM7-2"].estimate, 3);
+    assert.equal(byKey["MM7-2"].inScope, true);
+    assert.equal(byKey["MM7-1"].estimate, 8);
+    assert.equal(byKey["MM7-1"].inScope, false);
+    assert.deepEqual(sprintPoints(tasks), { total: 3, completed: 0, remaining: 3, byStatus: { todo: 3 } });
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

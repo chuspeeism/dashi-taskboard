@@ -448,8 +448,10 @@ export function TaskCard({
     () => showBody ? taskBodyText(task.description) : "",
     [showBody, task.description],
   );
-  const hasProperties = task.priority !== "none" || task.labels.length > 0 || task.dueDate;
+  const hasEstimate = task.estimate !== null && task.estimate !== undefined;
+  const hasProperties = task.priority !== "none" || task.labels.length > 0 || task.dueDate || hasEstimate;
   const showsProperties = Boolean(projectName)
+    || hasEstimate
     || (!processingCard && (hasProperties || showsInlineParticipants || showsConversation));
   const propertyDisabled = savingProperty !== null;
   // Linear tasks are read-only in v1 apart from the allowed status moves.
@@ -558,6 +560,11 @@ export function TaskCard({
               onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
               onChange={(priority) => updateProperty({ priority }, "priority")}
             />
+          )}
+          {hasEstimate && (
+            <span className="estimate-chip" title={text(`估算 ${task.estimate} 点`, `Estimate ${task.estimate} points`)}>
+              {task.estimate}
+            </span>
           )}
           {!processingCard && task.labels.length > 0 && (
             <LabelPicker

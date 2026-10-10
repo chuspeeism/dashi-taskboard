@@ -77,6 +77,7 @@ const ISSUE_FIELDS = `
   url
   branchName
   priority
+  estimate
   dueDate
   createdAt
   updatedAt
@@ -208,6 +209,8 @@ function normalizeIssue(issue, config, index = 0) {
     creator: actorFromLinear(issue.creator, config.displayName),
     assignee: actorFromLinear(issue.assignee, config.displayName),
     dueDate: typeof issue.dueDate === "string" ? issue.dueDate : null,
+    estimate: typeof issue.estimate === "number" ? issue.estimate : null,
+    inScope: issue.inScope === true,
     gitBranch: gitBranch || null,
     parentExternalId: typeof issue.parent?.id === "string" ? issue.parent.id : null,
     externalOrigin: config.originId,
@@ -372,13 +375,14 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     const issues = cycle === null
       ? []
       : await fetchAssignedIssues(config, buildLinearFilter({ teamKey: config.teamKey, cycleId: cycle?.id }));
+    for (const issue of issues) issue.inScope = true;
     const pulledIds = new Set(issues.map((issue) => issue.id));
     const missingParentIds = [...new Set(issues.flatMap((issue) => (
       issue.parent?.id && !pulledIds.has(issue.parent.id) ? [issue.parent.id] : []
     )))];
     if (missingParentIds.length > 0) {
       const parents = (await graphql(config, PARENT_ISSUES_QUERY, { ids: missingParentIds })).issues?.nodes ?? [];
-      issues.push(...parents);
+      issues.push(...parents.map((parent) => ({ ...parent, inScope: false })));
     }
     return { cycle: cycle ?? null, issues };
   }

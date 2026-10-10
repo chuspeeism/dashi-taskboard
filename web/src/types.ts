@@ -448,6 +448,9 @@ export interface Task {
   externalOrigin?: string | null;
   externalKey?: string | null;
   externalUrl: string | null;
+  // Linear only; null for local and Jira tasks.
+  estimate?: number | null;
+  inScope?: boolean | null;
   archivedAt: string | null;
   relations: TaskRelations;
   version: number;
