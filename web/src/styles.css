@@ -2698,6 +2698,58 @@ kbd {
   padding: 0 14px 28px;
 }
 
+.decision-request-panel {
+  margin: 0 14px 22px;
+  overflow: hidden;
+  border: var(--border-hairline) solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+
+.decision-request-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.decision-request-heading h2 {
+  margin: 0 auto 0 0;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.decision-request-answer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+
+.decision-request-answer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.decision-request-answered {
+  margin: 0;
+  padding: 0 16px 14px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .issue-sub-issues > header {
   display: flex;
   align-items: center;
