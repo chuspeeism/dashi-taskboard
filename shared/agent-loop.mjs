@@ -28,7 +28,17 @@ export function projectLoopSettings(settings, projectId) {
     && value.maxConcurrent <= MAX_CONCURRENT_LIMIT
     ? value.maxConcurrent
     : DEFAULT_MAX_CONCURRENT;
-  return { enabled: value?.enabled === true, maxConcurrent };
+  const repoPath = typeof value?.repoPath === "string" && value.repoPath ? value.repoPath : null;
+  const labelRepos = value?.labelRepos && typeof value.labelRepos === "object" && !Array.isArray(value.labelRepos)
+    ? Object.fromEntries(Object.entries(value.labelRepos).filter(([, path]) => typeof path === "string" && path))
+    : {};
+  return { enabled: value?.enabled === true, maxConcurrent, repoPath, labelRepos };
+}
+
+// The repository an agent works in for this task: the first label override, else the default.
+export function repoForTask(settings, task) {
+  const label = task?.labels?.find((name) => Object.hasOwn(settings.labelRepos, name));
+  return label ? settings.labelRepos[label] : settings.repoPath;
 }
 
 export function isAgentWorking(task) {

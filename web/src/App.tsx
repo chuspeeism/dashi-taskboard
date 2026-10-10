@@ -2368,13 +2368,13 @@ export function App() {
     return () => 0;
   }, [language, taskSort]);
 
-  const isLocalProject = selectedProject?.source === "local";
-  const selectedLoopSettings = isLocalProject && selectedProject
+  const isLoopProject = selectedProject?.source === "local" || isLinearProject;
+  const selectedLoopSettings = isLoopProject && selectedProject
     ? projectLoopSettings(agentLoopSettings, selectedProject.id)
     : null;
   const activeAgentTasks = useMemo(
-    () => (isLocalProject ? tasks.filter(isAgentWorking).length : 0),
-    [isLocalProject, tasks],
+    () => (isLoopProject ? tasks.filter(isAgentWorking).length : 0),
+    [isLoopProject, tasks],
   );
   const saveLoopSettings = (change: Partial<{ enabled: boolean; maxConcurrent: number }>) => {
     if (!selectedProject || !selectedLoopSettings) return;

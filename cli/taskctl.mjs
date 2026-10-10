@@ -17,9 +17,11 @@ import {
   parseAgentLoopSettings,
   projectLoopSettings,
   rankCandidates,
+  repoForTask,
 } from "../shared/agent-loop.mjs";
 import {
   DEFAULT_PROJECT_ID,
+  LINEAR_PROJECT_ID,
   TASK_STATUSES,
   isTaskPriority,
   isTaskStatus,
@@ -128,7 +130,7 @@ const COMMAND_OPTIONS = new Map([
   ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
   ["context current", new Set(["cwd", "json"])],
   ["next", new Set(["project", "claim", "thread-id", "agent-platform", "session-id", "json"])],
-  ["loop config", new Set(["project", "enable", "disable", "max-concurrent", "json"])],
+  ["loop config", new Set(["project", "enable", "disable", "max-concurrent", "repo", "label-repo", "json"])],
 ]);
 
 const HELP_TEXT = new Map([
@@ -153,6 +155,7 @@ Commands:
   attachment upload --file PATH (--task ISSUE_ID | --comment COMMENT_ID)
   next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)]
   loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N]
+              [--repo PATH] [--label-repo LABEL=PATH]
 
 Global options:
   --runtime-file FILE  Use an explicit launcher runtime descriptor
@@ -891,12 +894,15 @@ async function nextIssue(api, options, overrides) {
   const result = (reason, candidate = null, activeCount = active) => ({
     task: candidate?.task ?? null,
     kind: candidate?.kind ?? null,
+    repoPath: candidate ? repoForTask(settings, candidate.task) : null,
     reason,
     active: activeCount,
     maxConcurrent: settings.maxConcurrent,
     enabled: settings.enabled,
   });
   if (!settings.enabled) return result("disabled");
+  // A Linear project has no workspace, so the loop needs a mapped repository to branch from.
+  if (projectId === LINEAR_PROJECT_ID && !settings.repoPath) return result("repo_unmapped");
   if (active >= settings.maxConcurrent) return result("concurrency_limit");
 
   const commentsByTaskId = new Map(await Promise.all(
@@ -936,13 +942,26 @@ async function configureLoop(api, options) {
       throw usageError(`--max-concurrent must be an integer from 1 to ${MAX_CONCURRENT_LIMIT}`);
     }
   }
+  let labelRepo;
+  if (options["label-repo"] !== undefined) {
+    const separator = options["label-repo"].indexOf("=");
+    if (separator < 1) throw usageError("--label-repo must be LABEL=PATH (empty PATH removes the label)");
+    labelRepo = [options["label-repo"].slice(0, separator), options["label-repo"].slice(separator + 1)];
+  }
   const loopSettings = await readLoopSettings(api);
   const current = projectLoopSettings(loopSettings, projectId);
+  const labelRepos = { ...current.labelRepos };
+  if (labelRepo) {
+    if (labelRepo[1]) labelRepos[labelRepo[0]] = path.resolve(labelRepo[1]);
+    else delete labelRepos[labelRepo[0]];
+  }
   const settings = {
     enabled: options.enable ? true : options.disable ? false : current.enabled,
     maxConcurrent: maxConcurrent ?? current.maxConcurrent,
+    repoPath: options.repo === undefined ? current.repoPath : (options.repo ? path.resolve(options.repo) : null),
+    labelRepos,
   };
-  if (settings.enabled !== current.enabled || settings.maxConcurrent !== current.maxConcurrent) {
+  if (JSON.stringify(settings) !== JSON.stringify(current)) {
     await api.request("PATCH", "/api/client-storage", {
       key: AGENT_LOOP_STORAGE_KEY,
       value: JSON.stringify({ ...loopSettings, [projectId]: settings }),
