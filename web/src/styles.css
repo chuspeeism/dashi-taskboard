@@ -9862,6 +9862,20 @@ kbd {
   cursor: default;
 }
 
+.notification-enable-button {
+  height: 24px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
 .agent-loop-settings {
   display: inline-flex;
   align-items: center;

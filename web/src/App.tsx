@@ -799,6 +799,9 @@ export function App() {
       ? actionError
       : text(actionError[0], actionError[1]);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
+  const [notificationPermission, setNotificationPermission] = useState(() => (
+    typeof Notification === "undefined" ? "unsupported" : Notification.permission
+  ));
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
   const [taskSort, setTaskSort] = useState<TaskSort>("default");
@@ -885,6 +888,9 @@ export function App() {
   const projectsRequestRef = useRef(0);
   const tasksRequestRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
+  const awaitingDecisionRef = useRef(new Map<string, boolean>());
+  const openTaskDetailRef = useRef(openTaskDetail);
+  openTaskDetailRef.current = openTaskDetail;
   const undoSequenceRef = useRef(0);
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
@@ -1773,6 +1779,25 @@ export function App() {
 
   useEffect(() => {
     tasksRef.current = tasks;
+  }, [tasks]);
+
+  useEffect(() => {
+    const known = awaitingDecisionRef.current;
+    for (const task of tasks) {
+      const wasAwaiting = known.get(task.id);
+      known.set(task.id, task.awaitingDecision);
+      // Only a task already seen as not awaiting notifies, so tasks awaiting at load stay quiet.
+      if (wasAwaiting !== false || !task.awaitingDecision) continue;
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") continue;
+      const notification = new Notification("Decision needed", {
+        body: `${task.externalKey ?? task.identifier} ${task.title}`,
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+        openTaskDetailRef.current(task);
+      };
+    }
   }, [tasks]);
 
   useEffect(() => {
@@ -3667,6 +3692,15 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
+            {notificationPermission === "default" && (
+              <button
+                className="notification-enable-button"
+                type="button"
+                onClick={() => void Notification.requestPermission().then(setNotificationPermission)}
+              >
+                {text("启用通知", "Enable notifications")}
+              </button>
+            )}
             {selectedProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
