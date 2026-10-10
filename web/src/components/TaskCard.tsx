@@ -487,9 +487,11 @@ export function TaskCard({
     [showBody, task.description],
   );
   const hasEstimate = task.estimate !== null && task.estimate !== undefined;
+  const externalState = task.source === "linear" ? task.externalState : null;
   const hasProperties = task.priority !== "none" || task.labels.length > 0 || task.dueDate || hasEstimate;
   const showsProperties = Boolean(projectName)
     || hasEstimate
+    || Boolean(externalState)
     || task.labels.length > 0
     || (!processingCard && (hasProperties || showsInlineParticipants || showsConversation));
   const propertyDisabled = savingProperty !== null;
@@ -604,6 +606,11 @@ export function TaskCard({
               onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
               onChange={(priority) => updateProperty({ priority }, "priority")}
             />
+          )}
+          {externalState && (
+            <span className="linear-state-chip" title={text(`Linear 状态：${externalState}`, `Linear state: ${externalState}`)}>
+              {externalState}
+            </span>
           )}
           {hasEstimate && (
             <span className="estimate-chip" title={text(`估算 ${task.estimate} 点`, `Estimate ${task.estimate} points`)}>

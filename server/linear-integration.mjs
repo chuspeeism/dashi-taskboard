@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { LINEAR_PROJECT_ID } from "../shared/domain.mjs";
+import { LINEAR_STATE_STATUSES } from "../shared/linear-states.mjs";
 import { ApiError } from "../shared/api-fields.mjs";
 import { validateSelectedCycle } from "./linear-config.mjs";
 
@@ -8,26 +9,9 @@ const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
 const SYNC_INTERVAL_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 
-// Resolved by workflow state name within the team; MM7 and Development share
-// names but not state ids.
-const STATUS_BY_STATE_NAME = new Map(Object.entries({
-  "backlog": "backlog",
-  "triage": "backlog",
-  "defining requirements": "backlog",
-  "ready for dev": "todo",
-  "in development": "in_progress",
-  "staging ready for qa": "in_progress",
-  "in qa": "in_progress",
-  "staging failed": "in_progress",
-  "code review": "in_review",
-  "blocked": "blocked",
-  "ready for release": "done",
-  "commercial verification": "done",
-  "released": "done",
-  "won't do": "canceled",
-  "failed to resolve": "canceled",
-  "duplicate": "canceled",
-}));
+const STATUS_BY_STATE_NAME = new Map(
+  LINEAR_STATE_STATUSES.map(([name, status]) => [stateKey(name), status]),
+);
 const STATUS_BY_STATE_TYPE = {
   triage: "backlog",
   backlog: "backlog",
@@ -204,6 +188,7 @@ function normalizeIssue(issue, config, index = 0) {
     title: limitedString(issue.title, externalKey, 240),
     description: typeof issue.description === "string" ? issue.description.slice(0, 100_000) : "",
     status: taskStatusFromLinear(issue.state),
+    externalState: typeof issue.state?.name === "string" ? issue.state.name.slice(0, 120) : null,
     priority: taskPriorityFromLinear(issue.priority),
     labels,
     sortOrder: (index + 1) * 1024,
@@ -487,6 +472,7 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
         `Linear 中 ${task.externalKey} 当前为“${issue?.state?.name ?? "未知"}”，不是“${rule.state}”，请重新同步`,
       );
     }
+    database.setTaskExternalState(task.id, issue.state.name);
   }
 
   // Sprint planning (read-only): capacity from the last 3 finished cycles,

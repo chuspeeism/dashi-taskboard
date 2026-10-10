@@ -1,4 +1,5 @@
 import type { DragEvent } from "react";
+import { linearStatesForStatus } from "../../../shared/linear-states.mjs";
 import { useTaskCardDragPreview } from "../useTaskCardDragPreview";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import { taskStatusLabel, useTaskboardI18n } from "../i18n";
@@ -38,6 +39,7 @@ interface BoardColumnProps {
   showBody: boolean;
   showCreatedAt: boolean;
   createEnabled?: boolean;
+  isLinearProject?: boolean;
   onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   onCreate: (status: TaskStatus) => void;
   onEdit: (task: Task) => void;
@@ -70,6 +72,7 @@ export function BoardColumn({
   showBody,
   showCreatedAt,
   createEnabled = true,
+  isLinearProject = false,
   onCreateLabel,
   onCreate,
   onEdit,
@@ -85,6 +88,7 @@ export function BoardColumn({
   const { language, text } = useTaskboardI18n();
   const details = STATUS_DETAILS[status];
   const label = taskStatusLabel(language, status);
+  const linearStates = isLinearProject ? linearStatesForStatus(status) : [];
   const { findDropBefore, clearDropPreview, updateDropPreview, leaveDropPreview, getTaskDragShift } =
     useTaskCardDragPreview({ tasks, draggedTaskId, draggedTaskHeight, isDropTarget });
 
@@ -132,6 +136,11 @@ export function BoardColumn({
           </div>
         )}
       </header>
+      {linearStates.length > 0 && (
+        <p className="column-linear-states" title={text("映射到此列的 Linear 状态", "Linear states mapped to this column")}>
+          {linearStates.join(" · ")}
+        </p>
+      )}
 
       <div className="column-list" ref={scrollRef}>
         {tasks.map((task) => {

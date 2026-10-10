@@ -8109,6 +8109,43 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.linear-state-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 7px;
+  overflow: hidden;
+  border: .5px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-linear-state {
+  display: flex;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.column-linear-states {
+  flex: 0 0 auto;
+  margin: -6px 0 8px;
+  padding: 0 16px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .priority-chip svg {
   width: 14px;
   height: 14px;
