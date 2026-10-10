@@ -143,7 +143,10 @@ test("syncs the current cycle and writes back only allowed moves", async () => {
   const syncCalls = [];
   const linear = createLinearIntegration({
     configStore: memoryConfigStore(),
-    database: { syncLinearTasks: (tasks, options) => syncCalls.push({ tasks, options }) },
+    database: {
+      syncLinearTasks: (tasks, options) => syncCalls.push({ tasks, options }),
+      setTaskExternalState() {},
+    },
     fetch: stub.fetch,
   });
 
@@ -203,6 +206,10 @@ test("stores estimates and the in-scope flag; context parents stay out of sprint
     assert.equal(byKey["MM7-1"].estimate, 8);
     assert.equal(byKey["MM7-1"].inScope, false);
     assert.deepEqual(sprintPoints(tasks), { total: 3, completed: 0, remaining: 3, byStatus: { todo: 3 } });
+    assert.equal(byKey["MM7-2"].externalState, "Ready For Dev");
+
+    await linear.moveTask(byKey["MM7-2"], "in_progress");
+    assert.equal(database.getTask(byKey["MM7-2"].id).externalState, "In Development");
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

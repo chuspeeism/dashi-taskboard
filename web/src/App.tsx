@@ -4152,6 +4152,7 @@ export function App() {
                         showBody={boardDisplaySettings.body}
                         showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
                         createEnabled={!isExternalProject}
+                        isLinearProject={isLinearProject}
                         onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ status: initialStatus })}
                         onEdit={openTaskDetail}

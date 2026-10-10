@@ -1839,6 +1839,14 @@ export function TaskDetail({
                 onChange={(status) => void saveTask({ status }, "status")}
               />
             </div>
+            {currentTask.source === "linear" && currentTask.externalState && (
+              <div className="detail-property-row">
+                <span className="detail-property-label">{text("Linear 状态", "Linear state")}</span>
+                <span className="detail-linear-state">
+                  <span className="linear-state-chip">{currentTask.externalState}</span>
+                </span>
+              </div>
+            )}
             <div className="detail-property-row">
               <span className="detail-property-label">{text("优先级", "Priority")}</span>
               <TaskPropertyPicker

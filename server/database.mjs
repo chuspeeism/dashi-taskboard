@@ -116,6 +116,8 @@ function taskFromRow(row) {
     // synced cycle (false for parents pulled in for context). Null elsewhere.
     estimate: row.estimate ?? null,
     inScope: row.in_scope === null || row.in_scope === undefined ? null : row.in_scope === 1,
+    // Linear only: the source workflow state name. Null elsewhere.
+    externalState: row.external_state ?? null,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -328,6 +330,7 @@ export class TaskboardDatabase {
         external_url TEXT,
         estimate REAL,
         in_scope INTEGER,
+        external_state TEXT,
         archived_at TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
@@ -585,6 +588,9 @@ export class TaskboardDatabase {
     }
     if (!migratedTaskColumns.some((column) => column.name === "in_scope")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN in_scope INTEGER");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "external_state")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN external_state TEXT");
     }
     this.database.exec(`
       DROP INDEX IF EXISTS tasks_external_source_id;
@@ -1006,6 +1012,11 @@ export class TaskboardDatabase {
     this.syncExternalTasks("linear", LINEAR_PROJECT_ID, issues, options);
   }
 
+  // After a board move is written back to Linear, so the card shows the new state before the next sync.
+  setTaskExternalState(taskId, externalState) {
+    this.database.prepare("UPDATE tasks SET external_state = ? WHERE id = ?").run(externalState, taskId);
+  }
+
   syncExternalTasks(source, projectId, issues, { archiveMissing = true, projectName, legacyIdentity = null } = {}) {
     const timestamp = now();
     const seenTaskIds = new Set();
@@ -1062,7 +1073,7 @@ export class TaskboardDatabase {
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           external_source, external_origin, external_id, external_key, external_url,
-          estimate, in_scope,
+          estimate, in_scope, external_state,
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1072,7 +1083,7 @@ export class TaskboardDatabase {
           ?, NULL, NULL,
           NULL, ?, NULL, NULL,
           ?, ?, ?, ?, ?,
-          ?, ?,
+          ?, ?, ?,
           NULL, 1, ?, ?
         )
       `);
@@ -1083,7 +1094,7 @@ export class TaskboardDatabase {
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           git_branch = CASE WHEN git_branch IS NULL AND worktree_path IS NULL THEN ? ELSE git_branch END,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
-          estimate = ?, in_scope = ?,
+          estimate = ?, in_scope = ?, external_state = ?,
           archived_at = NULL,
           version = version + 1, updated_at = ?
         WHERE id = ?
@@ -1097,6 +1108,7 @@ export class TaskboardDatabase {
         const labels = JSON.stringify(issue.labels);
         const estimate = issue.estimate ?? null;
         const inScope = issue.inScope === undefined ? null : issue.inScope ? 1 : 0;
+        const externalState = issue.externalState ?? null;
         if (!existing) {
           insertTask.run(
             issue.id,
@@ -1125,6 +1137,7 @@ export class TaskboardDatabase {
             issue.externalUrl,
             estimate,
             inScope,
+            externalState,
             issue.createdAt,
             issue.updatedAt,
           );
@@ -1158,6 +1171,7 @@ export class TaskboardDatabase {
           || existing.external_url !== issue.externalUrl
           || existing.estimate !== estimate
           || existing.in_scope !== inScope
+          || existing.external_state !== externalState
           || existing.archived_at !== null;
         if (!changed) continue;
         updateTask.run(
@@ -1184,6 +1198,7 @@ export class TaskboardDatabase {
           issue.externalUrl,
           estimate,
           inScope,
+          externalState,
           issue.updatedAt,
           existing.id,
         );
