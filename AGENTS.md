@@ -39,6 +39,7 @@ Use this workflow when the user asks to process Taskboard work.
 
 - Parallelize independent code paths. Do not parallelize access to a shared mutable runtime.
 - Do not use a fixed total number of execution lanes or worktrees. Create one execution group for each independent conflict domain. Ten eligible issues may become several parallel groups or one coherent group, depending on overlap.
+- Exception: an agent loop driven by `taskctl next` never exceeds the project's user-set `maxConcurrent` (client storage `taskboard.agentLoop.v1`). The user's cap takes precedence over this section.
 - Classify Web or product logic, native or platform work, and research or external contribution work for routing only. These categories are not concurrency limits; multiple independent groups within a category may run in parallel.
 - Determine concurrency from shared files, feature state, the Codex App process, Launcher runtime, CDP, browser review state, CI capacity, and release resources. More issues alone do not justify more worktrees, and a category label does not justify serialization.
 - Run only one Launcher, Codex injection, native host, updater, signing, or release task against the local App environment at a time. If isolated runtime descriptors, ports, CDP profiles, and user-data directories are available, separate instances may run in parallel.

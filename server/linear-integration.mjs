@@ -31,7 +31,8 @@ const STATUS_BY_STATE_NAME = new Map(Object.entries({
 const STATUS_BY_STATE_TYPE = {
   triage: "backlog",
   backlog: "backlog",
-  unstarted: "todo",
+  // Only "Ready For Dev" is todo, so the agent loop never picks up another unstarted state.
+  unstarted: "backlog",
   started: "in_progress",
   completed: "done",
   canceled: "canceled",
@@ -43,6 +44,7 @@ const WRITE_BACK_STATE = [
   { from: "in_progress", to: "in_review", state: "Code Review" },
   { from: "*", to: "blocked", state: "Blocked" },
   { from: "blocked", to: "in_progress", state: "In Development" },
+  { from: "in_review", to: "in_progress", state: "In Development" },
 ];
 // Linear priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
 const PRIORITIES = ["none", "urgent", "high", "medium", "low"];

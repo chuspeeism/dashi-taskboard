@@ -104,6 +104,15 @@ taskctl issue tree ID --direction descendants|ancestors --depth N [--json]
 
 `issue tree` is a bounded structural read. `--depth 1` returns only direct children or the direct parent; larger values include that many levels, up to 25. The response is flat and deterministic: every node carries `id`, traversal `parentId`, `depth`, and `path` (usable as a breadcrumb), plus a small task summary. It never calculates status rollups or changes issues.
 
+## Agent loop
+
+```bash
+taskctl next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)] [--json]
+taskctl loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N] [--json]
+```
+
+`next` picks the next issue an agent loop should work, and claims it with `--claim`. It respects the project's loop settings. See [loop.md](loop.md) for the selection rules, the decision-request protocol and the handoff format.
+
 ## Create issues
 
 ```bash
