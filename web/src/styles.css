@@ -1101,6 +1101,52 @@ kbd {
   width: 132px;
 }
 
+.project-automation-runner {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface-hover);
+}
+
+.project-automation-runner > button {
+  flex: 1 1 0;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.project-automation-runner > button.is-selected {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 0.5px var(--border-strong);
+}
+
+.project-automation-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.project-automation-select {
+  width: 56px;
+  height: 26px;
+  padding: 0 4px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
 .project-automation-picker-trigger {
   display: flex;
   align-items: center;
@@ -9911,34 +9957,6 @@ kbd {
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
-}
-
-.agent-loop-settings {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 8px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.agent-loop-settings label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-}
-
-.agent-loop-settings select {
-  height: 24px;
-  padding: 0 4px;
-  border: var(--border-hairline) solid var(--border-strong);
-  border-radius: 5px;
-  background: var(--surface);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
 }
 
 .linear-cycle-select {
