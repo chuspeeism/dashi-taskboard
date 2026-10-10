@@ -19,6 +19,7 @@ import {
 } from "../i18n";
 import {
   EMPTY_TASK_FILTERS,
+  isWaitingForMe,
   matchesTaskFilters,
   matchesTaskSearch,
   taskFilterCount,
@@ -128,6 +129,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     const statuses = new Map<TaskStatus, number>();
     const priorities = new Map<TaskPriority, number>();
     const labelCounts = new Map<string, number>();
+    let waitingForMe = 0;
     const filtersWithoutContent = { ...filters, content: "" };
     for (const task of searchMatches) {
       if (matchesTaskFilters(task, filtersWithoutContent, "statuses")) {
@@ -141,8 +143,11 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
           labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
         }
       }
+      if (isWaitingForMe(task) && matchesTaskFilters(task, filtersWithoutContent, "waitingForMe")) {
+        waitingForMe += 1;
+      }
     }
-    return { statuses, priorities, labels: labelCounts };
+    return { statuses, priorities, labels: labelCounts, waitingForMe };
   }, [filters, searchMatches]);
 
   function toggleStatus(status: TaskStatus) {
@@ -197,6 +202,17 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     icon: <LabelGlyph label={label} />,
     toggle: () => toggleLabel(label),
   })), [counts, filters, labels, language, text]);
+
+  const waitingOption: FilterOption = {
+    id: "waiting-for-me",
+    label: text("等我处理", "Waiting for me"),
+    category: "",
+    keywords: "waiting me decision review",
+    count: counts.waitingForMe,
+    selected: filters.waitingForMe,
+    icon: <LinearIcon name="myIssues" />,
+    toggle: () => onChange({ ...filters, waitingForMe: !filters.waitingForMe }),
+  };
 
   const optionsBySubmenu: Partial<Record<SubmenuName, FilterOption[]>> = {
     statuses: statusOptions,
@@ -258,6 +274,8 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     if (!normalizedRootQuery) return true;
     return `${category.label} ${category.keywords}`.toLowerCase().includes(normalizedRootQuery);
   });
+  const showWaitingOption = !normalizedRootQuery
+    || `${waitingOption.label} ${waitingOption.keywords}`.toLowerCase().includes(normalizedRootQuery);
   const quickOptions = normalizedRootQuery
     ? [...statusOptions, ...priorityOptions, ...labelOptions].filter((option) =>
       `${option.label} ${option.keywords ?? ""}`.toLowerCase().includes(normalizedRootQuery),
@@ -409,7 +427,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
       >
         <span className="task-filter-item-icon">{option.icon}</span>
         <span className="task-filter-item-label">{option.label}</span>
-        {level === "root" && <span className="task-filter-item-category">{option.category}</span>}
+        {level === "root" && option.category && <span className="task-filter-item-category">{option.category}</span>}
         <span className="task-filter-item-count">{option.count}</span>
         <span className="task-filter-item-check">{option.selected && <LinearIcon name="check" />}</span>
       </button>
@@ -492,6 +510,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
       </label>
 
       <div className="task-filter-root-list" role="menu">
+        {showWaitingOption && renderOption(waitingOption, "root")}
         {visibleCategories.map((category) => (
           <div className="task-filter-anchor" key={category.id}>
             <button
@@ -531,7 +550,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
           </>
         )}
 
-        {visibleCategories.length === 0 && quickOptions.length === 0 && (
+        {!showWaitingOption && visibleCategories.length === 0 && quickOptions.length === 0 && (
           <div className="task-filter-no-results">{text("没有匹配的筛选项", "No matching filters")}</div>
         )}
       </div>

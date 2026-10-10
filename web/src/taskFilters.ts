@@ -9,7 +9,7 @@ import { labelDisplayName } from "./labels";
 import type { TaskboardLanguage } from "./i18n";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
-export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content";
+export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content" | "waitingForMe";
 
 export interface TaskFilters {
   statuses: TaskStatus[];
@@ -17,6 +17,7 @@ export interface TaskFilters {
   labels: string[];
   link: TaskLinkFilter;
   content: string;
+  waitingForMe: boolean;
 }
 
 export const EMPTY_TASK_FILTERS: TaskFilters = {
@@ -25,6 +26,7 @@ export const EMPTY_TASK_FILTERS: TaskFilters = {
   labels: [],
   link: "all",
   content: "",
+  waitingForMe: false,
 };
 
 function isTaskStatus(value: string): value is TaskStatus {
@@ -47,6 +49,7 @@ export function readTaskFilters(): TaskFilters {
     labels: params.getAll("label").filter(Boolean),
     link: linkValue === "yes" ? "linked" : linkValue === "no" ? "unlinked" : "all",
     content: params.get("content") ?? "",
+    waitingForMe: params.get("waiting") === "me",
   };
 }
 
@@ -69,6 +72,9 @@ export function writeTaskFilters(filters: TaskFilters) {
   if (filters.content.trim()) url.searchParams.set("content", filters.content.trim());
   else url.searchParams.delete("content");
 
+  if (filters.waitingForMe) url.searchParams.set("waiting", "me");
+  else url.searchParams.delete("waiting");
+
   window.history.replaceState(null, "", url);
 }
 
@@ -77,7 +83,13 @@ export function taskFilterCount(filters: TaskFilters): number {
     + Number(filters.priorities.length > 0)
     + Number(filters.labels.length > 0)
     + Number(filters.link !== "all")
-    + Number(Boolean(filters.content.trim()));
+    + Number(Boolean(filters.content.trim()))
+    + Number(filters.waitingForMe);
+}
+
+// Waiting for me: an unanswered agent decision request, or work handed off for review.
+export function isWaitingForMe(task: Task): boolean {
+  return task.awaitingDecision || task.status === "in_review";
 }
 
 export function matchesTaskSearch(task: Task, search: string, language: TaskboardLanguage): boolean {
@@ -117,6 +129,8 @@ export function matchesTaskFilters(
   const hasConversation = task.conversationRefs.length > 0;
   if (omit !== "link" && filters.link === "linked" && !hasConversation) return false;
   if (omit !== "link" && filters.link === "unlinked" && hasConversation) return false;
+
+  if (omit !== "waitingForMe" && filters.waitingForMe && !isWaitingForMe(task)) return false;
 
   if (omit !== "content") {
     const content = filters.content.trim().toLowerCase();

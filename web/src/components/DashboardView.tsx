@@ -7,6 +7,7 @@ import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
 import { getProjectSummary } from "../api";
 import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
+import { isWaitingForMe } from "../taskFilters";
 import { actorKey } from "../actors";
 import type {
   TaskCardPresentation,
@@ -660,6 +661,11 @@ export function DashboardView({
     }
 
     const metrics = [
+      {
+        label: text("等我处理", "Waiting for me"),
+        value: tasks.filter(isWaitingForMe).length,
+        tone: "waiting",
+      },
       {
         label: taskStatusLabel(language, "in_progress"),
         value: tasks.filter((task) => task.status === "in_progress").length,
