@@ -149,10 +149,11 @@ test("loop config updates only the selected project", async () => {
     ["loop", "config", "--project", "other", "--enable", "--max-concurrent", "3"],
     fetch,
   );
-  assert.deepEqual(result.settings, { enabled: true, maxConcurrent: 3 });
+  const other = { enabled: true, maxConcurrent: 3, repoPath: null, labelRepos: {} };
+  assert.deepEqual(result.settings, other);
   assert.deepEqual(JSON.parse(storage[AGENT_LOOP_STORAGE_KEY]), {
     demo: { enabled: true, maxConcurrent: 2 },
-    other: { enabled: true, maxConcurrent: 3 },
+    other,
   });
   const invalid = await taskctl(["loop", "config", "--project", "other", "--max-concurrent", "0"], fetch);
   assert.equal(invalid.exitCode, 2);

@@ -13,6 +13,14 @@ taskctl loop config --project PROJECT_ID --disable
 
 - `enabled`: the loop hands out work only when true. The default is false.
 - `maxConcurrent`: the most issues agents may work at once, from 1 to 10. The default is 2. An issue counts as worked while it is `in_progress` with an agent session or a Codex thread binding.
+- `repoPath`: the repository the agent works in. Required for the Linear project (`linear-my-tasks`), which has no workspace of its own.
+- `labelRepos`: optional per-label overrides. An issue with a mapped label uses that repository instead of `repoPath`.
+
+```bash
+taskctl loop config --project linear-my-tasks --enable --repo /path/to/repo
+taskctl loop config --project linear-my-tasks --label-repo PowerFlow=/path/to/powerflow
+taskctl loop config --project linear-my-tasks --label-repo PowerFlow=   # remove the override
+```
 
 ## Picking work
 
@@ -20,11 +28,12 @@ taskctl loop config --project PROJECT_ID --disable
 taskctl next --project PROJECT_ID --claim --agent-platform claude --session-id ID
 ```
 
-`next` returns `{ task, kind, reason, active, maxConcurrent }`. `reason` is one of:
+`next` returns `{ task, kind, repoPath, reason, active, maxConcurrent }`. `repoPath` is the mapped repository for `task`, or null. `reason` is one of:
 
 - `claimed`: `task` is now `in_progress` and belongs to you.
 - `available`: without `--claim`, the next pick.
 - `disabled`: the loop is off.
+- `repo_unmapped`: the Linear project has no `repoPath`.
 - `concurrency_limit`: `active` already reached `maxConcurrent`.
 - `no_eligible`: nothing to do.
 - `conflict`: every candidate changed while claiming.
@@ -39,7 +48,9 @@ Never claim `backlog`, and never take over an issue another session is working.
 
 ## Working an issue
 
-Follow the core workflow in `SKILL.md`: read the issue, comments and attachments, do the work in your own branch or worktree, verify the direct path, and open a PR. For `resume`, start from the user's answer. For `rework`, start from the `/rework` comment.
+Follow the core workflow in `SKILL.md`: read the issue, comments and attachments, do the work in your own branch or worktree, verify the direct path, and open a PR. When `repoPath` is set, branch from that repository's default branch and follow its own `AGENTS.md` or `CLAUDE.md`.
+
+For Linear issues, status moves write back to Linear: claiming moves Ready For Dev to In Development, handing off to `in_review` moves it to Code Review, and `blocked` moves it to Blocked. Comments stay in Taskboard and are not synced to Linear. For `resume`, start from the user's answer. For `rework`, start from the `/rework` comment.
 
 ## Stopping for a decision
 
