@@ -670,6 +670,15 @@ export async function moveTask(
   return data.task;
 }
 
+// Pause or resume the agent working this task (local field; Linear is not written).
+export async function setTaskPaused(task: Task, paused: boolean): Promise<Task> {
+  const data = await request<{ task: Task }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/pause`,
+    { method: "POST", body: JSON.stringify({ paused }) },
+  );
+  return data.task;
+}
+
 export async function archiveTask(task: Task, threadId?: string): Promise<Task> {
   const data = await request<{ task: Task }>(
     `/api/tasks/${encodeURIComponent(task.id)}/archive`,

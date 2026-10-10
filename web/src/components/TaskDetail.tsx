@@ -26,6 +26,7 @@ import {
   listComments,
   listTaskActivities,
   resolveTaskboardUrl,
+  setTaskPaused,
   uploadAttachment,
   uploadCommentAttachment,
   updateComment,
@@ -625,6 +626,18 @@ export function TaskDetail({
       window.removeEventListener("keydown", closeWithEscape);
     };
   }, [activeMenuId]);
+
+  async function togglePaused() {
+    setSavingProperty("paused");
+    onError(null);
+    try {
+      setCurrentTask(await setTaskPaused(currentTask, !currentTask.pausedAt));
+    } catch (error) {
+      onError(issueMessageFor(error));
+    } finally {
+      setSavingProperty(null);
+    }
+  }
 
   async function saveTask(changes: Partial<TaskDraft>, property: string) {
     setSavingProperty(property);
@@ -1839,6 +1852,29 @@ export function TaskDetail({
                 onChange={(status) => void saveTask({ status }, "status")}
               />
             </div>
+            {currentTask.status === "in_progress"
+              && (currentTask.agentSession || currentTask.threadBinding || currentTask.threadId) && (
+              <div className="detail-property-row">
+                <span className="detail-property-label">{text("智能体", "Agent")}</span>
+                <span className="detail-agent-pause">
+                  <span>
+                    {currentTask.pausedAt
+                      ? text("已暂停（你）", "Paused (you)")
+                      : currentTask.resumedAt
+                        ? text("已请求继续", "Resume requested")
+                        : text("运行中", "Working")}
+                  </span>
+                  <button
+                    type="button"
+                    className="button secondary detail-agent-pause-button"
+                    disabled={savingProperty === "paused"}
+                    onClick={() => void togglePaused()}
+                  >
+                    {currentTask.pausedAt ? text("继续", "Resume") : text("暂停", "Pause")}
+                  </button>
+                </span>
+              </div>
+            )}
             {currentTask.source === "linear" && currentTask.externalState && (
               <div className="detail-property-row">
                 <span className="detail-property-label">{text("Linear 状态", "Linear state")}</span>

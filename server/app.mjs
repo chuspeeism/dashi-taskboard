@@ -2944,7 +2944,7 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -2963,6 +2963,17 @@ export function createTaskboardServer(options = {}) {
           const agentSession = parseAgentSession(body.agentSession);
           if (!agentSession) throw new ApiError(400, "INVALID_FIELD", "agentSession is required");
           const task = database.recordAgentHeartbeat(id, agentSession);
+          events.emit("task.updated", { task });
+          // The user paused this task: the agent stops and records where it stopped.
+          return sendJson(response, 200, { task, paused: Boolean(task.pausedAt) });
+        }
+        if (action === "pause" && request.method === "POST") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["paused"]));
+          if (typeof body.paused !== "boolean") throw new ApiError(400, "INVALID_FIELD", "paused must be a boolean");
+          // Local field only: a Linear task keeps its state, nothing is written back.
+          const task = database.setTaskPaused(id, body.paused);
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }

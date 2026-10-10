@@ -30,6 +30,7 @@ export interface TaskProcessingPresentation {
   startedAt: string | null;
   agentSession: AgentSession | null;
   codexThread: boolean;
+  paused: boolean;
 }
 
 export interface TaskCardPresentation {
@@ -207,6 +208,7 @@ export function taskCardPresentation(
       startedAt: runningAi?.currentRun?.startedAt ?? null,
       agentSession: task.agentSession ?? null,
       codexThread: conversations.some((conversation) => conversation.kind !== "agent-session"),
+      paused: Boolean(task.pausedAt),
     },
   };
 }

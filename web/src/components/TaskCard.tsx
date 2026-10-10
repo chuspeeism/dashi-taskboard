@@ -201,7 +201,7 @@ const AGENT_ACTIVE_WINDOW_MS = 10 * 60_000;
 type AgentHeartbeatState = { active: boolean; minutes: number | null };
 
 function useAgentHeartbeat(processing: TaskCardPresentation["processing"]): AgentHeartbeatState {
-  const heartbeatAt = processing.running ? undefined : processing.agentSession?.heartbeatAt;
+  const heartbeatAt = processing.running || processing.paused ? undefined : processing.agentSession?.heartbeatAt;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!heartbeatAt) return;
@@ -222,7 +222,7 @@ function ProcessingLabel({
   heartbeat: AgentHeartbeatState;
 }) {
   const { text } = useTaskboardI18n();
-  const { running, startedAt, agentSession, codexThread } = processing;
+  const { running, startedAt, agentSession, codexThread, paused } = processing;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!running || !startedAt) return;
@@ -232,7 +232,9 @@ function ProcessingLabel({
   }, [running, startedAt]);
   const elapsed = elapsedTime(startedAt, now);
   let label: string;
-  if (running) {
+  if (paused) {
+    label = text("已暂停（你）", "Paused (you)");
+  } else if (running) {
     label = elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing...");
   } else if (agentSession) {
     const platform = agentPlatformLabel(agentSession.platform);
@@ -247,7 +249,7 @@ function ProcessingLabel({
   } else if (codexThread) {
     label = text("Codex 线程空闲", "Codex thread idle");
   } else {
-    label = text("未关联智能体", "No agent attached");
+    label = text("手动（你）", "Manual (you)");
   }
   return <span className="task-processing-label">{label}</span>;
 }

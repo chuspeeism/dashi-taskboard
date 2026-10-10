@@ -8180,6 +8180,19 @@ kbd {
   padding: 0 6px;
 }
 
+.detail-agent-pause {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.detail-agent-pause-button {
+  min-height: 24px;
+  padding: 0 10px;
+}
+
 .column-linear-states {
   flex: 0 0 auto;
   margin: -6px 0 8px;

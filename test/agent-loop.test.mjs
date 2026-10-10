@@ -4,8 +4,17 @@ import test from "node:test";
 import { main } from "../cli/taskctl.mjs";
 import { AGENT_LOOP_STORAGE_KEY, decisionState, reworkRequested } from "../shared/agent-loop.mjs";
 
-const agent = (body) => ({ authorType: "agent", body });
-const user = (body) => ({ authorType: "user", body });
+// Comments get increasing timestamps in creation order, like the API returns them.
+let clock = Date.parse("2026-01-01T00:00:00.000Z");
+const stamp = () => new Date((clock += 1000)).toISOString();
+const comment = (authorType, body) => {
+  const createdAt = stamp();
+  return { authorType, body, createdAt, updatedAt: createdAt };
+};
+const agent = (body) => comment("agent", body);
+const user = (body) => comment("user", body);
+// The agent edits its single comment after the comments written so far.
+const edited = (agentComment, body) => ({ ...agentComment, body, updatedAt: stamp() });
 
 function task(id, status, extra = {}) {
   return {
@@ -76,6 +85,33 @@ test("decision and rework markers follow comment order", () => {
   assert.equal(decisionState([agent("[decision-request] A or B?"), user("B")]), "answered");
   assert.equal(reworkRequested([agent("done"), user("/rework fix the copy")]), true);
   assert.equal(reworkRequested([user("/rework fix the copy"), agent("reworked")]), false);
+});
+
+test("an edited agent comment counts from its last edit time", () => {
+  const note = agent("claimed");
+  const earlier = user("looks good so far");
+  const request = edited(note, "[decision-request] A or B?");
+  assert.equal(decisionState([request, earlier]), "waiting");
+  assert.equal(decisionState([request, earlier, user("B")]), "answered");
+  const rework = user("/rework fix the copy");
+  assert.equal(reworkRequested([note, rework]), true);
+  assert.equal(reworkRequested([edited(note, "reworked"), rework]), false);
+});
+
+test("a paused task is skipped and not counted; after Resume next returns it as resume", async () => {
+  const session = { platform: "claude", sessionId: "s" };
+  const paused = task("paused", "in_progress", { agentSession: session, pausedAt: "2026-01-01T00:00:00.000Z" });
+  const before = board({ tasks: [paused], loop: { enabled: true, maxConcurrent: 1 } });
+  const skipped = (await taskctl(["next", "--project", "demo"], before.fetch)).result;
+  assert.equal(skipped.reason, "no_eligible");
+  assert.equal(skipped.active, 0);
+
+  const resumed = { ...paused, pausedAt: null, resumedAt: "2026-01-01T00:01:00.000Z" };
+  const after = board({ tasks: [resumed], loop: { enabled: true, maxConcurrent: 1 } });
+  const { result } = await taskctl(["next", "--project", "demo", ...CLAIM], after.fetch);
+  assert.equal(result.reason, "claimed");
+  assert.equal(result.kind, "resume");
+  assert.equal(after.moves[0].status, "in_progress");
 });
 
 test("next prefers answered decisions, then rework, then unblocked todo by priority", async () => {
