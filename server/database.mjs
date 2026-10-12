@@ -72,6 +72,31 @@ function parseAiChatTodoProgress(row) {
   }
 }
 
+// Status phases for the Gantt timeline, oldest first; `to` is null for the current phase.
+// Linear stores its state history on sync; local tasks rebuild it from status-change activities.
+function withStatusTimeline(task, row, statusChanges) {
+  if (task.source === "linear") {
+    task.statusTimeline = row.status_timeline ? JSON.parse(row.status_timeline) : [];
+    return task;
+  }
+  if (task.source !== "local") {
+    task.statusTimeline = [];
+    return task;
+  }
+  const timeline = [{
+    status: statusChanges[0]?.before ?? task.status,
+    externalState: null,
+    from: task.createdAt,
+    to: null,
+  }];
+  for (const change of statusChanges) {
+    timeline.at(-1).to = change.created_at;
+    timeline.push({ status: change.after, externalState: null, from: change.created_at, to: null });
+  }
+  task.statusTimeline = timeline;
+  return task;
+}
+
 function taskFromRow(row) {
   const developmentContext = row.worktree_path
     ? { type: "worktree", path: row.worktree_path, branch: row.worktree_branch }
@@ -335,6 +360,7 @@ export class TaskboardDatabase {
         estimate REAL,
         in_scope INTEGER,
         external_state TEXT,
+        status_timeline TEXT,
         paused_at TEXT,
         resumed_at TEXT,
         archived_at TEXT,
@@ -597,6 +623,9 @@ export class TaskboardDatabase {
     }
     if (!migratedTaskColumns.some((column) => column.name === "external_state")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN external_state TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "status_timeline")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN status_timeline TEXT");
     }
     if (!migratedTaskColumns.some((column) => column.name === "paused_at")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN paused_at TEXT");
@@ -1085,7 +1114,7 @@ export class TaskboardDatabase {
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           external_source, external_origin, external_id, external_key, external_url,
-          estimate, in_scope, external_state,
+          estimate, in_scope, external_state, status_timeline,
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1095,7 +1124,7 @@ export class TaskboardDatabase {
           ?, NULL, NULL,
           NULL, ?, NULL, NULL,
           ?, ?, ?, ?, ?,
-          ?, ?, ?,
+          ?, ?, ?, ?,
           NULL, 1, ?, ?
         )
       `);
@@ -1106,7 +1135,7 @@ export class TaskboardDatabase {
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           git_branch = CASE WHEN git_branch IS NULL AND worktree_path IS NULL THEN ? ELSE git_branch END,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
-          estimate = ?, in_scope = ?, external_state = ?,
+          estimate = ?, in_scope = ?, external_state = ?, status_timeline = ?,
           archived_at = NULL,
           version = version + 1, updated_at = ?
         WHERE id = ?
@@ -1121,6 +1150,7 @@ export class TaskboardDatabase {
         const estimate = issue.estimate ?? null;
         const inScope = issue.inScope === undefined ? null : issue.inScope ? 1 : 0;
         const externalState = issue.externalState ?? null;
+        const statusTimeline = issue.statusTimeline ? JSON.stringify(issue.statusTimeline) : null;
         if (!existing) {
           insertTask.run(
             issue.id,
@@ -1150,6 +1180,7 @@ export class TaskboardDatabase {
             estimate,
             inScope,
             externalState,
+            statusTimeline,
             issue.createdAt,
             issue.updatedAt,
           );
@@ -1184,6 +1215,7 @@ export class TaskboardDatabase {
           || existing.estimate !== estimate
           || existing.in_scope !== inScope
           || existing.external_state !== externalState
+          || existing.status_timeline !== statusTimeline
           || existing.archived_at !== null;
         if (!changed) continue;
         updateTask.run(
@@ -1211,6 +1243,7 @@ export class TaskboardDatabase {
           estimate,
           inScope,
           externalState,
+          statusTimeline,
           issue.updatedAt,
           existing.id,
         );
@@ -1819,12 +1852,13 @@ export class TaskboardDatabase {
     const commentsByTask = this.#commentsForTaskActivity(rows.map((row) => row.id));
     const activitiesByTask = this.#activitiesForTasks(rows.map((row) => row.id));
     const previewImagesByTask = this.#taskPreviewImages(rows.map((row) => row.id));
-    return rows.map((row) => attachTaskActivity(
+    const statusChangesByTask = this.#statusChangesForTasks(rows.map((row) => row.id));
+    return rows.map((row) => withStatusTimeline(attachTaskActivity(
       this.#taskWithRelations(row, relationsByTask.get(row.id)),
       commentsByTask.get(row.id) ?? [],
       activitiesByTask.get(row.id) ?? [],
       previewImagesByTask.get(row.id) ?? null,
-    ));
+    ), row, statusChangesByTask.get(row.id) ?? []));
   }
 
   getTaskSource(id) {
@@ -1841,7 +1875,8 @@ export class TaskboardDatabase {
     const comments = this.#commentsForTaskActivity([task.id]).get(task.id) ?? [];
     const activities = this.#activitiesForTasks([task.id]).get(task.id) ?? [];
     const previewImage = this.#taskPreviewImages([task.id]).get(task.id) ?? null;
-    return attachTaskActivity(task, comments, activities, previewImage);
+    const statusChanges = this.#statusChangesForTasks([task.id]).get(task.id) ?? [];
+    return withStatusTimeline(attachTaskActivity(task, comments, activities, previewImage), row, statusChanges);
   }
 
   getTaskTree(id, direction, depth) {
@@ -2824,6 +2859,29 @@ export class TaskboardDatabase {
       WHERE id = 1
       RETURNING value
     `).get().value;
+  }
+
+  // Only the status entries of each activity, so the list never loads full change bodies.
+  #statusChangesForTasks(taskIds) {
+    const changesByTask = new Map(taskIds.map((taskId) => [taskId, []]));
+    for (let offset = 0; offset < taskIds.length; offset += 400) {
+      const chunk = taskIds.slice(offset, offset + 400);
+      if (chunk.length === 0) continue;
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.database.prepare(`
+        SELECT
+          task_activities.task_id,
+          task_activities.created_at,
+          json_extract(change.value, '$.before') AS before,
+          json_extract(change.value, '$.after') AS after
+        FROM task_activities, json_each(task_activities.changes) AS change
+        WHERE task_activities.task_id IN (${placeholders})
+          AND json_extract(change.value, '$.field') = 'status'
+        ORDER BY task_activities.task_id, task_activities.created_at, task_activities.id
+      `).all(...chunk);
+      for (const row of rows) changesByTask.get(row.task_id)?.push(row);
+    }
+    return changesByTask;
   }
 
   #taskRelationsForTasks(taskIds) {

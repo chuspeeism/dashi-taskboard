@@ -114,6 +114,9 @@ function linearStub() {
           assert.deepEqual(variables.ids, ["parent-1"]);
           return { issues: { nodes: [parent] } };
         },
+        TaskboardIssueHistory: () => ({
+          issues: { nodes: variables.ids.map((id) => ({ id, history: { nodes: [] } })) },
+        }),
         TaskboardIssueUpdate: () => {
           issue.state = stub.overrideStateAfterWrite
             ?? STATES.find((state) => state.id === variables.input.stateId);

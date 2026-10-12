@@ -3,7 +3,7 @@ import { Gantt, type GanttStatic, type Task as GanttTask } from "dhtmlx-gantt";
 import "../vendor/dhtmlxgantt.css";
 import type { Task, TaskDraft } from "../types";
 import type { TaskCardPresentation } from "../taskConversations";
-import { useTaskboardI18n } from "../i18n";
+import { taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { LinearIcon } from "./LinearIcon";
 import { DueDateIcon } from "./SemanticIcons";
 import { taskboardIconSource } from "./TaskboardIcon";
@@ -18,8 +18,28 @@ interface GanttGroupDefinition {
   defaultOpen: boolean;
 }
 
+interface GanttSegment {
+  status: Task["status"];
+  externalState: string | null;
+  from: number;
+  to: number;
+}
+
+interface ActualBar {
+  start: Date;
+  end: Date;
+  open: boolean;
+  segments: GanttSegment[];
+}
+
 interface TaskboardGanttTask extends GanttTask {
   taskboardStatus: Task["status"];
+  taskboardSegments: GanttSegment[];
+  taskboardOpenEnded: boolean;
+  taskboardHasBar: boolean;
+  taskboardPlannedStart: Date | null;
+  taskboardPlannedEnd: Date | null;
+  taskboardPlannedEditable: boolean;
   taskboardTitle: string;
   taskboardUnread: boolean;
   taskboardAssigneeType: Task["assignee"]["type"] | null;
@@ -47,10 +67,49 @@ const GANTT_GROUPS: GanttGroupDefinition[] = [
   { id: "in-progress", chineseLabel: "处理中", englishLabel: "In progress", statuses: ["in_progress"], defaultOpen: true },
   { id: "in-review", chineseLabel: "等你确认", englishLabel: "In review", statuses: ["in_review"], defaultOpen: true },
   { id: "blocked", chineseLabel: "遇到阻碍", englishLabel: "Blocked", statuses: ["blocked"], defaultOpen: true },
-  { id: "todo", chineseLabel: "待处理", englishLabel: "To do", statuses: ["backlog", "todo"], defaultOpen: true },
   { id: "done", chineseLabel: "已完成", englishLabel: "Completed", statuses: ["done"], defaultOpen: false },
   { id: "canceled", chineseLabel: "已取消", englishLabel: "Canceled", statuses: ["canceled"], defaultOpen: false },
+  // Never-started work has no actual bar, so it sits at the bottom.
+  { id: "todo", chineseLabel: "待处理", englishLabel: "To do", statuses: ["backlog", "todo"], defaultOpen: true },
 ];
+
+function startOfDay(time: number) {
+  const day = new Date(time);
+  day.setHours(0, 0, 0, 0);
+  return day;
+}
+
+// The actual bar runs from the first time the task entered in_progress to when it
+// entered done or canceled; otherwise it stays open at now.
+function actualBar(task: Task, now: number): ActualBar | null {
+  const timeline = task.statusTimeline ?? [];
+  const startIndex = timeline.findIndex((phase) => phase.status === "in_progress");
+  if (startIndex < 0) return null;
+  const current = timeline[timeline.length - 1];
+  const closed = current.status === "done" || current.status === "canceled";
+  const startTime = Date.parse(timeline[startIndex].from);
+  const endTime = closed ? Date.parse(current.from) : now;
+  const phases = timeline.slice(startIndex, closed ? -1 : undefined);
+  return {
+    start: startOfDay(startTime),
+    end: addDays(startOfDay(endTime), 1),
+    open: !closed,
+    segments: phases.map((phase) => ({
+      status: phase.status,
+      externalState: phase.externalState,
+      from: Date.parse(phase.from),
+      to: phase.to ? Date.parse(phase.to) : endTime,
+    })),
+  };
+}
+
+function durationLabel(milliseconds: number) {
+  const days = milliseconds / 86_400_000;
+  if (days >= 1) return `${Math.round(days * 10) / 10}d`;
+  const hours = milliseconds / 3_600_000;
+  if (hours >= 1) return `${Math.round(hours)}h`;
+  return `${Math.max(1, Math.round(milliseconds / 60_000))}m`;
+}
 
 function localDate(value: string) {
   return new Date(`${value}T00:00:00`);
@@ -143,6 +202,9 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     instance.config.grid_width = 360;
     instance.config.min_column_width = 38;
     instance.config.drag_progress = false;
+    // Bars show actual dates; planned dates are dragged on their outline instead.
+    instance.config.drag_move = false;
+    instance.config.drag_resize = false;
     instance.config.drag_links = false;
     instance.config.show_progress = true;
     instance.config.show_unscheduled = true;
@@ -176,21 +238,36 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     instance.templates.grid_blank = () => "";
     instance.templates.task_class = (_start, _end, item) => {
       const task = item as TaskboardGanttTask;
-      return task.taskboardGroup ? "gantt-group-task" : `gantt-status-${task.taskboardStatus}`;
+      if (task.taskboardGroup) return "gantt-group-task";
+      if (!task.taskboardHasBar) return `gantt-status-${task.taskboardStatus} is-planned-only`;
+      return `gantt-status-${task.taskboardStatus} has-segments${task.taskboardOpenEnded ? " is-open-ended" : ""}`;
     };
     instance.templates.task_text = (start, end, item) => {
       const task = item as TaskboardGanttTask;
-      if (task.taskboardGroup) return "";
+      if (task.taskboardGroup || !task.taskboardHasBar) return "";
+      const { language, locale, text } = i18nRef.current;
       const displayEnd = addDays(end, -1);
-      const dateLabel = start.getFullYear() === displayEnd.getFullYear()
-        ? `${ganttDate(start, i18nRef.current.locale)} — ${ganttDate(displayEnd, i18nRef.current.locale)}`
-        : `${ganttDate(start, i18nRef.current.locale, true)} — ${ganttDate(displayEnd, i18nRef.current.locale, true)}`;
+      const sameYear = start.getFullYear() === displayEnd.getFullYear();
+      const endLabel = task.taskboardOpenEnded ? text("今天", "Today") : ganttDate(displayEnd, locale, !sameYear);
+      const dateLabel = `${ganttDate(start, locale, !sameYear)} — ${endLabel}`;
+      const barStart = start.getTime();
+      const barSpan = end.getTime() - barStart;
+      const timeFormat = new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      const segments = task.taskboardSegments.map((segment, index) => {
+        const last = index === task.taskboardSegments.length - 1;
+        const from = index === 0 ? barStart : Math.max(barStart, segment.from);
+        const to = last ? end.getTime() : Math.min(end.getTime(), segment.to);
+        const label = segment.externalState ?? taskStatusLabel(language, segment.status);
+        const toLabel = task.taskboardOpenEnded && last ? text("现在", "now") : timeFormat.format(segment.to);
+        const tooltip = `${label} · ${timeFormat.format(segment.from)} – ${toLabel} · ${durationLabel(segment.to - segment.from)}`;
+        return `<i class="gantt-bar-segment gantt-segment-${segment.status}" style="left:${((from - barStart) / barSpan) * 100}%;width:${((to - from) / barSpan) * 100}%" title="${escapeHtml(tooltip)}"></i>`;
+      }).join("");
       const avatar = task.taskboardAssigneeType === "agent"
         ? `<img src="codex-agent-logo.png" alt="">`
         : task.taskboardAssigneeAvatarUrl
         ? `<img src="${escapeHtml(task.taskboardAssigneeAvatarUrl)}" alt="">`
         : `<span>${escapeHtml(task.taskboardAssigneeInitial)}</span>`;
-      return `<span class="gantt-bar-content"><i class="gantt-bar-assignee${task.taskboardAssigneeType === "agent" ? " is-agent" : ""}" title="${escapeHtml(task.taskboardAssigneeName)}">${avatar}</i><span class="gantt-bar-copy"><strong>${escapeHtml(task.taskboardTitle)}</strong><small>${dateLabel}</small></span></span>`;
+      return `<span class="gantt-bar-segments">${segments}</span><span class="gantt-bar-content"><i class="gantt-bar-assignee${task.taskboardAssigneeType === "agent" ? " is-agent" : ""}" title="${escapeHtml(task.taskboardAssigneeName)}">${avatar}</i><span class="gantt-bar-copy"><strong>${escapeHtml(task.taskboardTitle)}</strong><small>${dateLabel}</small></span></span>`;
     };
     const rowClass = (item: GanttTask) => {
       const task = item as TaskboardGanttTask;
@@ -258,22 +335,42 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       }
       fill.replaceChildren(...Array.from(sourceRow.querySelectorAll(".gantt_task_cell"), (cell) => cell.cloneNode(false)));
     };
+    // Planned dates: a faint outline behind the actual bar, drawn under the bars area.
+    const updatePlannedOutlines = () => {
+      const barsArea = container.querySelector<HTMLElement>(".gantt_data_area > .gantt_bars_area");
+      if (!barsArea) return;
+      let layer = barsArea.parentElement!.querySelector<HTMLElement>(":scope > .gantt-planned-layer");
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = "gantt-planned-layer";
+        barsArea.before(layer);
+      }
+      const { locale, text } = i18nRef.current;
+      const outlines: HTMLElement[] = [];
+      instance.eachTask((item) => {
+        const task = item as TaskboardGanttTask;
+        if (task.taskboardGroup || !task.taskboardPlannedStart || !task.taskboardPlannedEnd || !instance.isTaskVisible(item.id)) return;
+        const position = instance.getTaskPosition(item, task.taskboardPlannedStart, task.taskboardPlannedEnd);
+        const outline = document.createElement("div");
+        outline.className = `gantt-planned-outline${task.taskboardPlannedEditable ? " is-editable" : ""}`;
+        outline.dataset.taskId = String(item.id);
+        outline.style.left = `${position.left}px`;
+        outline.style.top = `${position.top}px`;
+        outline.style.width = `${position.width}px`;
+        outline.style.height = `${position.height}px`;
+        outline.title = `${text("计划", "Planned")} · ${ganttDate(task.taskboardPlannedStart, locale)} — ${ganttDate(addDays(task.taskboardPlannedEnd, -1), locale)}`;
+        outlines.push(outline);
+      });
+      layer.replaceChildren(...outlines);
+    };
     const updateOverlays = () => {
       updateTodayMarker();
       updateTimelineFill();
     };
     instance.attachEvent("onGanttScroll", updateOverlays);
     instance.attachEvent("onGanttRender", updateOverlays);
-    instance.attachEvent("onAfterTaskUpdate", (id, item) => {
-      const ganttTask = item as TaskboardGanttTask;
-      const task = tasksRef.current.find((candidate) => candidate.id === String(id));
-      if (!task || ganttTask.taskboardGroup || item.unscheduled) return true;
-      const startDate = dateValue(item.start_date as Date);
-      const dueDate = dateValue(addDays(item.end_date as Date, -1));
-      if (task.startDate === startDate && task.dueDate === dueDate) return true;
-      void onUpdateRef.current(task, { startDate, dueDate }).catch(() => {});
-      return true;
-    });
+    instance.attachEvent("onGanttRender", updatePlannedOutlines);
+    instance.attachEvent("onDataRender", updatePlannedOutlines);
     instance.attachEvent("onTaskDblClick", (id) => {
       const task = tasksRef.current.find((candidate) => candidate.id === String(id));
       if (task) {
@@ -300,6 +397,47 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       setLinkedHoverTask(taskId);
     };
     const handlePointerLeave = () => setLinkedHoverTask(null);
+    // Drag a planned outline to move it, or its edges to resize it (Linear dates are read-only).
+    const handlePlannedPointerDown = (event: PointerEvent) => {
+      const outline = (event.target as HTMLElement | null)?.closest<HTMLElement>(".gantt-planned-outline.is-editable");
+      const taskId = outline?.dataset.taskId;
+      if (!outline || !taskId || event.button !== 0) return;
+      const item = instance.getTask(taskId) as TaskboardGanttTask;
+      const plannedStart = item.taskboardPlannedStart;
+      const plannedEnd = item.taskboardPlannedEnd;
+      if (!plannedStart || !plannedEnd) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const offset = event.clientX - outline.getBoundingClientRect().left;
+      const mode = offset < 8 ? "start" : offset > outline.offsetWidth - 8 ? "end" : "move";
+      const dayWidth = instance.posFromDate(addDays(plannedStart, 1)) - instance.posFromDate(plannedStart);
+      const span = Math.round((plannedEnd.getTime() - plannedStart.getTime()) / 86_400_000);
+      const originX = event.clientX;
+      const originLeft = outline.offsetLeft;
+      const originWidth = outline.offsetWidth;
+      let delta = 0;
+      outline.setPointerCapture(event.pointerId);
+      const handleMove = (moveEvent: PointerEvent) => {
+        const raw = Math.round((moveEvent.clientX - originX) / dayWidth);
+        delta = mode === "start" ? Math.min(raw, span - 1) : mode === "end" ? Math.max(raw, 1 - span) : raw;
+        const shift = delta * dayWidth;
+        outline.style.left = `${originLeft + (mode === "end" ? 0 : shift)}px`;
+        outline.style.width = `${originWidth + (mode === "start" ? -shift : mode === "end" ? shift : 0)}px`;
+      };
+      const handleUp = () => {
+        outline.removeEventListener("pointermove", handleMove);
+        outline.removeEventListener("pointerup", handleUp);
+        outline.removeEventListener("pointercancel", handleUp);
+        const task = tasksRef.current.find((candidate) => candidate.id === taskId);
+        if (!task || delta === 0) return;
+        const startDate = dateValue(addDays(plannedStart, mode === "end" ? 0 : delta));
+        const dueDate = dateValue(addDays(plannedEnd, (mode === "start" ? 0 : delta) - 1));
+        void onUpdateRef.current(task, { startDate, dueDate }).catch(() => {});
+      };
+      outline.addEventListener("pointermove", handleMove);
+      outline.addEventListener("pointerup", handleUp);
+      outline.addEventListener("pointercancel", handleUp);
+    };
     const originalEvent = instance.event;
     instance.event = (...args) => {
       const [target, eventName] = args;
@@ -314,6 +452,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     }
     container.addEventListener("pointermove", handlePointerMove);
     container.addEventListener("pointerleave", handlePointerLeave);
+    container.addEventListener("pointerdown", handlePlannedPointerDown, true);
     const markerFrame = requestAnimationFrame(updateOverlays);
     const resizeObserver = new ResizeObserver(([entry]) => {
       const width = entry.contentRect.width;
@@ -330,6 +469,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       resizeObserver.disconnect();
       container.removeEventListener("pointermove", handlePointerMove);
       container.removeEventListener("pointerleave", handlePointerLeave);
+      container.removeEventListener("pointerdown", handlePlannedPointerDown, true);
       ganttRef.current = null;
       instance.destructor();
     };
@@ -369,6 +509,8 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     if (!instance) return;
     const data: TaskboardGanttTask[] = [];
     const groupOpenState = new Map<string, boolean>();
+    const now = Date.now();
+    const bars = new Map(visibleTasks.map((task) => [task.id, actualBar(task, now)]));
 
     for (const group of GANTT_GROUPS) {
       const groupId = `gantt-group-${group.id}`;
@@ -382,7 +524,12 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       const groupLabel = i18nRef.current.text(group.chineseLabel, group.englishLabel);
       const groupTasks = visibleTasks
         .filter((task) => group.statuses.includes(task.status))
-        .sort((left, right) => Number(Boolean(right.startDate && right.dueDate)) - Number(Boolean(left.startDate && left.dueDate)));
+        .sort((left, right) => {
+          const leftBar = bars.get(left.id);
+          const rightBar = bars.get(right.id);
+          if (!leftBar || !rightBar) return Number(Boolean(rightBar)) - Number(Boolean(leftBar));
+          return leftBar.start.getTime() - rightBar.start.getTime();
+        });
       if (!groupTasks.length) continue;
       const progress = groupTasks.reduce((sum, task) => sum + taskProgress(task, presentations[task.id]), 0) / groupTasks.length;
       data.push({
@@ -396,6 +543,12 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
         unscheduled: true,
         progress,
         taskboardStatus: group.statuses[0],
+        taskboardSegments: [],
+        taskboardOpenEnded: false,
+        taskboardHasBar: false,
+        taskboardPlannedStart: null,
+        taskboardPlannedEnd: null,
+        taskboardPlannedEditable: false,
         taskboardTitle: groupLabel,
         taskboardUnread: groupTasks.some((task) => presentations[task.id]?.unread),
         taskboardAssigneeType: null,
@@ -407,7 +560,9 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       } as TaskboardGanttTask);
 
       for (const task of groupTasks) {
-        const isScheduled = Boolean(task.startDate && task.dueDate);
+        const bar = bars.get(task.id) ?? null;
+        const plannedStart = task.startDate && task.dueDate ? localDate(task.startDate) : null;
+        const plannedEnd = task.startDate && task.dueDate ? addDays(localDate(task.dueDate), 1) : null;
         const itemProgress = taskProgress(task, presentations[task.id]);
         data.push({
           id: task.id,
@@ -415,12 +570,17 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           text: task.title,
           row_height: 58,
           bar_height: 44,
-          ...(isScheduled ? {
-            start_date: localDate(task.startDate!),
-            end_date: addDays(localDate(task.dueDate!), 1),
-          } : { unscheduled: true }),
+          ...(bar ? { start_date: bar.start, end_date: bar.end }
+            : plannedStart && plannedEnd ? { start_date: plannedStart, end_date: plannedEnd }
+            : { unscheduled: true }),
           progress: itemProgress,
           taskboardStatus: task.status,
+          taskboardSegments: bar?.segments ?? [],
+          taskboardOpenEnded: bar?.open ?? false,
+          taskboardHasBar: Boolean(bar),
+          taskboardPlannedStart: plannedStart,
+          taskboardPlannedEnd: plannedEnd,
+          taskboardPlannedEditable: task.source !== "linear",
           taskboardTitle: task.title,
           taskboardUnread: presentations[task.id]?.unread ?? false,
           taskboardAssigneeType: task.assignee.type,
@@ -433,10 +593,9 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       }
     }
 
-    const scheduledTasks = visibleTasks.filter((task) => task.startDate && task.dueDate);
-    const scheduledIds = new Set(scheduledTasks.map((task) => task.id));
+    const barIds = new Set(visibleTasks.filter((task) => bars.get(task.id)).map((task) => task.id));
     const links = visibleTasks.flatMap((task) => task.relations.blocks
-      .filter((relation) => scheduledIds.has(task.id) && scheduledIds.has(relation.id))
+      .filter((relation) => barIds.has(task.id) && barIds.has(relation.id))
       .map((relation) => ({
         id: `${task.id}:${relation.id}`,
         source: task.id,
@@ -444,8 +603,15 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
         type: "0",
       })));
     const today = localDate(dateValue(new Date()));
-    const scheduledStarts = scheduledTasks.map((task) => localDate(task.startDate!).getTime());
-    const scheduledEnds = scheduledTasks.map((task) => localDate(task.dueDate!).getTime());
+    const ranges = visibleTasks.flatMap((task) => {
+      const bar = bars.get(task.id);
+      return [
+        ...(bar ? [[bar.start.getTime(), addDays(bar.end, -1).getTime()]] : []),
+        ...(task.startDate && task.dueDate ? [[localDate(task.startDate).getTime(), localDate(task.dueDate).getTime()]] : []),
+      ];
+    });
+    const scheduledStarts = ranges.map(([start]) => start);
+    const scheduledEnds = ranges.map(([, end]) => end);
     const rangeStart = new Date(Math.min(today.getTime(), ...scheduledStarts));
     const rangeEnd = new Date(Math.max(today.getTime(), ...scheduledEnds));
     const previousScroll = instance.getScrollState();
