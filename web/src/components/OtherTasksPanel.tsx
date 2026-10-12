@@ -136,6 +136,7 @@ interface OtherTasksPanelProps {
   tasksByStatus: Record<TaskStatus, Task[]>;
   archivedTasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
+  missingLabelIds?: ReadonlySet<string> | null;
   hasActiveFilters: boolean;
   isDropTarget: boolean;
   draggedTaskId: string | null;
@@ -173,6 +174,7 @@ export function OtherTasksPanel({
   tasksByStatus,
   archivedTasks,
   presentations,
+  missingLabelIds = null,
   hasActiveFilters,
   isDropTarget,
   draggedTaskId,
@@ -306,6 +308,7 @@ export function OtherTasksPanel({
               task={task}
               variant="sidebar"
               presentation={presentations[task.id]}
+              missingSprintLabel={missingLabelIds?.has(task.id) === true}
               isDragging={draggedTaskId === task.id}
               dragShift={dragShift}
               isMoving={movingTaskId === task.id}

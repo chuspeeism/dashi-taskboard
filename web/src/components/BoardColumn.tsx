@@ -25,6 +25,7 @@ interface BoardColumnProps {
   status: TaskStatus;
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
+  missingLabelIds?: ReadonlySet<string> | null;
   emptyMessage: string;
   isDropTarget: boolean;
   draggedTaskId: string | null;
@@ -58,6 +59,7 @@ export function BoardColumn({
   status,
   tasks,
   presentations,
+  missingLabelIds = null,
   emptyMessage,
   isDropTarget,
   draggedTaskId,
@@ -150,6 +152,7 @@ export function BoardColumn({
               key={task.id}
               task={task}
               presentation={presentations[task.id]}
+              missingSprintLabel={missingLabelIds?.has(task.id) === true}
               isDragging={draggedTaskId === task.id}
               dragShift={dragShift}
               isMoving={movingTaskId === task.id}

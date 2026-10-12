@@ -109,6 +109,7 @@ type TaskDetailError = string | readonly [string, string];
 
 interface TaskDetailProps {
   task: Task;
+  missingSprintLabel?: { sprintNumber: number; suggestedLabel: string } | null;
   tasks: Task[];
   referenceTasks: Task[];
   currentUser: ActorIdentity;
@@ -397,6 +398,7 @@ function ConversationLink({
 
 export function TaskDetail({
   task,
+  missingSprintLabel = null,
   tasks,
   referenceTasks,
   currentUser,
@@ -1762,6 +1764,16 @@ export function TaskDetail({
           </div>
 
           <aside className="issue-properties" aria-label={text("议题属性", "Issue properties")}>
+            {missingSprintLabel && (
+              <p className="detail-missing-label">
+                {text("在 Linear 添加 label ", "Add label ")}
+                <code>{missingSprintLabel.suggestedLabel}</code>
+                {text(
+                  `，这些点数才会计入 Sprint ${missingSprintLabel.sprintNumber}`,
+                  ` in Linear so these points count for Sprint ${missingSprintLabel.sprintNumber}`,
+                )}
+              </p>
+            )}
             <div className="detail-primary-actions">
               <button
                 className="detail-open-thread-action"
