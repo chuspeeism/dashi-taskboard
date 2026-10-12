@@ -94,6 +94,22 @@ const PARENT_ISSUES_QUERY = `
   }
 `;
 
+// State changes for the Gantt timeline. Kept out of ISSUE_FIELDS so the
+// assigned-issue page stays under Linear's query complexity limit.
+const ISSUE_HISTORY_QUERY = `
+  query TaskboardIssueHistory($ids: [ID!]) {
+    issues(first: 25, filter: { id: { in: $ids } }) {
+      nodes {
+        id
+        history(first: 50) {
+          nodes { createdAt fromState { name type } toState { name type } }
+        }
+      }
+    }
+  }
+`;
+const HISTORY_BATCH_SIZE = 25;
+
 const ISSUE_STATE_QUERY = `
   query TaskboardIssueState($id: String!) {
     issue(id: $id) { id state { id name type } }
@@ -197,6 +213,7 @@ function normalizeIssue(issue, config, index = 0) {
     dueDate: typeof issue.dueDate === "string" ? issue.dueDate : null,
     estimate: typeof issue.estimate === "number" ? issue.estimate : null,
     inScope: issue.inScope === true,
+    statusTimeline: typeof issue.createdAt === "string" ? statusTimelineFromLinear(issue) : null,
     gitBranch: gitBranch || null,
     parentExternalId: typeof issue.parent?.id === "string" ? issue.parent.id : null,
     externalOrigin: config.originId,
@@ -206,6 +223,25 @@ function normalizeIssue(issue, config, index = 0) {
     createdAt: typeof issue.createdAt === "string" ? issue.createdAt : new Date().toISOString(),
     updatedAt: typeof issue.updatedAt === "string" ? issue.updatedAt : new Date().toISOString(),
   };
+}
+
+// Phases from the issue's state changes, oldest first; `to` is null for the current phase.
+export function statusTimelineFromLinear(issue) {
+  const changes = (issue.history?.nodes ?? [])
+    .filter((entry) => entry?.toState && typeof entry.createdAt === "string")
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const phase = (state, from) => ({
+    status: taskStatusFromLinear(state),
+    externalState: typeof state?.name === "string" ? state.name.slice(0, 120) : null,
+    from,
+    to: null,
+  });
+  const timeline = [phase(changes[0]?.fromState ?? issue.state, issue.createdAt)];
+  for (const change of changes) {
+    timeline.at(-1).to = change.createdAt;
+    timeline.push(phase(change.toState, change.createdAt));
+  }
+  return timeline;
 }
 
 function cycleSummary(cycle) {
@@ -353,6 +389,16 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     return issues;
   }
 
+  async function attachHistory(config, issues) {
+    const historyById = new Map();
+    for (let offset = 0; offset < issues.length; offset += HISTORY_BATCH_SIZE) {
+      const ids = issues.slice(offset, offset + HISTORY_BATCH_SIZE).map((issue) => issue.id);
+      const nodes = (await graphql(config, ISSUE_HISTORY_QUERY, { ids })).issues?.nodes ?? [];
+      for (const node of nodes) historyById.set(node.id, node.history);
+    }
+    for (const issue of issues) issue.history = historyById.get(issue.id) ?? null;
+  }
+
   // Pulls the selected cycle's issues; returns the resolved cycle (null for none or "all").
   async function pull(config) {
     const team = await fetchTeam(config);
@@ -370,6 +416,7 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
       const parents = (await graphql(config, PARENT_ISSUES_QUERY, { ids: missingParentIds })).issues?.nodes ?? [];
       issues.push(...parents.map((parent) => ({ ...parent, inScope: false })));
     }
+    await attachHistory(config, issues);
     return { cycle: cycle ?? null, issues };
   }
 

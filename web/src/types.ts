@@ -417,6 +417,13 @@ export type TaskConversationRef = TaskConversationRefBase & (
   | { agentSession: AgentSession }
 );
 
+export interface StatusPhase {
+  status: TaskStatus;
+  externalState: string | null;
+  from: string;
+  to: string | null;
+}
+
 export interface Task {
   id: string;
   identifier: string;
@@ -458,6 +465,8 @@ export interface Task {
   // Agent loop: the user paused the agent / resumed it and no agent has claimed it yet.
   pausedAt?: string | null;
   resumedAt?: string | null;
+  // Status phases oldest first, from Linear state history or local status changes; `to` is null for the current phase.
+  statusTimeline?: StatusPhase[];
   archivedAt: string | null;
   relations: TaskRelations;
   version: number;
