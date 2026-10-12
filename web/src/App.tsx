@@ -2,6 +2,7 @@ import { Toasts, showToast, dismissUndoToast } from "./components/Toasts";
 import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import { resolveInlineAttachments } from "./inlineAttachments";
 import { sprintPoints } from "../../shared/sprint-points.mjs";
+import { missingSprintLabels } from "../../shared/sprint-label.mjs";
 import {
   AGENT_LOOP_STORAGE_KEY,
   MAX_CONCURRENT_LIMIT,
@@ -2418,18 +2419,27 @@ export function App() {
     () => (isLinearProject ? sprintPoints(tasks) : null),
     [isLinearProject, tasks],
   );
+  const sprintLabelCheck = useMemo(
+    () => (isLinearProject ? missingSprintLabels(tasks, linearConnection?.cycle?.name) : null),
+    [isLinearProject, linearConnection?.cycle?.name, tasks],
+  );
+  const [missingLabelFilter, setMissingLabelFilter] = useState(false);
+  const missingLabelIds = sprintLabelCheck && sprintLabelCheck.taskIds.size > 0 ? sprintLabelCheck.taskIds : null;
+  const missingLabelFilterActive = missingLabelFilter && missingLabelIds !== null;
   const filteredTasks = useMemo(() => {
     return tasks.filter(
-      (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
+      (task) => matchesTaskSearch(task, search, language)
+        && matchesTaskFilters(task, filters)
+        && (!missingLabelFilterActive || missingLabelIds?.has(task.id) === true),
     ).sort(taskComparator);
-  }, [filters, language, search, taskComparator, tasks]);
+  }, [filters, language, missingLabelFilterActive, missingLabelIds, search, taskComparator, tasks]);
 
   const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
     (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
   ).sort(taskComparator), [archivedTasks, filters, language, search, taskComparator]);
 
   const activeFilterCount = taskFilterCount(filters);
-  const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
+  const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0 || missingLabelFilterActive;
 
   const trackedCodexThreadIds = useMemo(() => [...new Set(tasks
     .filter((task) => task.status === "in_progress" && task.threadId)
@@ -3776,6 +3786,23 @@ export function App() {
                     )}
                   </span>
                 )}
+                {sprintLabelCheck && missingLabelIds && (
+                  <button
+                    className={`linear-missing-label${missingLabelFilterActive ? " is-active" : ""}`}
+                    type="button"
+                    aria-pressed={missingLabelFilterActive}
+                    title={text(
+                      `只显示缺少 Sprint ${sprintLabelCheck.sprintNumber} label 的议题`,
+                      `Show only issues missing the Sprint ${sprintLabelCheck.sprintNumber} label`,
+                    )}
+                    onClick={() => setMissingLabelFilter(!missingLabelFilterActive)}
+                  >
+                    {text(
+                      `${missingLabelIds.size} 个缺少 label（${sprintLabelCheck.points} 点）`,
+                      `${missingLabelIds.size} missing label (${sprintLabelCheck.points} pts)`,
+                    )}
+                  </button>
+                )}
                 <select
                   className="linear-cycle-select"
                   value={linearConnection?.selectedCycle ?? "current"}
@@ -3989,6 +4016,7 @@ export function App() {
           <TaskDetail
             key={detailTask.id}
             task={detailTask}
+            missingSprintLabel={missingLabelIds?.has(detailTask.id) ? sprintLabelCheck : null}
             tasks={tasks.filter((task) => task.projectId === detailTask.projectId)}
             referenceTasks={referenceTasks.filter((task) => task.projectId === detailTask.projectId)}
             currentUser={currentUser}
@@ -4144,6 +4172,7 @@ export function App() {
                         status={item}
                         tasks={tasksByStatus[item]}
                         presentations={taskPresentations}
+                        missingLabelIds={missingLabelIds}
                         emptyMessage={hasActiveTaskFilters
                           ? text("当前筛选下无匹配议题", "No issues match the current filters")
                           : text("暂无议题", "No issues")}
@@ -4184,6 +4213,7 @@ export function App() {
                     tasksByStatus={tasksByStatus}
                     archivedTasks={filteredArchivedTasks}
                     presentations={taskPresentations}
+                    missingLabelIds={missingLabelIds}
                     hasActiveFilters={hasActiveTaskFilters}
                     isDropTarget={otherTasksTab !== "archived" && dropTarget === otherTasksTab}
                     draggedTaskId={draggedTaskId}

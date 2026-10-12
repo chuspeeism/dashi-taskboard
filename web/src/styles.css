@@ -10045,3 +10045,49 @@ kbd {
   color: var(--danger);
   font-weight: 590;
 }
+
+.task-card.is-missing-sprint-label,
+.task-card.is-missing-sprint-label:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger-soft) 70%, var(--surface));
+}
+
+.task-card-missing-label {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.linear-missing-label {
+  margin-right: 8px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 590;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.linear-missing-label.is-active {
+  border-color: var(--danger);
+}
+
+.detail-missing-label {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detail-missing-label code {
+  font-weight: 590;
+}
