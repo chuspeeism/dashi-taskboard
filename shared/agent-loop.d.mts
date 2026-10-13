@@ -26,3 +26,16 @@ export function decisionState(comments: ReadonlyArray<{
   createdAt: string;
   updatedAt?: string;
 }>): "none" | "waiting" | "answered";
+export const LOOP_RUNNER_STORAGE_KEY: string;
+export type LoopRunner = {
+  tickStartedAt?: string | null;
+  tickEndedAt?: string | null;
+  activityAt?: string | null;
+  note?: string | null;
+};
+export function loopRunnerStatus(
+  runner: LoopRunner | null | undefined,
+  enabled: boolean,
+  tasks: ReadonlyArray<{ agentSession?: { heartbeatAt?: string } | null }>,
+  now: number,
+): { state: "running" | "in_progress" | "stuck" | "not_running"; since: number | null } | null;
