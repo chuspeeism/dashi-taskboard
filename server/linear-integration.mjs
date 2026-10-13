@@ -23,10 +23,10 @@ const STATUS_BY_STATE_TYPE = {
   duplicate: "canceled",
 };
 // The only board moves written back to Linear, and the state each one writes.
+// A move to blocked (a decision request) stays local: Linear keeps its state.
 const WRITE_BACK_STATE = [
   { from: "todo", to: "in_progress", state: "In Development" },
   { from: "in_progress", to: "in_review", state: "Code Review" },
-  { from: "*", to: "blocked", state: "Blocked" },
   { from: "blocked", to: "in_progress", state: "In Development" },
   { from: "in_review", to: "in_progress", state: "In Development" },
 ];
@@ -541,8 +541,11 @@ export function createLinearIntegration({
   }
 
   async function writeStatus(config, task, targetStatus) {
+    // A locally blocked task still has its Linear state; moves are checked against that state.
+    const linearStatus = task.status === "blocked" ? taskStatusFromLinear({ name: task.externalState }) : task.status;
+    if (targetStatus === "blocked" || targetStatus === linearStatus) return;
     const rule = WRITE_BACK_STATE.find(
-      (candidate) => candidate.to === targetStatus && (candidate.from === "*" || candidate.from === task.status),
+      (candidate) => candidate.to === targetStatus && candidate.from === linearStatus,
     );
     if (!rule) {
       throw new ApiError(
@@ -564,7 +567,7 @@ export function createLinearIntegration({
     }
     // The user may have moved the issue in Linear since the last sync: never overwrite that move.
     const live = (await graphql(config, ISSUE_STATE_QUERY, { id: task.externalKey })).issue;
-    if (taskStatusFromLinear(live?.state) !== task.status) {
+    if (taskStatusFromLinear(live?.state) !== linearStatus) {
       await runInOrder(() => syncWithConfig(config, { archiveMissing: false })).catch(() => {});
       throw new ApiError(
         409,

@@ -19,6 +19,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID, LINEAR_PROJECT_ID } from "../shared/domain.mjs";
+import { DECISION_REQUEST_MARKER, RELEASED_MARKER } from "../shared/agent-loop.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const TASK_TREE_MAX_NODES = 1_000;
@@ -1163,6 +1164,38 @@ export class TaskboardDatabase {
         WHERE id = ? AND started_outside_at IS NULL
       `);
 
+      // Linear: the user took back a ticket the agent holds (claimed, or waiting on a decision).
+      // Clear the agent session so its heartbeat reports paused, and lead the agent comment
+      // with the release marker so it no longer reads as a decision request.
+      const latestAgentComment = this.database.prepare(`
+        SELECT id, body FROM comments WHERE task_id = ? AND author_type = 'agent'
+        ORDER BY updated_at DESC, created_at DESC LIMIT 1
+      `);
+      const clearAgentSession = this.database.prepare(`
+        UPDATE tasks SET agent_session = NULL, paused_at = NULL, resumed_at = NULL,
+          version = version + 1, updated_at = ?
+        WHERE id = ?
+      `);
+      const markCommentReleased = this.database.prepare(`
+        UPDATE comments SET body = ?, version = version + 1, updated_at = ?, change_revision = ?
+        WHERE id = ?
+      `);
+      const releaseAgent = (task, reason) => {
+        if (source !== "linear" || !["in_progress", "blocked"].includes(task.status)) return;
+        const comment = latestAgentComment.get(task.id);
+        const awaitingDecision = comment?.body.trimStart().startsWith(DECISION_REQUEST_MARKER) === true;
+        if (!task.agent_session && !awaitingDecision) return;
+        clearAgentSession.run(timestamp, task.id);
+        if (comment) {
+          markCommentReleased.run(
+            `${RELEASED_MARKER} ${reason}\n\n${comment.body}`,
+            timestamp,
+            this.#nextCommentAttachmentRevision(),
+            comment.id,
+          );
+        }
+      };
+
       const taskIdByExternalId = new Map();
       for (const issue of issues) {
         const existing = findExisting.get(source, issue.externalOrigin, issue.externalId);
@@ -1174,6 +1207,14 @@ export class TaskboardDatabase {
         const externalState = issue.externalState ?? null;
         const statusTimeline = issue.statusTimeline ? JSON.stringify(issue.statusTimeline) : null;
         const nextCycle = issue.nextCycle ? JSON.stringify(issue.nextCycle) : null;
+        // A local Linear block (a decision request, not written to Linear) holds until the user
+        // moves the issue in Linear.
+        const status = source === "linear"
+          && existing?.status === "blocked"
+          && existing.archived_at === null
+          && existing.external_state === externalState
+          ? "blocked"
+          : issue.status;
         // An attached PR marks the task started; the mark is kept until the task is checked again.
         if (existing && issue.startedOutside) markStartedOutside.run(timestamp, timestamp, existing.id);
         if (!existing) {
@@ -1217,7 +1258,7 @@ export class TaskboardDatabase {
         const changed = existing.identifier !== issue.identifier
           || existing.title !== issue.title
           || existing.description !== issue.description
-          || existing.status !== issue.status
+          || existing.status !== status
           || existing.priority !== issue.priority
           || existing.labels !== labels
           || existing.sort_order !== issue.sortOrder
@@ -1245,12 +1286,17 @@ export class TaskboardDatabase {
           || existing.status_timeline !== statusTimeline
           || existing.next_cycle !== nextCycle
           || existing.archived_at !== null;
+        if (["backlog", "done", "canceled"].includes(issue.status)) {
+          releaseAgent(existing, `moved to ${externalState ?? issue.status} in Linear`);
+        } else if (issue.inScope === false) {
+          releaseAgent(existing, "moved out of the selected cycle in Linear");
+        }
         if (!changed) continue;
         updateTask.run(
           issue.identifier,
           issue.title,
           issue.description,
-          issue.status,
+          status,
           issue.priority,
           labels,
           issue.sortOrder,
@@ -1305,7 +1351,7 @@ export class TaskboardDatabase {
 
       if (archiveMissing) {
         const existingTasks = this.database.prepare(`
-          SELECT id FROM tasks
+          SELECT id, status, agent_session FROM tasks
           WHERE project_id = ? AND external_source = ? AND archived_at IS NULL
         `).all(projectId, source);
         const archiveTask = this.database.prepare(`
@@ -1315,6 +1361,7 @@ export class TaskboardDatabase {
         `);
         for (const task of existingTasks) {
           if (!seenTaskIds.has(task.id)) {
+            releaseAgent(task, "moved out of the selected cycle in Linear");
             archiveTask.run(timestamp, timestamp, task.id);
           }
         }
