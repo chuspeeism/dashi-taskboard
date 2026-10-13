@@ -1076,7 +1076,13 @@ export class TaskboardDatabase {
     this.database.prepare("UPDATE tasks SET external_state = ? WHERE id = ?").run(externalState, taskId);
   }
 
-  syncExternalTasks(source, projectId, issues, { archiveMissing = true, projectName, legacyIdentity = null } = {}) {
+  syncExternalTasks(source, projectId, issues, {
+    archiveMissing = true,
+    projectName,
+    legacyIdentity = null,
+    releaseCycleMoves = false,
+    selectedCycleId = null,
+  } = {}) {
     const timestamp = now();
     const seenTaskIds = new Set();
     const projectLabels = JSON.stringify([
@@ -1180,11 +1186,11 @@ export class TaskboardDatabase {
         UPDATE comments SET body = ?, version = version + 1, updated_at = ?, change_revision = ?
         WHERE id = ?
       `);
+      const isDecisionRequest = (comment) => comment?.body.trimStart().startsWith(DECISION_REQUEST_MARKER) === true;
       const releaseAgent = (task, reason) => {
         if (source !== "linear" || !["in_progress", "blocked"].includes(task.status)) return;
         const comment = latestAgentComment.get(task.id);
-        const awaitingDecision = comment?.body.trimStart().startsWith(DECISION_REQUEST_MARKER) === true;
-        if (!task.agent_session && !awaitingDecision) return;
+        if (!task.agent_session && !isDecisionRequest(comment)) return;
         clearAgentSession.run(timestamp, task.id);
         if (comment) {
           markCommentReleased.run(
@@ -1207,12 +1213,23 @@ export class TaskboardDatabase {
         const externalState = issue.externalState ?? null;
         const statusTimeline = issue.statusTimeline ? JSON.stringify(issue.statusTimeline) : null;
         const nextCycle = issue.nextCycle ? JSON.stringify(issue.nextCycle) : null;
+        if (existing && ["backlog", "done", "canceled"].includes(issue.status)) {
+          releaseAgent(existing, `moved to ${externalState ?? issue.status} in Linear`);
+        } else if (
+          existing
+          && releaseCycleMoves
+          && issue.inScope === false
+          && existing.in_scope === 1
+          && (issue.cycleId ?? null) !== selectedCycleId
+        ) {
+          releaseAgent(existing, "moved out of the selected cycle in Linear");
+        }
         // A local Linear block (a decision request, not written to Linear) holds until the user
-        // moves the issue in Linear.
+        // moves the issue in Linear or the request is released.
         const status = source === "linear"
           && existing?.status === "blocked"
-          && existing.archived_at === null
           && existing.external_state === externalState
+          && isDecisionRequest(latestAgentComment.get(existing.id))
           ? "blocked"
           : issue.status;
         // An attached PR marks the task started; the mark is kept until the task is checked again.
@@ -1286,11 +1303,6 @@ export class TaskboardDatabase {
           || existing.status_timeline !== statusTimeline
           || existing.next_cycle !== nextCycle
           || existing.archived_at !== null;
-        if (["backlog", "done", "canceled"].includes(issue.status)) {
-          releaseAgent(existing, `moved to ${externalState ?? issue.status} in Linear`);
-        } else if (issue.inScope === false) {
-          releaseAgent(existing, "moved out of the selected cycle in Linear");
-        }
         if (!changed) continue;
         updateTask.run(
           issue.identifier,
@@ -1361,7 +1373,7 @@ export class TaskboardDatabase {
         `);
         for (const task of existingTasks) {
           if (!seenTaskIds.has(task.id)) {
-            releaseAgent(task, "moved out of the selected cycle in Linear");
+            if (releaseCycleMoves) releaseAgent(task, "moved out of the selected cycle in Linear");
             archiveTask.run(timestamp, timestamp, task.id);
           }
         }

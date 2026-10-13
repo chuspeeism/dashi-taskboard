@@ -241,6 +241,7 @@ function normalizeIssue(issue, config, index = 0) {
     statusTimeline: typeof issue.createdAt === "string" ? statusTimelineFromLinear(issue) : null,
     gitBranch: gitBranch || null,
     parentExternalId: typeof issue.parent?.id === "string" ? issue.parent.id : null,
+    cycleId: typeof issue.cycle?.id === "string" ? issue.cycle.id : null,
     externalOrigin: config.originId,
     externalId,
     externalKey,
@@ -479,10 +480,17 @@ export function createLinearIntegration({
     return { cycle: cycle ?? null, issues };
   }
 
-  function syncDatabase(config, issues, archiveMissing) {
+  // releaseCycleMoves: the board views the same cycle as the last sync, so an issue that left it
+  // was moved in Linear (a cycle selection change or rollover releases nothing).
+  function syncDatabase(config, issues, archiveMissing, cycle = null, releaseCycleMoves = false) {
     database.syncLinearTasks(
       issues.map((issue, index) => normalizeIssue(issue, config, index)),
-      { archiveMissing, projectName: `Linear · ${config.teamKey} · ${config.displayName}` },
+      {
+        archiveMissing,
+        projectName: `Linear · ${config.teamKey} · ${config.displayName}`,
+        releaseCycleMoves,
+        selectedCycleId: cycle?.id ?? null,
+      },
     );
   }
 
@@ -499,7 +507,8 @@ export function createLinearIntegration({
   async function syncWithConfig(config, { archiveMissing = true } = {}) {
     await assertLiveOrigin(config);
     const { cycle, issues } = await pull(config);
-    syncDatabase(config, issues, archiveMissing);
+    const sameCycle = lastSyncedAt !== null && (lastCycle?.id ?? null) === (cycle?.id ?? null);
+    syncDatabase(config, issues, archiveMissing, cycle, sameCycle);
     lastSyncedAt = new Date().toISOString();
     lastCycle = cycle;
     return safeConfig(config, lastSyncedAt, lastCycle);
