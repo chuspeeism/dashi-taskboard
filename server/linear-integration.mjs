@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { LINEAR_PROJECT_ID } from "../shared/domain.mjs";
-import { LINEAR_STATE_STATUSES } from "../shared/linear-states.mjs";
+import { LINEAR_QA_WAITING_STATES, LINEAR_STATE_STATUSES } from "../shared/linear-states.mjs";
 import { ApiError } from "../shared/api-fields.mjs";
 import { validateSelectedCycle } from "./linear-config.mjs";
 
@@ -582,6 +582,14 @@ export function createLinearIntegration({
         409,
         "LINEAR_STATE_CONFLICT",
         `Linear 中 ${task.externalKey} 当前为“${live?.state?.name ?? "未知"}”，已重新同步`,
+      );
+    }
+    // QA states (Staging Ready For QA, In QA) change only in Linear.
+    if (LINEAR_QA_WAITING_STATES.some((name) => stateKey(name) === stateKey(live?.state?.name ?? ""))) {
+      throw new ApiError(
+        409,
+        "LINEAR_TRANSITION_UNAVAILABLE",
+        `Linear 任务 ${task.externalKey} 正在“${live.state.name}”，请在 Linear 中操作`,
       );
     }
     const data = await graphql(config, ISSUE_UPDATE_MUTATION, {
