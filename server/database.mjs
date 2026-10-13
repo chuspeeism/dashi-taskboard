@@ -147,6 +147,7 @@ function taskFromRow(row) {
     // until an agent claims the task again.
     pausedAt: row.paused_at ?? null,
     resumedAt: row.resumed_at ?? null,
+    startedOutsideAt: row.started_outside_at ?? null,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -363,6 +364,7 @@ export class TaskboardDatabase {
         status_timeline TEXT,
         paused_at TEXT,
         resumed_at TEXT,
+        started_outside_at TEXT,
         archived_at TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
@@ -632,6 +634,9 @@ export class TaskboardDatabase {
     }
     if (!migratedTaskColumns.some((column) => column.name === "resumed_at")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN resumed_at TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "started_outside_at")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN started_outside_at TEXT");
     }
     this.database.exec(`
       DROP INDEX IF EXISTS tasks_external_source_id;
@@ -2977,6 +2982,8 @@ export class TaskboardDatabase {
 
   recordAgentHeartbeat(id, agentSession) {
     const current = this.#requireTaskRecord(id);
+    // The user took the task over: the caller reports it as paused.
+    if (!current.agentSession) return this.getTask(current.id);
     if (
       current.agentSession?.platform !== agentSession.platform
       || current.agentSession?.sessionId !== agentSession.sessionId
@@ -2996,6 +3003,31 @@ export class TaskboardDatabase {
       UPDATE tasks SET paused_at = ?, resumed_at = ?, version = version + 1, updated_at = ?
       WHERE id = ?
     `).run(paused ? timestamp : null, paused ? null : timestamp, timestamp, current.id);
+    return this.getTask(current.id);
+  }
+
+  // Take over: the user works the task by hand. Without an agent session the
+  // agent's next heartbeat returns paused, and `taskctl next` never hands it out.
+  takeOverTask(id) {
+    const current = this.#requireTask(id);
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE tasks SET agent_session = NULL, paused_at = NULL, resumed_at = NULL,
+        version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(timestamp, current.id);
+    return this.getTask(current.id);
+  }
+
+  // Agent loop: a Linear todo that already has a PR or branch outside the loop.
+  setTaskStartedOutside(id, started) {
+    const current = this.#requireTask(id);
+    if (Boolean(current.startedOutsideAt) === started) return current;
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE tasks SET started_outside_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(started ? timestamp : null, timestamp, current.id);
     return this.getTask(current.id);
   }
 

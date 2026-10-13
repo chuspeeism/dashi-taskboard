@@ -2944,7 +2944,7 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause|take-over|started-outside))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -2964,8 +2964,30 @@ export function createTaskboardServer(options = {}) {
           if (!agentSession) throw new ApiError(400, "INVALID_FIELD", "agentSession is required");
           const task = database.recordAgentHeartbeat(id, agentSession);
           events.emit("task.updated", { task });
-          // The user paused this task: the agent stops and records where it stopped.
-          return sendJson(response, 200, { task, paused: Boolean(task.pausedAt) });
+          // The user paused or took over this task: the agent stops and records where it stopped.
+          return sendJson(response, 200, { task, paused: Boolean(task.pausedAt) || !task.agentSession });
+        }
+        if (action === "take-over" && request.method === "POST") {
+          const task = database.takeOverTask(id);
+          events.emit("task.updated", { task });
+          return sendJson(response, 200, { task });
+        }
+        if (action === "started-outside" && request.method === "POST") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["branchExists"]));
+          if (typeof body.branchExists !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "branchExists must be a boolean");
+          }
+          const current = database.getTask(id);
+          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          if (current.source !== "linear") {
+            throw new ApiError(409, "LINEAR_TASK_REQUIRED", "Only Linear tasks have an already-started check");
+          }
+          const started = body.branchExists || await linear.hasPullRequest(current);
+          const task = database.setTaskStartedOutside(current.id, started);
+          if (task.version !== current.version) events.emit("task.updated", { task });
+          return sendJson(response, 200, { task, started });
         }
         if (action === "pause" && request.method === "POST") {
           const body = await readJson(request);

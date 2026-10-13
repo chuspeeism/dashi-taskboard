@@ -8191,6 +8191,7 @@ kbd {
 .detail-agent-pause-button {
   min-height: 24px;
   padding: 0 10px;
+  white-space: nowrap;
 }
 
 .column-linear-states {
@@ -10101,6 +10102,17 @@ kbd {
   color: var(--danger);
   font-size: 12px;
   font-weight: 590;
+}
+
+.task-card-started-outside {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.task-processing-row .task-processing-label.is-qa-failed {
+  color: var(--danger);
 }
 
 .linear-missing-label {

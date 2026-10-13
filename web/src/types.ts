@@ -465,6 +465,8 @@ export interface Task {
   // Agent loop: the user paused the agent / resumed it and no agent has claimed it yet.
   pausedAt?: string | null;
   resumedAt?: string | null;
+  // Agent loop, Linear only: `taskctl next` found a PR or branch the user started outside the loop.
+  startedOutsideAt?: string | null;
   // Status phases oldest first, from Linear state history or local status changes; `to` is null for the current phase.
   statusTimeline?: StatusPhase[];
   archivedAt: string | null;

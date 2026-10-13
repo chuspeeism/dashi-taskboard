@@ -679,6 +679,14 @@ export async function setTaskPaused(task: Task, paused: boolean): Promise<Task> 
   return data.task;
 }
 
+export async function takeOverTask(task: Task): Promise<Task> {
+  const data = await request<{ task: Task }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/take-over`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+  return data.task;
+}
+
 export async function archiveTask(task: Task, threadId?: string): Promise<Task> {
   const data = await request<{ task: Task }>(
     `/api/tasks/${encodeURIComponent(task.id)}/archive`,

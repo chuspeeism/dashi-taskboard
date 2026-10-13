@@ -170,6 +170,7 @@ test("syncs the current cycle and writes back only allowed moves", async () => {
   const write = stub.calls.find((call) => call.operation === "TaskboardIssueUpdate");
   assert.deepEqual(write.variables, { id: "MM7-2", input: { stateId: STATES[4].id } });
 
+  stub.issue.state = STATES[8];
   await linear.moveTask({ ...task, status: "in_review" }, "in_progress");
   assert.deepEqual(
     stub.calls.filter((call) => call.operation === "TaskboardIssueUpdate").at(-1).variables.input,

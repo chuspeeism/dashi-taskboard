@@ -1,5 +1,7 @@
 // Agent loop rules shared by `taskctl next`, `taskctl loop config` and the web UI.
 
+import { linearQaState } from "./linear-states.mjs";
+
 export const AGENT_LOOP_STORAGE_KEY = "taskboard.agentLoop.v1";
 export const DEFAULT_MAX_CONCURRENT = 2;
 export const MAX_CONCURRENT_LIMIT = 10;
@@ -43,11 +45,13 @@ export function repoForTask(settings, task) {
   return label ? settings.labelRepos[label] : settings.repoPath;
 }
 
-// Paused tasks, and resumed tasks no agent has claimed again yet, do not count toward maxConcurrent.
+// Paused tasks, resumed tasks no agent has claimed again yet, and Linear tasks
+// waiting on QA do not count toward maxConcurrent.
 export function isAgentWorking(task) {
   return task.status === "in_progress"
     && !task.pausedAt
     && !task.resumedAt
+    && !linearQaState(task)
     && Boolean(task.agentSession || task.threadBinding || task.threadId);
 }
 

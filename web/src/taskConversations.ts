@@ -6,6 +6,7 @@ import type {
   CodexThreadBinding,
   Task,
 } from "./types";
+import { linearQaState } from "../../shared/linear-states.mjs";
 
 export interface TaskConversationItem {
   key: string;
@@ -31,6 +32,8 @@ export interface TaskProcessingPresentation {
   agentSession: AgentSession | null;
   codexThread: boolean;
   paused: boolean;
+  // Linear in_progress task waiting on QA ("waiting") or back from a failed staging QA ("failed").
+  qa: "waiting" | "failed" | null;
 }
 
 export interface TaskCardPresentation {
@@ -209,6 +212,7 @@ export function taskCardPresentation(
       agentSession: task.agentSession ?? null,
       codexThread: conversations.some((conversation) => conversation.kind !== "agent-session"),
       paused: Boolean(task.pausedAt),
+      qa: linearQaState(task),
     },
   };
 }
