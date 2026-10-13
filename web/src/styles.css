@@ -7579,6 +7579,39 @@ kbd {
   color: var(--text-secondary);
 }
 
+.project-runner-status {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.project-runner-status.is-running {
+  color: #00a558;
+}
+
+.project-runner-status.is-stuck {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.project-runner-copy {
+  height: 24px;
+  padding: 0 9px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.project-runner-copy:hover,
+.project-runner-copy:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
 .project-automation-trigger > svg {
   width: 13px;
   height: 13px;

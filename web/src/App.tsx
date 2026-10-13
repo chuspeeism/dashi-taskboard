@@ -5,10 +5,13 @@ import { sprintPoints } from "../../shared/sprint-points.mjs";
 import { missingSprintLabels } from "../../shared/sprint-label.mjs";
 import {
   AGENT_LOOP_STORAGE_KEY,
+  LOOP_RUNNER_STORAGE_KEY,
   MAX_CONCURRENT_LIMIT,
   isAgentWorking,
+  loopRunnerStatus,
   parseAgentLoopSettings,
   projectLoopSettings,
+  type LoopRunner,
 } from "../../shared/agent-loop.mjs";
 import {
   Fragment,
@@ -334,6 +337,12 @@ const PROJECT_CODEX_IDENTITIES_KEY = "taskboard.projectCodexIdentities.v1";
 const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
 const ISSUE_READ_KEY_PREFIX = "taskboard.issue-read.v1";
 const FIRST_USE_COMPLETE_KEY = "taskboard.first-use-complete.v1";
+// "projectId:tickStartedAt" of the last stuck tick this browser notified about.
+const LOOP_STUCK_NOTIFIED_KEY = "taskboard.loopRunner.stuckNotified.v1";
+
+function readLoopRunners() {
+  return parseAgentLoopSettings(taskboardStorage.getItem(LOOP_RUNNER_STORAGE_KEY)) as Record<string, LoopRunner>;
+}
 function issueReadStorageKey(mode: string, task: Pick<Task, "id" | "projectId">) {
   return `${ISSUE_READ_KEY_PREFIX}:${mode}:${task.projectId}:${task.id}`;
 }
@@ -662,6 +671,7 @@ function LocalRealtimeSync({
         && (
           payload.key?.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
           || payload.key === AGENT_LOOP_STORAGE_KEY
+          || payload.key === LOOP_RUNNER_STORAGE_KEY
         )
       ) {
         void refreshProjectBoardDisplaySettings();
@@ -814,11 +824,13 @@ export function App() {
     () => parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY)),
   );
   const [autoRunRunners, setAutoRunRunners] = useState<Record<string, AutoRunRunner>>({});
+  const [loopRunners, setLoopRunners] = useState(readLoopRunners);
   const refreshProjectBoardDisplaySettings = useCallback(async () => {
     try {
       await refreshProjectBoardDisplaySettingsStorage();
       setProjectBoardDisplaySettings(readProjectBoardDisplaySettings());
       setAgentLoopSettings(parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY)));
+      setLoopRunners(readLoopRunners());
     } catch (error) {
       console.error(error);
     }
@@ -2378,6 +2390,34 @@ export function App() {
     () => (isLoopProject ? tasks.filter(isAgentWorking).length : 0),
     [isLoopProject, tasks],
   );
+  // Re-render every 30 seconds so the runner status follows the clock.
+  const [, setLoopClock] = useState(0);
+  const hasLoopSettings = Boolean(selectedLoopSettings);
+  useEffect(() => {
+    if (!hasLoopSettings) return;
+    const timer = window.setInterval(() => setLoopClock((value) => value + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [hasLoopSettings]);
+  const selectedLoopRunner = selectedProject ? loopRunners[selectedProject.id] : undefined;
+  const loopRunner = selectedLoopSettings
+    ? loopRunnerStatus(selectedLoopRunner, selectedLoopSettings.enabled, tasks, Date.now())
+    : null;
+  const stuckTickKey = loopRunner?.state === "stuck" && selectedProject
+    ? `${selectedProject.id}:${selectedLoopRunner?.tickStartedAt}`
+    : null;
+  useEffect(() => {
+    // One notification per stuck tick, remembered across reloads.
+    if (!stuckTickKey || taskboardStorage.getItem(LOOP_STUCK_NOTIFIED_KEY) === stuckTickKey) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    taskboardStorage.setItem(LOOP_STUCK_NOTIFIED_KEY, stuckTickKey);
+    const notification = new Notification("Loop runner stuck?", {
+      body: `${selectedProject?.name ?? ""}: a tick started over 15 minutes ago with no activity since.`,
+    });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  }, [stuckTickKey]);
   const saveLoopSettings = (change: Partial<{ enabled: boolean; maxConcurrent: number }>) => {
     if (!selectedProject || !selectedLoopSettings) return;
     // Re-read storage so entries for other projects are kept.
@@ -3746,6 +3786,12 @@ export function App() {
                   active: activeAgentTasks,
                   limit: MAX_CONCURRENT_LIMIT,
                 }}
+                runnerStatus={selectedRunner === "claude" ? loopRunner : null}
+                runnerNote={selectedLoopRunner?.note ?? null}
+                onCopyCoordinatorCommand={() => void copyText(
+                  `claude "/loop /taskboard-loop ${selectedProject.id} ${new URL(document.baseURI).origin}"`,
+                  text("已复制启动命令", "Start command copied"),
+                )}
                 onRunnerChange={changeAutoRunRunner}
                 onEnabledChange={(enabled) => setAutoRun(selectedRunner, enabled)}
                 onMaxConcurrentChange={(maxConcurrent) => saveLoopSettings({ maxConcurrent })}
