@@ -109,6 +109,7 @@ taskctl issue tree ID --direction descendants|ancestors --depth N [--json]
 ```bash
 taskctl next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)] [--json]
 taskctl loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N] [--json]
+taskctl loop heartbeat --project PROJECT_ID --phase start|end [--note TEXT] [--json]
 ```
 
 `next` picks the next issue an agent loop should work, and claims it with `--claim`. It respects the project's loop settings. See [loop.md](loop.md) for the selection rules, the decision-request protocol and the handoff format.

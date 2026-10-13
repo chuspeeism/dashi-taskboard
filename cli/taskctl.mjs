@@ -11,6 +11,7 @@ import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
 import {
   AGENT_LOOP_STORAGE_KEY,
+  LOOP_RUNNER_STORAGE_KEY,
   MAX_CONCURRENT_LIMIT,
   isAgentWorking,
   needsComments,
@@ -132,6 +133,7 @@ const COMMAND_OPTIONS = new Map([
   ["context current", new Set(["cwd", "json"])],
   ["next", new Set(["project", "claim", "thread-id", "agent-platform", "session-id", "json"])],
   ["loop config", new Set(["project", "enable", "disable", "max-concurrent", "repo", "label-repo", "json"])],
+  ["loop heartbeat", new Set(["project", "phase", "note", "json"])],
 ]);
 
 const HELP_TEXT = new Map([
@@ -157,6 +159,7 @@ Commands:
   next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)]
   loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N]
               [--repo PATH] [--label-repo LABEL=PATH]
+  loop heartbeat --project PROJECT_ID --phase start|end [--note TEXT]
 
 Global options:
   --runtime-file FILE  Use an explicit launcher runtime descriptor
@@ -359,7 +362,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/heartbeat/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current, next, loop config",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/heartbeat/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current, next, loop config/heartbeat",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -425,6 +428,17 @@ async function execute(parsed, overrides) {
     case "loop config":
       expectOperandCount(parsed, 0);
       return configureLoop(api, parsed.options);
+    case "loop heartbeat": {
+      expectOperandCount(parsed, 0);
+      const projectId = requiredOption(parsed.options, "project");
+      const phase = requiredOption(parsed.options, "phase");
+      if (phase !== "start" && phase !== "end") throw usageError("--phase must be start or end");
+      const now = new Date().toISOString();
+      const runner = await recordLoopRunner(api, projectId, (current) => (phase === "start"
+        ? { tickStartedAt: now, note: parsed.options.note ?? null }
+        : { tickEndedAt: now, note: parsed.options.note ?? current.note ?? null }));
+      return { projectId, runner };
+    }
     case "issue get":
       expectOperandCount(parsed, 1);
       return api.request("GET", taskPath(parsed.operands[0]));
@@ -891,9 +905,24 @@ async function readLoopSettings(api) {
   return parseAgentLoopSettings(entries?.[AGENT_LOOP_STORAGE_KEY]);
 }
 
+// Merges a change into this project's loop runner heartbeat, which the board header shows.
+async function recordLoopRunner(api, projectId, change) {
+  const { entries } = await api.request("GET", "/api/client-storage");
+  const runners = parseAgentLoopSettings(entries?.[LOOP_RUNNER_STORAGE_KEY]);
+  const current = runners[projectId] ?? {};
+  const runner = { ...current, ...change(current) };
+  await api.request("PATCH", "/api/client-storage", {
+    key: LOOP_RUNNER_STORAGE_KEY,
+    value: JSON.stringify({ ...runners, [projectId]: runner }),
+  });
+  return runner;
+}
+
 async function nextIssue(api, options, overrides) {
   const projectId = requiredOption(options, "project");
   const attribution = options.claim ? resolveConversationAttribution(options, overrides) : undefined;
+  // A claiming `next` is coordinator activity, so it keeps an open tick from looking stuck.
+  if (options.claim) await recordLoopRunner(api, projectId, () => ({ activityAt: new Date().toISOString() }));
   const [{ tasks }, loopSettings] = await Promise.all([
     api.request("GET", `/api/tasks?${new URLSearchParams({ projectId })}`),
     readLoopSettings(api),

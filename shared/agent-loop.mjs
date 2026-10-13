@@ -129,3 +129,26 @@ export function rankCandidates(tasks, commentsByTaskId) {
       || left.task.sortOrder - right.task.sortOrder
     ));
 }
+
+// Loop runner heartbeats per project, written by `taskctl loop heartbeat` and `taskctl next --claim`:
+// { [projectId]: { tickStartedAt, tickEndedAt, activityAt, note } }.
+export const LOOP_RUNNER_STORAGE_KEY = "taskboard.loopRunner.v1";
+const STUCK_AFTER_MS = 15 * 60_000;
+const NOT_RUNNING_AFTER_MS = 90 * 60_000;
+
+// The header status of a project's loop runner, or null when there is nothing to show.
+// An open tick is "stuck" once 15 minutes pass without tick activity or a task heartbeat.
+export function loopRunnerStatus(runner, enabled, tasks, now) {
+  const at = (value) => (typeof value === "string" ? Date.parse(value) || 0 : 0);
+  const started = at(runner?.tickStartedAt);
+  const ended = at(runner?.tickEndedAt);
+  const activity = at(runner?.activityAt);
+  if (started && started > ended) {
+    const heartbeat = Math.max(0, ...tasks.map((task) => at(task.agentSession?.heartbeatAt)));
+    const stuck = now - Math.max(started, activity, heartbeat) > STUCK_AFTER_MS;
+    return { state: stuck ? "stuck" : "in_progress", since: started };
+  }
+  const lastTick = Math.max(ended, activity);
+  if (lastTick && now - lastTick < NOT_RUNNING_AFTER_MS) return { state: "running", since: lastTick };
+  return enabled ? { state: "not_running", since: lastTick || null } : null;
+}

@@ -31,7 +31,7 @@ import {
   LINEAR_PROJECT_ID,
   TASK_STATUSES,
 } from "../shared/domain.mjs";
-import { AGENT_LOOP_STORAGE_KEY } from "../shared/agent-loop.mjs";
+import { AGENT_LOOP_STORAGE_KEY, LOOP_RUNNER_STORAGE_KEY } from "../shared/agent-loop.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { AiChatService } from "./ai-chat.mjs";
@@ -1883,6 +1883,7 @@ export function createTaskboardServer(options = {}) {
           if (
             update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
             || update.key === AGENT_LOOP_STORAGE_KEY
+            || update.key === LOOP_RUNNER_STORAGE_KEY
           ) {
             events.emit("client-storage.updated", { key: update.key });
           }

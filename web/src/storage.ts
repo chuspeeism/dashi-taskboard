@@ -1,4 +1,4 @@
-import { AGENT_LOOP_STORAGE_KEY } from "../../shared/agent-loop.mjs";
+import { AGENT_LOOP_STORAGE_KEY, LOOP_RUNNER_STORAGE_KEY } from "../../shared/agent-loop.mjs";
 
 const memoryStorage = new Map<string, string>();
 export const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
@@ -15,7 +15,7 @@ function isProjectBoardDisplaySettingsKey(key: string) {
 
 // Keys kept in server client storage even when localStorage exists, so taskctl sees them.
 function isServerSharedKey(key: string) {
-  return isProjectBoardDisplaySettingsKey(key) || key === AGENT_LOOP_STORAGE_KEY;
+  return isProjectBoardDisplaySettingsKey(key) || key === AGENT_LOOP_STORAGE_KEY || key === LOOP_RUNNER_STORAGE_KEY;
 }
 
 async function readServerStorage() {

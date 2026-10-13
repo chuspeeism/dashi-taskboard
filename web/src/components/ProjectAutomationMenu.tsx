@@ -37,6 +37,10 @@ interface ProjectAutomationMenuProps {
   runner: AutoRunRunner;
   // Claude Code agent loop settings; null when the project has no agent loop.
   loop: { enabled: boolean; maxConcurrent: number; active: number; limit: number } | null;
+  // Claude Code loop runner heartbeat status; null hides it.
+  runnerStatus: { state: "running" | "in_progress" | "stuck" | "not_running"; since: number | null } | null;
+  runnerNote: string | null;
+  onCopyCoordinatorCommand: () => void;
   onRunnerChange: (runner: AutoRunRunner) => void;
   onEnabledChange: (enabled: boolean) => void;
   onMaxConcurrentChange: (maxConcurrent: number) => void;
@@ -78,6 +82,9 @@ export function automationOptions(
 export function ProjectAutomationMenu({
   runner,
   loop,
+  runnerStatus,
+  runnerNote,
+  onCopyCoordinatorCommand,
   onRunnerChange,
   onEnabledChange,
   onMaxConcurrentChange,
@@ -125,6 +132,17 @@ export function ProjectAutomationMenu({
     : loop?.enabled
       ? `Claude Code ${loop.active}/${loop.maxConcurrent}`
       : text("自动运行", "Auto-run");
+
+  const runnerMinutes = runnerStatus?.since ? Math.max(0, Math.floor((Date.now() - runnerStatus.since) / 60_000)) : 0;
+  const runnerLabel = !runnerStatus
+    ? null
+    : runnerStatus.state === "running"
+      ? text(`运行中 · 上次 ${runnerMinutes} 分钟前`, `Running · last tick ${runnerMinutes}m ago`)
+      : runnerStatus.state === "in_progress"
+        ? text(`本轮进行中 ${runnerMinutes} 分钟`, `Tick in progress ${runnerMinutes}m`)
+        : runnerStatus.state === "stuck"
+          ? text("卡住？", "Stuck?")
+          : text("未运行", "Not running");
 
   useEffect(() => {
     if (!open) return;
@@ -403,6 +421,28 @@ export function ProjectAutomationMenu({
         <TaskboardIcon name={active ? "automationPause" : "automationPlay"} />
         <span>{triggerLabel}</span>
       </button>
+      {runnerStatus && (
+        <span
+          className={`project-runner-status is-${runnerStatus.state}`}
+          role="status"
+          title={runnerNote ?? undefined}
+        >
+          {runnerLabel}
+        </span>
+      )}
+      {(runnerStatus?.state === "not_running" || runnerStatus?.state === "stuck") && (
+        <button
+          type="button"
+          className="project-runner-copy no-drag"
+          title={text(
+            "在 dashi-taskboard 仓库的新 Claude Code 会话中运行",
+            "Run in a new Claude Code session in the dashi-taskboard repository",
+          )}
+          onClick={onCopyCoordinatorCommand}
+        >
+          {text("复制启动命令", "Copy start command")}
+        </button>
+      )}
       {menu}
     </>
   );

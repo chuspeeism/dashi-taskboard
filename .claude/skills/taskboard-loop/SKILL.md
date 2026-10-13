@@ -18,6 +18,8 @@ Invoke the CLI from the repository as `node cli/taskctl.mjs …`. Use this sessi
 
 ## Each tick
 
+Start every tick with `taskctl loop heartbeat --project P --phase start` and end it with `taskctl loop heartbeat --project P --phase end` (also when it dispatched nothing), so the board header shows the runner as running and flags a stuck tick.
+
 1. Run `taskctl next --project P --claim --agent-platform claude --session-id S` until `reason` is not `claimed`.
    - `disabled`: tell the user the loop is off (`taskctl loop config --project P --enable`) and stop.
    - `repo_unmapped`: tell the user to map a repository (`taskctl loop config --project P --repo PATH`) and stop.

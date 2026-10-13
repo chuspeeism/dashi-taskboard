@@ -22,6 +22,17 @@ taskctl loop config --project linear-my-tasks --label-repo PowerFlow=/path/to/po
 taskctl loop config --project linear-my-tasks --label-repo PowerFlow=   # remove the override
 ```
 
+## Runner heartbeat
+
+The runner that drives the loop (a coordinator session or a scheduled task) records each tick so the board header shows whether it is running:
+
+```bash
+taskctl loop heartbeat --project PROJECT_ID --phase start [--note TEXT]   # first command of a tick
+taskctl loop heartbeat --project PROJECT_ID --phase end [--note TEXT]     # last command of a tick
+```
+
+They are stored per project in client storage key `taskboard.loopRunner.v1`; `taskctl next --claim` also counts as tick activity. The header shows "Running · last tick Nm ago", "Tick in progress Nm", "Stuck?" (a tick started over 15 minutes ago with no end, no `next --claim` and no issue heartbeat since; the board sends one notification) or "Not running" (no tick for 90 minutes while the loop is enabled). Always send `--phase end`, also when the tick did nothing.
+
 ## Picking work
 
 ```bash
