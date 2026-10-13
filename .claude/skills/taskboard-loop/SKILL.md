@@ -29,9 +29,10 @@ Start every tick with `taskctl loop heartbeat --project P --phase start` and end
    - when `repoPath` is set (always for Linear), the instruction to work in that repository: create the worktree from it, branch from its current default branch, and follow its own `AGENTS.md` or `CLAUDE.md`;
    - the instruction to follow `skills/manage-taskboard/references/loop.md` and `AGENTS.md` (the mapped repository's own rules when `repoPath` is set): branch from its current default branch, implement the smallest real path, verify it, open a PR, then either hand off to `in_review` or turn its agent comment into a `[decision-request]` and move to `blocked`;
    - the one-agent-comment rule: the issue holds a single agent comment (claim note, handoff, `[decision-request]`, `[merged]`), added once and then edited with `taskctl comment update`, with the marker leading the body when it applies;
-   - the instruction to stop when `taskctl issue heartbeat` returns `paused: true`, recording in the agent comment where it stopped;
+   - for a `[decision-request]`: after moving the issue to `blocked`, send the user one Slack DM with the ticket key, the question, the options and the recommendation (format in `loop.md`, "Stopping for a decision"); a Linear issue is not moved to Blocked in Linear, it stays In Development;
+   - the instruction to stop when `taskctl issue heartbeat` returns `paused: true` (paused, taken over, or released because the user moved the Linear ticket back), recording in the agent comment where it stopped unless it already starts with `[released]`;
    - for `resume` or `rework`, the instruction to read the agent comment and the latest user comment first.
-3. When a subagent finishes, check its handoff: the PR URL, the exact head SHA, the verification, and the final issue status. A paused issue that stays `in_progress` is expected. If an unpaused issue is still `in_progress` with no handoff, edit its agent comment to start with a `[decision-request]` saying what happened and move it to `blocked`, so it surfaces to the user.
+3. When a subagent finishes, check its handoff: the PR URL, the exact head SHA, the verification, and the final issue status. A paused issue that stays `in_progress` is expected. If an unpaused issue is still `in_progress` with no handoff, edit its agent comment to start with a `[decision-request]` saying what happened, move it to `blocked` and send the user the same Slack DM, so it surfaces to the user.
 4. Run step 1 again to refill freed slots.
 
 ## After a merge

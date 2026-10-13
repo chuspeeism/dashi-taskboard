@@ -35,7 +35,8 @@ but have different state ids)
 Write-back on board status change (mirror of Jira `moveTask` / transitions), only for
 these moves, everything else is refused with a clear error like `JIRA_ASSIGNEE_UNAVAILABLE`:
 todo -> in_progress: `In Development`; in_progress -> in_review: `Code Review`;
-any -> blocked: `Blocked`; blocked -> in_progress: `In Development`.
+blocked -> in_progress: `In Development` (only when Linear itself is Blocked). A board move to
+blocked (an agent decision request) is local only and is not written to Linear.
 Never write a done/canceled/QA state from the board. Title/description edits: do not write
 back in v1 (read-only), reject like Jira rejects project moves.
 
