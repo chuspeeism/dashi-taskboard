@@ -5,6 +5,7 @@ export type ProjectLoopSettings = {
   maxConcurrent: number;
   repoPath: string | null;
   labelRepos: Record<string, string>;
+  earlyAnalysis: boolean;
 };
 export function parseAgentLoopSettings(raw: string | null | undefined): Record<string, ProjectLoopSettings>;
 export function projectLoopSettings(

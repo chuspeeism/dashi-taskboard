@@ -108,7 +108,8 @@ taskctl issue tree ID --direction descendants|ancestors --depth N [--json]
 
 ```bash
 taskctl next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)] [--json]
-taskctl loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N] [--json]
+taskctl loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N] [--early-analysis on|off] [--json]
+taskctl issue analysed ID (--report PATH | --clear) [--json]
 taskctl loop heartbeat --project PROJECT_ID --phase start|end [--note TEXT] [--json]
 ```
 

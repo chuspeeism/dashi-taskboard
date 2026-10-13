@@ -1918,6 +1918,14 @@ export function TaskDetail({
                 </span>
               </div>
             )}
+            {currentTask.analysedAt && (
+              <div className="detail-property-row">
+                <span className="detail-property-label">{text("已分析", "Analysed")}</span>
+                <span className="detail-analysis-report" title={currentTask.analysisReport ?? undefined}>
+                  {currentTask.analysisReport}
+                </span>
+              </div>
+            )}
             <div className="detail-property-row">
               <span className="detail-property-label">{text("优先级", "Priority")}</span>
               <TaskPropertyPicker

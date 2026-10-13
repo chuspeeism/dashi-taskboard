@@ -2418,7 +2418,7 @@ export function App() {
       notification.close();
     };
   }, [stuckTickKey]);
-  const saveLoopSettings = (change: Partial<{ enabled: boolean; maxConcurrent: number }>) => {
+  const saveLoopSettings = (change: Partial<{ enabled: boolean; maxConcurrent: number; earlyAnalysis: boolean }>) => {
     if (!selectedProject || !selectedLoopSettings) return;
     // Re-read storage so entries for other projects are kept.
     const current = parseAgentLoopSettings(taskboardStorage.getItem(AGENT_LOOP_STORAGE_KEY));
@@ -2511,11 +2511,16 @@ export function App() {
     };
   }, [trackedCodexThreadIdsKey]);
 
+  // Linear early analysis: next sprint's issues sit in their own group at the top of To do.
   const tasksByStatus = useMemo(() => {
     return Object.fromEntries(
-      TASK_STATUSES.map((status) => [status, filteredTasks.filter((task) => task.status === status)]),
+      TASK_STATUSES.map((status) => [
+        status,
+        filteredTasks.filter((task) => task.status === status && !task.nextCycle),
+      ]),
     ) as Record<TaskStatus, Task[]>;
   }, [filteredTasks]);
+  const nextSprintTasks = useMemo(() => filteredTasks.filter((task) => task.nextCycle), [filteredTasks]);
 
   const mainBoardItems = boardDisplaySettings.mainStatuses.filter(
     (status) => status !== "blocked"
@@ -3795,6 +3800,8 @@ export function App() {
                 onRunnerChange={changeAutoRunRunner}
                 onEnabledChange={(enabled) => setAutoRun(selectedRunner, enabled)}
                 onMaxConcurrentChange={(maxConcurrent) => saveLoopSettings({ maxConcurrent })}
+                earlyAnalysis={isLinearProject && selectedLoopSettings ? selectedLoopSettings.earlyAnalysis : null}
+                onEarlyAnalysisChange={(earlyAnalysis) => saveLoopSettings({ earlyAnalysis })}
                 automation={selectedProjectAutomation}
                 models={automationModels}
                 pending={automationPending || automationCatalogLoading}
@@ -4217,6 +4224,7 @@ export function App() {
                         }}
                         status={item}
                         tasks={tasksByStatus[item]}
+                        nextSprintTasks={item === "todo" ? nextSprintTasks : undefined}
                         presentations={taskPresentations}
                         missingLabelIds={missingLabelIds}
                         emptyMessage={hasActiveTaskFilters

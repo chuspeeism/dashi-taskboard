@@ -24,6 +24,8 @@ interface BoardColumnProps {
   scrollRef: (element: HTMLDivElement | null) => void;
   status: TaskStatus;
   tasks: Task[];
+  // Linear early analysis: next sprint's issues, shown as a group at the top of To do.
+  nextSprintTasks?: Task[];
   presentations: Record<string, TaskCardPresentation>;
   missingLabelIds?: ReadonlySet<string> | null;
   emptyMessage: string;
@@ -58,6 +60,7 @@ export function BoardColumn({
   scrollRef,
   status,
   tasks,
+  nextSprintTasks = [],
   presentations,
   missingLabelIds = null,
   emptyMessage,
@@ -145,38 +148,49 @@ export function BoardColumn({
       )}
 
       <div className="column-list" ref={scrollRef}>
-        {tasks.map((task) => {
-          const dragShift = getTaskDragShift(task.id);
-          return (
-            <TaskCard
-              key={task.id}
-              task={task}
-              presentation={presentations[task.id]}
-              missingSprintLabel={missingLabelIds?.has(task.id) === true}
-              isDragging={draggedTaskId === task.id}
-              dragShift={dragShift}
-              isMoving={movingTaskId === task.id}
-              isSettling={settlingTaskId === task.id}
-              isContextMenuOpen={contextMenuTaskId === task.id}
-              availableLabels={availableLabels}
-              projectName={projectNames?.[task.projectId]}
-              currentUser={currentUser}
-              showCover={showCover}
-              showBody={showBody}
-              showCreatedAt={showCreatedAt}
-              onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
-              onEdit={onEdit}
-              onUpdate={onUpdate}
-              onComplete={onComplete}
-              onContextMenu={onContextMenu}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-              onOpenConversation={onOpenConversation}
-            />
-          );
-        })}
-        {tasks.length === 0 && <div className="column-empty">{emptyMessage}</div>}
+        {nextSprintTasks.length > 0 && (
+          <div className="next-sprint-group" role="group" aria-label={text("下个 sprint · 准备中", "Next sprint · preparing")}>
+            <p className="next-sprint-group-heading">
+              {text("下个 sprint · 准备中", "Next sprint · preparing")}
+              {` · ${nextSprintTasks[0].nextCycle?.name ?? `Cycle ${nextSprintTasks[0].nextCycle?.number}`}`}
+            </p>
+            {nextSprintTasks.map((task) => renderCard(task))}
+          </div>
+        )}
+        {tasks.map((task) => renderCard(task))}
+        {tasks.length === 0 && nextSprintTasks.length === 0 && <div className="column-empty">{emptyMessage}</div>}
       </div>
     </section>
   );
+
+  function renderCard(task: Task) {
+    const dragShift = getTaskDragShift(task.id);
+    return (
+      <TaskCard
+        key={task.id}
+        task={task}
+        presentation={presentations[task.id]}
+        missingSprintLabel={missingLabelIds?.has(task.id) === true}
+        isDragging={draggedTaskId === task.id}
+        dragShift={dragShift}
+        isMoving={movingTaskId === task.id}
+        isSettling={settlingTaskId === task.id}
+        isContextMenuOpen={contextMenuTaskId === task.id}
+        availableLabels={availableLabels}
+        projectName={projectNames?.[task.projectId]}
+        currentUser={currentUser}
+        showCover={showCover}
+        showBody={showBody}
+        showCreatedAt={showCreatedAt}
+        onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
+        onEdit={onEdit}
+        onUpdate={onUpdate}
+        onComplete={onComplete}
+        onContextMenu={onContextMenu}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onOpenConversation={onOpenConversation}
+      />
+    );
+  }
 }

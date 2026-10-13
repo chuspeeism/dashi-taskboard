@@ -44,6 +44,9 @@ interface ProjectAutomationMenuProps {
   onRunnerChange: (runner: AutoRunRunner) => void;
   onEnabledChange: (enabled: boolean) => void;
   onMaxConcurrentChange: (maxConcurrent: number) => void;
+  // Linear only: the "Early analysis (next sprint)" loop setting; null hides the toggle.
+  earlyAnalysis: boolean | null;
+  onEarlyAnalysisChange: (earlyAnalysis: boolean) => void;
   automation?: Partial<AutomationState>;
   models: AiChatModel[];
   pending: boolean;
@@ -88,6 +91,8 @@ export function ProjectAutomationMenu({
   onRunnerChange,
   onEnabledChange,
   onMaxConcurrentChange,
+  earlyAnalysis,
+  onEarlyAnalysisChange,
   automation,
   models,
   pending,
@@ -259,6 +264,21 @@ export function ProjectAutomationMenu({
               ))}
             </select>
           </span>
+        </div>
+      )}
+      {earlyAnalysis !== null && (
+        <div className="project-automation-switch">
+          <span>{text("提前分析（下个 sprint）", "Early analysis (next sprint)")}</span>
+          <button
+            type="button"
+            className={`board-setting-switch${earlyAnalysis ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={earlyAnalysis}
+            aria-label={text("提前分析（下个 sprint）", "Early analysis (next sprint)")}
+            onClick={() => onEarlyAnalysisChange(!earlyAnalysis)}
+          >
+            <span aria-hidden="true" />
+          </button>
         </div>
       )}
       {isCodex && (

@@ -185,7 +185,7 @@ test("loop config updates only the selected project", async () => {
     ["loop", "config", "--project", "other", "--enable", "--max-concurrent", "3"],
     fetch,
   );
-  const other = { enabled: true, maxConcurrent: 3, repoPath: null, labelRepos: {} };
+  const other = { enabled: true, maxConcurrent: 3, repoPath: null, labelRepos: {}, earlyAnalysis: false };
   assert.deepEqual(result.settings, other);
   assert.deepEqual(JSON.parse(storage[AGENT_LOOP_STORAGE_KEY]), {
     demo: { enabled: true, maxConcurrent: 2 },

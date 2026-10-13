@@ -467,6 +467,11 @@ export interface Task {
   resumedAt?: string | null;
   // Agent loop, Linear only: `taskctl next` found a PR or branch the user started outside the loop.
   startedOutsideAt?: string | null;
+  // Linear early analysis: set on my Defining Requirements issues of the next cycle.
+  nextCycle?: { name: string | null; number: number } | null;
+  // The analysed marker set by `taskctl issue analysed`, with the report path.
+  analysedAt?: string | null;
+  analysisReport?: string | null;
   // Status phases oldest first, from Linear state history or local status changes; `to` is null for the current phase.
   statusTimeline?: StatusPhase[];
   archivedAt: string | null;

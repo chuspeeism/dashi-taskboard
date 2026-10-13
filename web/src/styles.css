@@ -10145,6 +10145,41 @@ kbd {
   font-weight: 590;
 }
 
+/* Linear early analysis: next sprint's Defining Requirements issues. */
+.next-sprint-group {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
+
+.next-sprint-group-heading {
+  margin: 0;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.task-card.is-next-sprint,
+.task-card.is-next-sprint:hover {
+  border-color: #a78bfa;
+  background: color-mix(in srgb, #8b5cf6 8%, var(--surface));
+}
+
+.task-card-analysed {
+  margin: 0;
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.detail-analysis-report {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .task-processing-row .task-processing-label.is-qa-failed {
   color: var(--danger);
 }
