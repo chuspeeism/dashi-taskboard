@@ -57,6 +57,8 @@ Candidates are tried in this order, then by priority and board order:
 
 Never claim `backlog`, never hand out a paused issue, and never take over an issue another session is working.
 
+A Linear `new` candidate is skipped when the user already started it: a GitHub pull request is attached to the Linear issue, or its Linear branch exists in the mapped repository (local or remote-tracking). `next` lists these in `skipped: [{ task, reason: "already_started" }]` and the card shows "Started outside the loop". Before writing a status to Linear, Taskboard reads the issue's live state; if the user moved it since the last sync, nothing is written, the board resyncs, and the move fails with `LINEAR_STATE_CONFLICT`, so `next --claim` tries the next candidate.
+
 Issues are not moved to `done` without user acceptance, so a merge is recorded in the agent comment instead. Right after the coordinator merges an issue's PR (only when the user authorized the merge), it edits that issue's agent comment to start with `[merged] <PR URL> <merge SHA>` and leaves the issue `in_review`. `taskctl next` reads that comment from Taskboard only; it makes no GitHub calls.
 
 ## One agent comment per ticket
@@ -77,7 +79,7 @@ At each step, record activity so the `in_progress` card shows the agent as activ
 taskctl issue heartbeat ISSUE_ID --agent-platform claude --session-id ID
 ```
 
-The user can pause an agent issue from its detail view. The issue stays `in_progress` (a Linear issue stays In Development) and its card shows "Paused (you)". While it is paused, `heartbeat` returns `paused: true`: stop at that point, record in the agent comment where you stopped, and end your run without moving the issue. When the user presses Resume, `taskctl next` returns the issue with `kind: "resume"`; start from that comment. An `in_progress` issue without an agent session or Codex thread shows "Manual (you)": the user is working it by hand, so leave it alone.
+The user can pause an agent issue from its detail view. The issue stays `in_progress` (a Linear issue stays In Development) and its card shows "Paused (you)". While it is paused, `heartbeat` returns `paused: true`: stop at that point, record in the agent comment where you stopped, and end your run without moving the issue. When the user presses Resume, `taskctl next` returns the issue with `kind: "resume"`; start from that comment. An `in_progress` issue without an agent session or Codex thread shows "Manual (you)": the user is working it by hand, so leave it alone. The user can also press "Take over": the agent session is cleared, the card shows "Manual (you)", `heartbeat` returns `paused: true` (stop the same way), and `next` never hands the issue out again. A Linear `in_progress` issue in Staging Ready For QA or In QA shows "Waiting for QA", and one in Staging Failed shows "QA failed"; these do not count toward `maxConcurrent`.
 
 ## Stopping for a decision
 

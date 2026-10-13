@@ -223,7 +223,7 @@ function ProcessingLabel({
   heartbeat: AgentHeartbeatState;
 }) {
   const { text } = useTaskboardI18n();
-  const { running, startedAt, agentSession, codexThread, paused } = processing;
+  const { running, startedAt, agentSession, codexThread, paused, qa } = processing;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!running || !startedAt) return;
@@ -233,7 +233,11 @@ function ProcessingLabel({
   }, [running, startedAt]);
   const elapsed = elapsedTime(startedAt, now);
   let label: string;
-  if (paused) {
+  if (qa === "failed") {
+    label = text("QA 未通过", "QA failed");
+  } else if (qa === "waiting") {
+    label = text("等待 QA", "Waiting for QA");
+  } else if (paused) {
     label = text("已暂停（你）", "Paused (you)");
   } else if (running) {
     label = elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing...");
@@ -252,7 +256,7 @@ function ProcessingLabel({
   } else {
     label = text("手动（你）", "Manual (you)");
   }
-  return <span className="task-processing-label">{label}</span>;
+  return <span className={`task-processing-label${qa === "failed" ? " is-qa-failed" : ""}`}>{label}</span>;
 }
 
 function ProcessingStatusRow({
@@ -590,6 +594,9 @@ export function TaskCard({
 
       {missingSprintLabel && (
         <p className="task-card-missing-label">{text("缺少 sprint label", "Missing sprint label")}</p>
+      )}
+      {task.status === "todo" && task.startedOutsideAt && (
+        <p className="task-card-started-outside">{text("已在循环外开始", "Started outside the loop")}</p>
       )}
 
       {body && <p className="task-card-description">{body}</p>}

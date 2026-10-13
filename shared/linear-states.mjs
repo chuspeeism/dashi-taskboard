@@ -22,3 +22,16 @@ export const LINEAR_STATE_STATUSES = [
 export function linearStatesForStatus(status) {
   return LINEAR_STATE_STATUSES.filter(([, mapped]) => mapped === status).map(([name]) => name);
 }
+
+// In-progress Linear states that wait on QA rather than on an agent or the user.
+const QA_STATES = new Map([
+  ["staging ready for qa", "waiting"],
+  ["in qa", "waiting"],
+  ["staging failed", "failed"],
+]);
+
+// "waiting" | "failed" | null for an in_progress Linear task.
+export function linearQaState(task) {
+  if (task?.source !== "linear" || task.status !== "in_progress") return null;
+  return QA_STATES.get(String(task.externalState ?? "").trim().toLowerCase()) ?? null;
+}

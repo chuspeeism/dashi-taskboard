@@ -27,6 +27,7 @@ import {
   listTaskActivities,
   resolveTaskboardUrl,
   setTaskPaused,
+  takeOverTask,
   uploadAttachment,
   uploadCommentAttachment,
   updateComment,
@@ -634,6 +635,18 @@ export function TaskDetail({
     onError(null);
     try {
       setCurrentTask(await setTaskPaused(currentTask, !currentTask.pausedAt));
+    } catch (error) {
+      onError(issueMessageFor(error));
+    } finally {
+      setSavingProperty(null);
+    }
+  }
+
+  async function takeOver() {
+    setSavingProperty("paused");
+    onError(null);
+    try {
+      setCurrentTask(await takeOverTask(currentTask));
     } catch (error) {
       onError(issueMessageFor(error));
     } finally {
@@ -1884,6 +1897,16 @@ export function TaskDetail({
                   >
                     {currentTask.pausedAt ? text("继续", "Resume") : text("暂停", "Pause")}
                   </button>
+                  {currentTask.agentSession && (
+                    <button
+                      type="button"
+                      className="button secondary detail-agent-pause-button"
+                      disabled={savingProperty === "paused"}
+                      onClick={() => void takeOver()}
+                    >
+                      {text("接手", "Take over")}
+                    </button>
+                  )}
                 </span>
               </div>
             )}

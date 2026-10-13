@@ -18,6 +18,8 @@ export function isAgentWorking(task: {
   threadId?: unknown;
   pausedAt?: string | null;
   resumedAt?: string | null;
+  source?: string;
+  externalState?: string | null;
 }): boolean;
 export const DECISION_REQUEST_MARKER: string;
 export function decisionState(comments: ReadonlyArray<{

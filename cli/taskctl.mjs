@@ -929,6 +929,8 @@ async function nextIssue(api, options, overrides) {
   ]);
   const settings = projectLoopSettings(loopSettings, projectId);
   const active = tasks.filter(isAgentWorking).length;
+  // Linear todo candidates the user already started outside the loop.
+  const skipped = [];
   const result = (reason, candidate = null, activeCount = active) => ({
     task: candidate?.task ?? null,
     kind: candidate?.kind ?? null,
@@ -937,6 +939,7 @@ async function nextIssue(api, options, overrides) {
     active: activeCount,
     maxConcurrent: settings.maxConcurrent,
     enabled: settings.enabled,
+    skipped,
   });
   if (!settings.enabled) return result("disabled");
   // A Linear project has no workspace, so the loop needs a mapped repository to branch from.
@@ -958,24 +961,49 @@ async function nextIssue(api, options, overrides) {
     ]),
   ));
   const candidates = rankCandidates(tasks, commentsByTaskId);
-  if (candidates.length === 0) return result("no_eligible");
-  if (!options.claim) return result("available", candidates[0]);
-
-  for (const candidate of candidates.slice(0, 3)) {
+  let claimAttempts = 0;
+  for (const candidate of candidates) {
+    let current = candidate.task;
+    if (candidate.kind === "new" && current.source === "linear") {
+      // The user may already work this issue: a PR on the Linear issue or its branch in the repository.
+      const branch = current.developmentContext?.type === "branch" ? current.developmentContext.branch : null;
+      const branchExists = branch ? await repoHasBranch(repoForTask(settings, current), branch) : false;
+      const check = await api.request("POST", `${taskPath(current.id)}/started-outside`, { branchExists });
+      if (check.started) {
+        skipped.push({ task: check.task, reason: "already_started" });
+        continue;
+      }
+      current = check.task;
+    }
+    if (!options.claim) return result("available", { task: current, kind: candidate.kind });
+    if (claimAttempts++ >= 3) break;
     try {
-      const { task } = await api.request("POST", `${taskPath(candidate.task.id)}/move`, {
+      const { task } = await api.request("POST", `${taskPath(current.id)}/move`, {
         status: "in_progress",
         ...attribution,
-        version: candidate.task.version,
+        version: current.version,
       });
       return result("claimed", { task, kind: candidate.kind }, active + 1);
     } catch (error) {
-      // Another writer or a sync changed this task since it was listed; try the next one.
-      if (error instanceof TaskctlError && error.code === "VERSION_CONFLICT") continue;
+      // Another writer, a sync or a move in Linear changed this task since it was listed; try the next one.
+      if (
+        error instanceof TaskctlError
+        && (error.code === "VERSION_CONFLICT" || error.code === "LINEAR_STATE_CONFLICT")
+      ) continue;
       throw error;
     }
   }
-  return result("conflict");
+  return result(claimAttempts > 0 ? "conflict" : "no_eligible");
+}
+
+// A local branch or remote-tracking branch with this name exists in the repository.
+async function repoHasBranch(repoPath, branch) {
+  const { stdout } = await execFileAsync("git", [
+    "-C", repoPath, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes",
+  ], { maxBuffer: 16 * 1024 * 1024 });
+  return stdout.split("\n").some((ref) => (
+    ref === `refs/heads/${branch}` || ref.replace(/^refs\/remotes\/[^/]+\//, "") === branch
+  ));
 }
 
 async function configureLoop(api, options) {

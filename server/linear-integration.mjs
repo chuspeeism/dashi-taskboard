@@ -116,6 +116,13 @@ const ISSUE_STATE_QUERY = `
   }
 `;
 
+// Links attached to the issue, for the agent loop's already-started check.
+const ISSUE_ATTACHMENTS_QUERY = `
+  query TaskboardIssueAttachments($id: String!) {
+    issue(id: $id) { id attachments(first: 50) { nodes { url } } }
+  }
+`;
+
 const ISSUE_UPDATE_MUTATION = `
   mutation TaskboardIssueUpdate($id: String!, $input: IssueUpdateInput!) {
     issueUpdate(id: $id, input: $input) { success }
@@ -503,6 +510,16 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
         `Linear 团队 ${config.teamKey} 没有“${rule.state}”状态`,
       );
     }
+    // The user may have moved the issue in Linear since the last sync: never overwrite that move.
+    const live = (await graphql(config, ISSUE_STATE_QUERY, { id: task.externalKey })).issue;
+    if (taskStatusFromLinear(live?.state) !== task.status) {
+      await runInOrder(() => syncWithConfig(config, { archiveMissing: false })).catch(() => {});
+      throw new ApiError(
+        409,
+        "LINEAR_STATE_CONFLICT",
+        `Linear 中 ${task.externalKey} 当前为“${live?.state?.name ?? "未知"}”，已重新同步`,
+      );
+    }
     const data = await graphql(config, ISSUE_UPDATE_MUTATION, {
       id: task.externalKey,
       input: { stateId },
@@ -575,8 +592,19 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     };
   }
 
+  // True when a GitHub pull request is attached to the Linear issue.
+  async function hasPullRequest(task) {
+    const config = await configStore.read();
+    await assertOwnedTask(config, task);
+    const issue = (await graphql(config, ISSUE_ATTACHMENTS_QUERY, { id: task.externalKey })).issue;
+    return (issue?.attachments?.nodes ?? []).some(
+      (attachment) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(attachment?.url ?? ""),
+    );
+  }
+
   return {
     planning,
+    hasPullRequest,
     async status() {
       return safeConfig(await configStore.read(), lastSyncedAt, lastCycle);
     },
