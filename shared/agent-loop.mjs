@@ -36,7 +36,8 @@ export function projectLoopSettings(settings, projectId) {
   const labelRepos = value?.labelRepos && typeof value.labelRepos === "object" && !Array.isArray(value.labelRepos)
     ? Object.fromEntries(Object.entries(value.labelRepos).filter(([, path]) => typeof path === "string" && path))
     : {};
-  return { enabled: value?.enabled === true, maxConcurrent, repoPath, labelRepos };
+  // earlyAnalysis (Linear): also sync my next-cycle Defining Requirements issues for early analysis.
+  return { enabled: value?.enabled === true, maxConcurrent, repoPath, labelRepos, earlyAnalysis: value?.earlyAnalysis === true };
 }
 
 // The repository an agent works in for this task: the first label override, else the default.

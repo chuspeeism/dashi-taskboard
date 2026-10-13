@@ -84,6 +84,22 @@ const ASSIGNED_ISSUES_QUERY = `
   }
 `;
 
+// Early analysis: my Defining Requirements issues in the next cycle, with their
+// links so an attached GitHub PR can mark the issue as already started. Smaller pages
+// keep it under Linear's query complexity limit with the extra attachments connection.
+const NEXT_CYCLE_ISSUES_QUERY = `
+  query TaskboardNextCycleIssues($after: String, $filter: IssueFilter) {
+    viewer {
+      assignedIssues(first: 25, after: $after, filter: $filter, orderBy: updatedAt) {
+        nodes { ${ISSUE_FIELDS} attachments(first: 20) { nodes { url } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+const EARLY_ANALYSIS_STATE = "Defining Requirements";
+const GITHUB_PULL_REQUEST_URL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/;
+
 // Parents of pulled sub-issues that fall outside the filter (another cycle or assignee),
 // shown for context the way Linear does.
 const PARENT_ISSUES_QUERY = `
@@ -220,6 +236,8 @@ function normalizeIssue(issue, config, index = 0) {
     dueDate: typeof issue.dueDate === "string" ? issue.dueDate : null,
     estimate: typeof issue.estimate === "number" ? issue.estimate : null,
     inScope: issue.inScope === true,
+    nextCycle: issue.nextCycle ?? null,
+    startedOutside: issue.startedOutside === true,
     statusTimeline: typeof issue.createdAt === "string" ? statusTimelineFromLinear(issue) : null,
     gitBranch: gitBranch || null,
     parentExternalId: typeof issue.parent?.id === "string" ? issue.parent.id : null,
@@ -286,7 +304,12 @@ function safeConfig(config, lastSyncedAt = null, cycle = null) {
     };
 }
 
-export function createLinearIntegration({ configStore, database, fetch: fetchImplementation = globalThis.fetch }) {
+export function createLinearIntegration({
+  configStore,
+  database,
+  fetch: fetchImplementation = globalThis.fetch,
+  readEarlyAnalysis = async () => false,
+}) {
   let lastSyncedAt = null;
   let lastCycle = null;
   // State ids by lowercase name for the configured team, refreshed on every sync.
@@ -380,11 +403,11 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     return team;
   }
 
-  async function fetchAssignedIssues(config, filter) {
+  async function fetchAssignedIssues(config, filter, query = ASSIGNED_ISSUES_QUERY) {
     const issues = [];
     let after = null;
     while (true) {
-      const data = await graphql(config, ASSIGNED_ISSUES_QUERY, { after, filter });
+      const data = await graphql(config, query, { after, filter });
       const connection = data.viewer?.assignedIssues;
       issues.push(...(Array.isArray(connection?.nodes) ? connection.nodes : []));
       if (connection?.pageInfo?.hasNextPage !== true) break;
@@ -422,6 +445,35 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     if (missingParentIds.length > 0) {
       const parents = (await graphql(config, PARENT_ISSUES_QUERY, { ids: missingParentIds })).issues?.nodes ?? [];
       issues.push(...parents.map((parent) => ({ ...parent, inScope: false })));
+    }
+    // Early analysis: my Defining Requirements issues in the team's next cycle, outside the sprint.
+    const nextCycle = await readEarlyAnalysis()
+      ? resolveLinearCycle(team.cycles?.nodes ?? [], "next")
+      : null;
+    if (nextCycle) {
+      // A failed next-cycle fetch skips those issues for this sync; the sprint sync still completes.
+      const nextIssues = await fetchAssignedIssues(config, {
+        and: [
+          { team: { key: { eq: config.teamKey } } },
+          { cycle: { id: { eq: nextCycle.id } } },
+          { state: { name: { eq: EARLY_ANALYSIS_STATE } } },
+        ],
+      }, NEXT_CYCLE_ISSUES_QUERY).catch(() => []);
+      const marker = {
+        name: typeof nextCycle.name === "string" && nextCycle.name.trim() ? nextCycle.name.trim() : null,
+        number: Number(nextCycle.number),
+      };
+      for (const issue of nextIssues) {
+        if (issues.some((pulled) => pulled.id === issue.id)) continue;
+        issues.push({
+          ...issue,
+          inScope: false,
+          nextCycle: marker,
+          startedOutside: (issue.attachments?.nodes ?? []).some(
+            (attachment) => GITHUB_PULL_REQUEST_URL.test(attachment?.url ?? ""),
+          ),
+        });
+      }
     }
     await attachHistory(config, issues);
     return { cycle: cycle ?? null, issues };
@@ -598,7 +650,7 @@ export function createLinearIntegration({ configStore, database, fetch: fetchImp
     await assertOwnedTask(config, task);
     const issue = (await graphql(config, ISSUE_ATTACHMENTS_QUERY, { id: task.externalKey })).issue;
     return (issue?.attachments?.nodes ?? []).some(
-      (attachment) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(attachment?.url ?? ""),
+      (attachment) => GITHUB_PULL_REQUEST_URL.test(attachment?.url ?? ""),
     );
   }
 

@@ -39,7 +39,7 @@ const sourceRuntimeFile = path.resolve(
   ".data",
   "launcher-runtime.json",
 );
-const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread", "help", "claim", "enable", "disable"]);
+const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread", "help", "claim", "enable", "disable", "clear"]);
 const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
@@ -108,6 +108,7 @@ const COMMAND_OPTIONS = new Map([
     "json",
   ])],
   ["issue heartbeat", new Set(["agent-platform", "session-id", "json"])],
+  ["issue analysed", new Set(["report", "clear", "json"])],
   ["issue archive", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["issue restore", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["issue tree", new Set(["direction", "depth", "json"])],
@@ -132,7 +133,9 @@ const COMMAND_OPTIONS = new Map([
   ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
   ["context current", new Set(["cwd", "json"])],
   ["next", new Set(["project", "claim", "thread-id", "agent-platform", "session-id", "json"])],
-  ["loop config", new Set(["project", "enable", "disable", "max-concurrent", "repo", "label-repo", "json"])],
+  ["loop config", new Set([
+    "project", "enable", "disable", "max-concurrent", "repo", "label-repo", "early-analysis", "json",
+  ])],
   ["loop heartbeat", new Set(["project", "phase", "note", "json"])],
 ]);
 
@@ -148,7 +151,7 @@ Commands:
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
   cloud login --url URL --actor-name NAME
   cloud status|logout
-  issue list|get|create|update|move|heartbeat|archive|restore|tree|relation
+  issue list|get|create|update|move|heartbeat|analysed|archive|restore|tree|relation
   comment list ISSUE_ID [--after CURSOR]
   comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]
   comment update COMMENT_ID --body TEXT --if-version N [--thread-id ID]
@@ -158,7 +161,7 @@ Commands:
   attachment upload --file PATH (--task ISSUE_ID | --comment COMMENT_ID)
   next --project PROJECT_ID [--claim (--agent-platform P --session-id ID | --thread-id ID)]
   loop config --project PROJECT_ID [--enable | --disable] [--max-concurrent N]
-              [--repo PATH] [--label-repo LABEL=PATH]
+              [--repo PATH] [--label-repo LABEL=PATH] [--early-analysis on|off]
   loop heartbeat --project PROJECT_ID --phase start|end [--note TEXT]
 
 Global options:
@@ -206,6 +209,8 @@ Actions:
     [--if-version N] [--json]
   heartbeat ISSUE_ID --agent-platform claude|pi|agy|grok --session-id ID [--json]
     Record activity on the issue's agent session (shown on in_progress cards).
+  analysed ISSUE_ID (--report PATH | --clear) [--json]
+    Mark a Linear issue as analysed with its report path, or clear the mark.
   archive ISSUE_ID [--thread-id ID] [--if-version N] [--json]
   restore ISSUE_ID [--thread-id ID] [--if-version N] [--json]
   tree ISSUE_ID --direction descendants|ancestors --depth N [--json]
@@ -362,7 +367,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/heartbeat/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current, next, loop config/heartbeat",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/heartbeat/analysed/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current, next, loop config/heartbeat",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -456,6 +461,14 @@ async function execute(parsed, overrides) {
       requiredOption(parsed.options, "agent-platform");
       const { agentSession } = resolveConversationAttribution(parsed.options, overrides);
       return api.request("POST", `${taskPath(parsed.operands[0])}/heartbeat`, { agentSession });
+    }
+    case "issue analysed": {
+      expectOperandCount(parsed, 1);
+      if (Boolean(parsed.options.clear) === (parsed.options.report !== undefined)) {
+        throw usageError("Use either --report PATH or --clear");
+      }
+      const report = parsed.options.clear ? null : resolveInputPath(parsed.options.report, overrides);
+      return api.request("POST", `${taskPath(parsed.operands[0])}/analysed`, { report });
     }
     case "issue archive":
       expectOperandCount(parsed, 1);
@@ -1022,6 +1035,10 @@ async function configureLoop(api, options) {
     if (separator < 1) throw usageError("--label-repo must be LABEL=PATH (empty PATH removes the label)");
     labelRepo = [options["label-repo"].slice(0, separator), options["label-repo"].slice(separator + 1)];
   }
+  const earlyAnalysis = options["early-analysis"];
+  if (earlyAnalysis !== undefined && earlyAnalysis !== "on" && earlyAnalysis !== "off") {
+    throw usageError("--early-analysis must be on or off");
+  }
   const loopSettings = await readLoopSettings(api);
   const current = projectLoopSettings(loopSettings, projectId);
   const labelRepos = { ...current.labelRepos };
@@ -1034,6 +1051,7 @@ async function configureLoop(api, options) {
     maxConcurrent: maxConcurrent ?? current.maxConcurrent,
     repoPath: options.repo === undefined ? current.repoPath : (options.repo ? path.resolve(options.repo) : null),
     labelRepos,
+    earlyAnalysis: earlyAnalysis === undefined ? current.earlyAnalysis : earlyAnalysis === "on",
   };
   if (JSON.stringify(settings) !== JSON.stringify(current)) {
     await api.request("PATCH", "/api/client-storage", {

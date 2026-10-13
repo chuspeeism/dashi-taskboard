@@ -515,7 +515,7 @@ export function TaskCard({
 
   return (
     <article
-      className={`task-card task-card-${variant} status-${task.status}${processingCard ? " is-processing-card" : ""}${processingCard && presentation.processing.running ? " is-running-card" : ""}${image ? " has-media" : ""}${presentation.unread ? " is-unread" : ""}${missingSprintLabel ? " is-missing-sprint-label" : ""}${isDragging ? " is-dragging" : ""}${dragShift ? " is-drag-shifted" : ""}${isMoving ? " is-moving" : ""}${isSettling ? " is-settling" : ""}${isContextMenuOpen ? " is-context-open" : ""}${propertyMenu ? " is-property-menu-open" : ""}`}
+      className={`task-card task-card-${variant} status-${task.status}${processingCard ? " is-processing-card" : ""}${processingCard && presentation.processing.running ? " is-running-card" : ""}${image ? " has-media" : ""}${presentation.unread ? " is-unread" : ""}${missingSprintLabel ? " is-missing-sprint-label" : ""}${task.nextCycle ? " is-next-sprint" : ""}${isDragging ? " is-dragging" : ""}${dragShift ? " is-drag-shifted" : ""}${isMoving ? " is-moving" : ""}${isSettling ? " is-settling" : ""}${isContextMenuOpen ? " is-context-open" : ""}${propertyMenu ? " is-property-menu-open" : ""}`}
       style={{
         viewTransitionName: task.status === "in_review" ? `review-task-${task.id}` : "none",
         ...(dragShift ? { transform: `translate3d(0, ${dragShift}px, 0)` } : {}),
@@ -597,6 +597,12 @@ export function TaskCard({
       )}
       {task.status === "todo" && task.startedOutsideAt && (
         <p className="task-card-started-outside">{text("已在循环外开始", "Started outside the loop")}</p>
+      )}
+      {task.nextCycle && task.startedOutsideAt && (
+        <p className="task-card-started-outside">{text("已有 PR", "Already has PR")}</p>
+      )}
+      {task.analysedAt && (
+        <p className="task-card-analysed">{text("已分析", "Analysed")}</p>
       )}
 
       {body && <p className="task-card-description">{body}</p>}

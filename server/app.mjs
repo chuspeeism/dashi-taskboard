@@ -31,7 +31,12 @@ import {
   LINEAR_PROJECT_ID,
   TASK_STATUSES,
 } from "../shared/domain.mjs";
-import { AGENT_LOOP_STORAGE_KEY, LOOP_RUNNER_STORAGE_KEY } from "../shared/agent-loop.mjs";
+import {
+  AGENT_LOOP_STORAGE_KEY,
+  LOOP_RUNNER_STORAGE_KEY,
+  parseAgentLoopSettings,
+  projectLoopSettings,
+} from "../shared/agent-loop.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { AiChatService } from "./ai-chat.mjs";
@@ -1436,10 +1441,17 @@ export function createTaskboardServer(options = {}) {
   const linearConfig = options.linearConfigStore ?? createLinearConfigStore({
     configPath: resolved.linearConfigPath,
   });
+  // The Linear project's "Early analysis (next sprint)" loop setting.
+  async function linearEarlyAnalysis() {
+    const entries = await readClientStorage();
+    return projectLoopSettings(parseAgentLoopSettings(entries[AGENT_LOOP_STORAGE_KEY]), LINEAR_PROJECT_ID)
+      .earlyAnalysis;
+  }
   const linear = createLinearIntegration({
     configStore: linearConfig,
     database,
     fetch: options.linearFetch ?? globalThis.fetch,
+    readEarlyAnalysis: linearEarlyAnalysis,
   });
   const externalIntegrations = { jira, linear };
   let hostRuntime = null;
@@ -1879,7 +1891,13 @@ export function createTaskboardServer(options = {}) {
               })),
             );
           }
+          const earlyAnalysisBefore = update.key === AGENT_LOOP_STORAGE_KEY ? await linearEarlyAnalysis() : null;
           await updateClientStorage(update);
+          // Turning early analysis on or off adds or removes the next-sprint issues right away.
+          if (update.key === AGENT_LOOP_STORAGE_KEY && earlyAnalysisBefore !== await linearEarlyAnalysis()) {
+            await linear.sync({ force: true }).catch(() => {});
+            events.emit("project.labels.updated", { project: database.getProject(LINEAR_PROJECT_ID) });
+          }
           if (
             update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
             || update.key === AGENT_LOOP_STORAGE_KEY
@@ -2945,7 +2963,7 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause|take-over|started-outside))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause|take-over|started-outside|analysed))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -2989,6 +3007,15 @@ export function createTaskboardServer(options = {}) {
           const task = database.setTaskStartedOutside(current.id, started);
           if (task.version !== current.version) events.emit("task.updated", { task });
           return sendJson(response, 200, { task, started });
+        }
+        if (action === "analysed" && request.method === "POST") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["report"]));
+          const report = stringField(body.report, "report", { nullable: true, maxLength: 4096 });
+          const task = database.setTaskAnalysed(id, report || null);
+          events.emit("task.updated", { task });
+          return sendJson(response, 200, { task });
         }
         if (action === "pause" && request.method === "POST") {
           const body = await readJson(request);

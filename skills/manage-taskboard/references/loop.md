@@ -22,6 +22,31 @@ taskctl loop config --project linear-my-tasks --label-repo PowerFlow=/path/to/po
 taskctl loop config --project linear-my-tasks --label-repo PowerFlow=   # remove the override
 ```
 
+## Early analysis (next sprint)
+
+For the Linear project, `earlyAnalysis` (the "Early analysis (next sprint)" toggle in the Auto-run menu, independent of `enabled`) also syncs my issues in Defining Requirements in the team's next cycle. They show in a purple "Next sprint · preparing" group at the top of To do, do not count toward the sprint points or the missing sprint label check (`inScope: false`), and are never handed out by `next` (Defining Requirements is `backlog`). Turning the flag off removes them from the board.
+
+Preparation is analysis only: a report file and a Slack DM, no code and no Linear writes. A runner job that analyses Defining Requirements issues uses this contract:
+
+```bash
+# 1. Read the flag.
+taskctl loop config --project linear-my-tasks --json          # settings.earlyAnalysis
+taskctl loop config --project linear-my-tasks --early-analysis on|off
+
+# 2. List the next sprint's Defining Requirements issues (only present while the flag is on).
+taskctl issue list --project linear-my-tasks --json
+#    tasks[] with nextCycle != null; nextCycle is { name, number }.
+#    externalKey is the Linear key, startedOutsideAt is set when a GitHub PR is attached
+#    (card "Already has PR"; say in the analysis that it may already be started),
+#    analysedAt / analysisReport are set once analysed. Skip issues with analysedAt.
+
+# 3. After writing the report, mark the issue analysed (card "Analysed", detail shows the path).
+taskctl issue analysed ISSUE_ID --report /path/to/report.md
+taskctl issue analysed ISSUE_ID --clear
+```
+
+Current-sprint Defining Requirements issues are the tasks with `inScope: true` and `externalState: "Defining Requirements"`; `taskctl issue analysed` works on them too. Analyse the current sprint first and share the per-tick analysis budget between both.
+
 ## Runner heartbeat
 
 The runner that drives the loop (a coordinator session or a scheduled task) records each tick so the board header shows whether it is running:

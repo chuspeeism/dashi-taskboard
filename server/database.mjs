@@ -148,6 +148,10 @@ function taskFromRow(row) {
     pausedAt: row.paused_at ?? null,
     resumedAt: row.resumed_at ?? null,
     startedOutsideAt: row.started_outside_at ?? null,
+    // Linear early analysis: the next cycle of a synced next-sprint issue, and the analysed marker.
+    nextCycle: row.next_cycle ? JSON.parse(row.next_cycle) : null,
+    analysedAt: row.analysed_at ?? null,
+    analysisReport: row.analysis_report ?? null,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -365,6 +369,9 @@ export class TaskboardDatabase {
         paused_at TEXT,
         resumed_at TEXT,
         started_outside_at TEXT,
+        next_cycle TEXT,
+        analysed_at TEXT,
+        analysis_report TEXT,
         archived_at TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
@@ -637,6 +644,11 @@ export class TaskboardDatabase {
     }
     if (!migratedTaskColumns.some((column) => column.name === "started_outside_at")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN started_outside_at TEXT");
+    }
+    for (const column of ["next_cycle", "analysed_at", "analysis_report"]) {
+      if (!migratedTaskColumns.some((current) => current.name === column)) {
+        this.database.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
+      }
     }
     this.database.exec(`
       DROP INDEX IF EXISTS tasks_external_source_id;
@@ -1119,7 +1131,7 @@ export class TaskboardDatabase {
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           external_source, external_origin, external_id, external_key, external_url,
-          estimate, in_scope, external_state, status_timeline,
+          estimate, in_scope, external_state, status_timeline, next_cycle,
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1129,7 +1141,7 @@ export class TaskboardDatabase {
           ?, NULL, NULL,
           NULL, ?, NULL, NULL,
           ?, ?, ?, ?, ?,
-          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
           NULL, 1, ?, ?
         )
       `);
@@ -1140,10 +1152,15 @@ export class TaskboardDatabase {
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           git_branch = CASE WHEN git_branch IS NULL AND worktree_path IS NULL THEN ? ELSE git_branch END,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
-          estimate = ?, in_scope = ?, external_state = ?, status_timeline = ?,
+          estimate = ?, in_scope = ?, external_state = ?, status_timeline = ?, next_cycle = ?,
           archived_at = NULL,
           version = version + 1, updated_at = ?
         WHERE id = ?
+      `);
+
+      const markStartedOutside = this.database.prepare(`
+        UPDATE tasks SET started_outside_at = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND started_outside_at IS NULL
       `);
 
       const taskIdByExternalId = new Map();
@@ -1156,6 +1173,9 @@ export class TaskboardDatabase {
         const inScope = issue.inScope === undefined ? null : issue.inScope ? 1 : 0;
         const externalState = issue.externalState ?? null;
         const statusTimeline = issue.statusTimeline ? JSON.stringify(issue.statusTimeline) : null;
+        const nextCycle = issue.nextCycle ? JSON.stringify(issue.nextCycle) : null;
+        // An attached PR marks the task started; the mark is kept until the task is checked again.
+        if (existing && issue.startedOutside) markStartedOutside.run(timestamp, timestamp, existing.id);
         if (!existing) {
           insertTask.run(
             issue.id,
@@ -1186,9 +1206,11 @@ export class TaskboardDatabase {
             inScope,
             externalState,
             statusTimeline,
+            nextCycle,
             issue.createdAt,
             issue.updatedAt,
           );
+          if (issue.startedOutside) markStartedOutside.run(timestamp, timestamp, issue.id);
           continue;
         }
 
@@ -1221,6 +1243,7 @@ export class TaskboardDatabase {
           || existing.in_scope !== inScope
           || existing.external_state !== externalState
           || existing.status_timeline !== statusTimeline
+          || existing.next_cycle !== nextCycle
           || existing.archived_at !== null;
         if (!changed) continue;
         updateTask.run(
@@ -1249,6 +1272,7 @@ export class TaskboardDatabase {
           inScope,
           externalState,
           statusTimeline,
+          nextCycle,
           issue.updatedAt,
           existing.id,
         );
@@ -3028,6 +3052,17 @@ export class TaskboardDatabase {
       UPDATE tasks SET started_outside_at = ?, version = version + 1, updated_at = ?
       WHERE id = ?
     `).run(started ? timestamp : null, timestamp, current.id);
+    return this.getTask(current.id);
+  }
+
+  // Linear early analysis: report is the analysis report path, or null to clear the marker.
+  setTaskAnalysed(id, report) {
+    const current = this.#requireTask(id);
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE tasks SET analysed_at = ?, analysis_report = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(report === null ? null : timestamp, report, timestamp, current.id);
     return this.getTask(current.id);
   }
 
