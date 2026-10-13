@@ -172,7 +172,7 @@
 
 .dashboard-view .dashboard-metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--metric-count, 6), minmax(0, 1fr));
   height: 120px;
   gap: 0;
   overflow: hidden;

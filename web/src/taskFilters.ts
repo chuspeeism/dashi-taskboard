@@ -7,9 +7,10 @@ import {
 } from "./types";
 import { labelDisplayName } from "./labels";
 import type { TaskboardLanguage } from "./i18n";
+import { linearQaState } from "../../shared/linear-states.mjs";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
-export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content" | "waitingForMe";
+export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content" | "waitingForMe" | "waitingForQa";
 
 export interface TaskFilters {
   statuses: TaskStatus[];
@@ -18,6 +19,7 @@ export interface TaskFilters {
   link: TaskLinkFilter;
   content: string;
   waitingForMe: boolean;
+  waitingForQa: boolean;
 }
 
 export const EMPTY_TASK_FILTERS: TaskFilters = {
@@ -27,6 +29,7 @@ export const EMPTY_TASK_FILTERS: TaskFilters = {
   link: "all",
   content: "",
   waitingForMe: false,
+  waitingForQa: false,
 };
 
 function isTaskStatus(value: string): value is TaskStatus {
@@ -50,6 +53,7 @@ export function readTaskFilters(): TaskFilters {
     link: linkValue === "yes" ? "linked" : linkValue === "no" ? "unlinked" : "all",
     content: params.get("content") ?? "",
     waitingForMe: params.get("waiting") === "me",
+    waitingForQa: params.get("qa") === "waiting",
   };
 }
 
@@ -75,6 +79,9 @@ export function writeTaskFilters(filters: TaskFilters) {
   if (filters.waitingForMe) url.searchParams.set("waiting", "me");
   else url.searchParams.delete("waiting");
 
+  if (filters.waitingForQa) url.searchParams.set("qa", "waiting");
+  else url.searchParams.delete("qa");
+
   window.history.replaceState(null, "", url);
 }
 
@@ -84,12 +91,18 @@ export function taskFilterCount(filters: TaskFilters): number {
     + Number(filters.labels.length > 0)
     + Number(filters.link !== "all")
     + Number(Boolean(filters.content.trim()))
-    + Number(filters.waitingForMe);
+    + Number(filters.waitingForMe)
+    + Number(filters.waitingForQa);
 }
 
 // Waiting for me: an unanswered agent decision request, or work handed off for review.
 export function isWaitingForMe(task: Task): boolean {
   return task.awaitingDecision || task.status === "in_review";
+}
+
+// Linear tasks in Staging Ready For QA or In QA.
+export function isWaitingForQa(task: Task): boolean {
+  return linearQaState(task) === "waiting";
 }
 
 export function matchesTaskSearch(task: Task, search: string, language: TaskboardLanguage): boolean {
@@ -131,6 +144,7 @@ export function matchesTaskFilters(
   if (omit !== "link" && filters.link === "unlinked" && hasConversation) return false;
 
   if (omit !== "waitingForMe" && filters.waitingForMe && !isWaitingForMe(task)) return false;
+  if (omit !== "waitingForQa" && filters.waitingForQa && !isWaitingForQa(task)) return false;
 
   if (omit !== "content") {
     const content = filters.content.trim().toLowerCase();

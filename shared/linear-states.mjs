@@ -24,9 +24,10 @@ export function linearStatesForStatus(status) {
 }
 
 // In-progress Linear states that wait on QA rather than on an agent or the user.
+// The Linear board shows the "waiting" ones in their own Waiting for QA column.
+export const LINEAR_QA_WAITING_STATES = ["Staging Ready For QA", "In QA"];
 const QA_STATES = new Map([
-  ["staging ready for qa", "waiting"],
-  ["in qa", "waiting"],
+  ...LINEAR_QA_WAITING_STATES.map((name) => [name.toLowerCase(), "waiting"]),
   ["staging failed", "failed"],
 ]);
 
