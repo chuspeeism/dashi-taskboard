@@ -23,10 +23,10 @@ const STATUS_BY_STATE_TYPE = {
   duplicate: "canceled",
 };
 // The only board moves written back to Linear, and the state each one writes.
+// A move to blocked (a decision request) stays local: Linear keeps its state.
 const WRITE_BACK_STATE = [
   { from: "todo", to: "in_progress", state: "In Development" },
   { from: "in_progress", to: "in_review", state: "Code Review" },
-  { from: "*", to: "blocked", state: "Blocked" },
   { from: "blocked", to: "in_progress", state: "In Development" },
   { from: "in_review", to: "in_progress", state: "In Development" },
 ];
@@ -241,6 +241,7 @@ function normalizeIssue(issue, config, index = 0) {
     statusTimeline: typeof issue.createdAt === "string" ? statusTimelineFromLinear(issue) : null,
     gitBranch: gitBranch || null,
     parentExternalId: typeof issue.parent?.id === "string" ? issue.parent.id : null,
+    cycleId: typeof issue.cycle?.id === "string" ? issue.cycle.id : null,
     externalOrigin: config.originId,
     externalId,
     externalKey,
@@ -479,10 +480,17 @@ export function createLinearIntegration({
     return { cycle: cycle ?? null, issues };
   }
 
-  function syncDatabase(config, issues, archiveMissing) {
+  // releaseCycleMoves: the board views the same cycle as the last sync, so an issue that left it
+  // was moved in Linear (a cycle selection change or rollover releases nothing).
+  function syncDatabase(config, issues, archiveMissing, cycle = null, releaseCycleMoves = false) {
     database.syncLinearTasks(
       issues.map((issue, index) => normalizeIssue(issue, config, index)),
-      { archiveMissing, projectName: `Linear · ${config.teamKey} · ${config.displayName}` },
+      {
+        archiveMissing,
+        projectName: `Linear · ${config.teamKey} · ${config.displayName}`,
+        releaseCycleMoves,
+        selectedCycleId: cycle?.id ?? null,
+      },
     );
   }
 
@@ -499,7 +507,8 @@ export function createLinearIntegration({
   async function syncWithConfig(config, { archiveMissing = true } = {}) {
     await assertLiveOrigin(config);
     const { cycle, issues } = await pull(config);
-    syncDatabase(config, issues, archiveMissing);
+    const sameCycle = lastSyncedAt !== null && (lastCycle?.id ?? null) === (cycle?.id ?? null);
+    syncDatabase(config, issues, archiveMissing, cycle, sameCycle);
     lastSyncedAt = new Date().toISOString();
     lastCycle = cycle;
     return safeConfig(config, lastSyncedAt, lastCycle);
@@ -541,8 +550,11 @@ export function createLinearIntegration({
   }
 
   async function writeStatus(config, task, targetStatus) {
+    // A locally blocked task still has its Linear state; moves are checked against that state.
+    const linearStatus = task.status === "blocked" ? taskStatusFromLinear({ name: task.externalState }) : task.status;
+    if (targetStatus === "blocked" || targetStatus === linearStatus) return;
     const rule = WRITE_BACK_STATE.find(
-      (candidate) => candidate.to === targetStatus && (candidate.from === "*" || candidate.from === task.status),
+      (candidate) => candidate.to === targetStatus && candidate.from === linearStatus,
     );
     if (!rule) {
       throw new ApiError(
@@ -564,7 +576,7 @@ export function createLinearIntegration({
     }
     // The user may have moved the issue in Linear since the last sync: never overwrite that move.
     const live = (await graphql(config, ISSUE_STATE_QUERY, { id: task.externalKey })).issue;
-    if (taskStatusFromLinear(live?.state) !== task.status) {
+    if (taskStatusFromLinear(live?.state) !== linearStatus) {
       await runInOrder(() => syncWithConfig(config, { archiveMissing: false })).catch(() => {});
       throw new ApiError(
         409,

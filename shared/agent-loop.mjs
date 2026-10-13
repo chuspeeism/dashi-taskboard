@@ -11,6 +11,8 @@ export const DECISION_REQUEST_MARKER = "[decision-request]";
 export const REWORK_MARKER = "/rework";
 // An agent comment starting with this marker records that the issue's PR is merged.
 export const MERGED_MARKER = "[merged]";
+// The board edits the agent comment to start with this marker when the user takes a Linear ticket back.
+export const RELEASED_MARKER = "[released]";
 
 const KIND_RANK = { resume: 0, rework: 1, new: 2 };
 const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3, none: 4 };

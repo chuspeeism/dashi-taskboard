@@ -96,7 +96,7 @@ Each issue holds at most one agent comment. The claim note, progress, the handof
 
 Follow the core workflow in `SKILL.md`: read the issue, comments and attachments, do the work in your own branch or worktree, verify the direct path, and open a PR. When `repoPath` is set, branch from that repository's default branch and follow its own `AGENTS.md` or `CLAUDE.md`.
 
-For Linear issues, status moves write back to Linear: claiming moves Ready For Dev to In Development, handing off to `in_review` moves it to Code Review, and `blocked` moves it to Blocked. Comments stay in Taskboard and are not synced to Linear. For `resume`, start from the user's answer. For `rework`, start from the `/rework` comment.
+For Linear issues, status moves write back to Linear: claiming moves Ready For Dev to In Development and handing off to `in_review` moves it to Code Review. A move to `blocked` (a decision request) is never written to Linear: the Linear issue stays In Development, only the board shows it as waiting for the user's decision, and resuming it writes nothing either. The local `blocked` holds until the user moves the issue in Linear. Comments stay in Taskboard and are not synced to Linear. For `resume`, start from the user's answer. For `rework`, start from the `/rework` comment.
 
 At each step, record activity so the `in_progress` card shows the agent as active (it shows no activity after 10 minutes without one):
 
@@ -104,7 +104,9 @@ At each step, record activity so the `in_progress` card shows the agent as activ
 taskctl issue heartbeat ISSUE_ID --agent-platform claude --session-id ID
 ```
 
-The user can pause an agent issue from its detail view. The issue stays `in_progress` (a Linear issue stays In Development) and its card shows "Paused (you)". While it is paused, `heartbeat` returns `paused: true`: stop at that point, record in the agent comment where you stopped, and end your run without moving the issue. When the user presses Resume, `taskctl next` returns the issue with `kind: "resume"`; start from that comment. An `in_progress` issue without an agent session or Codex thread shows "Manual (you)": the user is working it by hand, so leave it alone. The user can also press "Take over": the agent session is cleared, the card shows "Manual (you)", `heartbeat` returns `paused: true` (stop the same way), and `next` never hands the issue out again. A Linear `in_progress` issue in Staging Ready For QA or In QA shows "Waiting for QA", and one in Staging Failed shows "QA failed"; these do not count toward `maxConcurrent`.
+The user can pause an agent issue from its detail view. The issue stays `in_progress` (a Linear issue stays In Development) and its card shows "Paused (you)". While it is paused, `heartbeat` returns `paused: true`: stop at that point, record in the agent comment where you stopped, and end your run without moving the issue. When the user presses Resume, `taskctl next` returns the issue with `kind: "resume"`; start from that comment. An `in_progress` issue without an agent session or Codex thread shows "Manual (you)": the user is working it by hand, so leave it alone. The user can also press "Take over": the agent session is cleared, the card shows "Manual (you)", `heartbeat` returns `paused: true` (stop the same way), and `next` never hands the issue out again. For Linear issues the user can also take a ticket back in Linear. When a sync finds an `in_progress` or `blocked` Linear issue that holds an agent session or waits on a decision moved to Backlog, Triage, Defining Requirements, a done or canceled state, or out of the selected cycle (switching the board's selected cycle or a cycle rollover releases nothing), the board releases it: the agent session and the pause are cleared, the agent comment is edited to start with `[released] <reason>`, and `heartbeat` returns `paused: true`. Stop the same way and do not move the issue; `next` does not hand it out again unless the user puts it back in Ready For Dev.
+
+A Linear `in_progress` issue in Staging Ready For QA or In QA shows "Waiting for QA", and one in Staging Failed shows "QA failed"; these do not count toward `maxConcurrent`.
 
 ## Stopping for a decision
 
@@ -129,7 +131,17 @@ Recommendation: <option and why>
 Context: <what is done so far, branch/PR>
 ```
 
-The user answers with a normal comment. The next `taskctl next` then returns the issue as `resume`.
+Then send the user one Slack DM (required, the server does not call Slack) so the request is seen right away:
+
+```text
+<ticket key, e.g. MM7-1256 or DAS-21>: decision needed
+Question: <one-line question>
+Options: 1. <option> 2. <option>
+Recommendation: <option and why>
+Board: <Taskboard issue link or id>
+```
+
+Send one DM per new decision request, not on later edits. The user answers with a normal comment. The next `taskctl next` then returns the issue as `resume`.
 
 ## Handing off
 
