@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import "./DashboardView.css";
 import dueDoneIcon from "../assets/figma-taskboard/dashboard-due-done.svg";
@@ -7,7 +7,7 @@ import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
 import { getProjectSummary } from "../api";
 import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
-import { isWaitingForMe } from "../taskFilters";
+import { isWaitingForMe, isWaitingForQa } from "../taskFilters";
 import { actorKey } from "../actors";
 import type {
   TaskCardPresentation,
@@ -668,7 +668,7 @@ export function DashboardView({
       },
       {
         label: taskStatusLabel(language, "in_progress"),
-        value: tasks.filter((task) => task.status === "in_progress").length,
+        value: tasks.filter((task) => task.status === "in_progress" && !isWaitingForQa(task)).length,
         tone: "progress",
       },
       {
@@ -676,6 +676,10 @@ export function DashboardView({
         value: tasks.filter((task) => task.status === "in_review").length,
         tone: "review",
       },
+      // Only Linear tasks have QA states, so local dashboards skip this metric.
+      ...(tasks.some((task) => task.source === "linear")
+        ? [{ label: text("等待 QA", "Waiting for QA"), value: tasks.filter(isWaitingForQa).length, tone: "progress" }]
+        : []),
       {
         label: taskStatusLabel(language, "blocked"),
         value: tasks.filter((task) => task.status === "blocked").length,
@@ -782,7 +786,7 @@ export function DashboardView({
           />
         </div>
 
-        <div className="dashboard-metrics">
+        <div className="dashboard-metrics" style={{ "--metric-count": metrics.length } as CSSProperties}>
           {metrics.map((metric) => {
             const percent = activeTasks.length ? Math.round((metric.value / activeTasks.length) * 100) : 0;
             return (

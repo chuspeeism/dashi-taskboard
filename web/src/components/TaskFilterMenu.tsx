@@ -20,6 +20,7 @@ import {
 import {
   EMPTY_TASK_FILTERS,
   isWaitingForMe,
+  isWaitingForQa,
   matchesTaskFilters,
   matchesTaskSearch,
   taskFilterCount,
@@ -130,6 +131,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     const priorities = new Map<TaskPriority, number>();
     const labelCounts = new Map<string, number>();
     let waitingForMe = 0;
+    let waitingForQa = 0;
     const filtersWithoutContent = { ...filters, content: "" };
     for (const task of searchMatches) {
       if (matchesTaskFilters(task, filtersWithoutContent, "statuses")) {
@@ -146,8 +148,11 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
       if (isWaitingForMe(task) && matchesTaskFilters(task, filtersWithoutContent, "waitingForMe")) {
         waitingForMe += 1;
       }
+      if (isWaitingForQa(task) && matchesTaskFilters(task, filtersWithoutContent, "waitingForQa")) {
+        waitingForQa += 1;
+      }
     }
-    return { statuses, priorities, labels: labelCounts, waitingForMe };
+    return { statuses, priorities, labels: labelCounts, waitingForMe, waitingForQa };
   }, [filters, searchMatches]);
 
   function toggleStatus(status: TaskStatus) {
@@ -214,6 +219,20 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     toggle: () => onChange({ ...filters, waitingForMe: !filters.waitingForMe }),
   };
 
+  // Only Linear tasks have QA states, so local boards never show this option.
+  const qaOption: FilterOption | null = tasks.some((task) => task.source === "linear") || filters.waitingForQa
+    ? {
+      id: "waiting-for-qa",
+      label: text("等待 QA", "Waiting for QA"),
+      category: "",
+      keywords: "waiting qa staging",
+      count: counts.waitingForQa,
+      selected: filters.waitingForQa,
+      icon: <StatusIcon status="in_progress" color="currentColor" />,
+      toggle: () => onChange({ ...filters, waitingForQa: !filters.waitingForQa }),
+    }
+    : null;
+
   const optionsBySubmenu: Partial<Record<SubmenuName, FilterOption[]>> = {
     statuses: statusOptions,
     priorities: priorityOptions,
@@ -276,6 +295,8 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
   });
   const showWaitingOption = !normalizedRootQuery
     || `${waitingOption.label} ${waitingOption.keywords}`.toLowerCase().includes(normalizedRootQuery);
+  const showQaOption = qaOption !== null && (!normalizedRootQuery
+    || `${qaOption.label} ${qaOption.keywords}`.toLowerCase().includes(normalizedRootQuery));
   const quickOptions = normalizedRootQuery
     ? [...statusOptions, ...priorityOptions, ...labelOptions].filter((option) =>
       `${option.label} ${option.keywords ?? ""}`.toLowerCase().includes(normalizedRootQuery),
@@ -511,6 +532,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
 
       <div className="task-filter-root-list" role="menu">
         {showWaitingOption && renderOption(waitingOption, "root")}
+        {showQaOption && qaOption && renderOption(qaOption, "root")}
         {visibleCategories.map((category) => (
           <div className="task-filter-anchor" key={category.id}>
             <button
@@ -550,7 +572,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
           </>
         )}
 
-        {!showWaitingOption && visibleCategories.length === 0 && quickOptions.length === 0 && (
+        {!showWaitingOption && !showQaOption && visibleCategories.length === 0 && quickOptions.length === 0 && (
           <div className="task-filter-no-results">{text("没有匹配的筛选项", "No matching filters")}</div>
         )}
       </div>

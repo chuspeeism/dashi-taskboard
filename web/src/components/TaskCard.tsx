@@ -50,6 +50,7 @@ interface TaskCardProps {
   onComplete?: (task: Task) => Promise<void>;
   onContextMenu: (task: Task, position: { x: number; y: number }) => void;
   onDragStart: (task: Task, height: number) => void;
+  draggable?: boolean;
   onDragEnd: () => void;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
@@ -468,6 +469,7 @@ export function TaskCard({
   onContextMenu,
   onDragStart,
   onDragEnd,
+  draggable = true,
   onOpenConversation,
 }: TaskCardProps) {
   const { locale, text } = useTaskboardI18n();
@@ -520,7 +522,7 @@ export function TaskCard({
         viewTransitionName: task.status === "in_review" ? `review-task-${task.id}` : "none",
         ...(dragShift ? { transform: `translate3d(0, ${dragShift}px, 0)` } : {}),
       }}
-      draggable={!isMoving}
+      draggable={draggable && !isMoving}
       aria-labelledby={`task-${task.id}-title`}
       data-task-id={task.id}
       data-drag-shift={dragShift || undefined}
@@ -530,6 +532,11 @@ export function TaskCard({
         onContextMenu(task, { x: event.clientX, y: event.clientY });
       }}
       onDragStart={(event) => {
+        // A drag can still start from a cover image or link inside a non-draggable card.
+        if (!draggable) {
+          event.preventDefault();
+          return;
+        }
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", task.id);
         event.dataTransfer.setData("application/x-taskboard-task", task.id);

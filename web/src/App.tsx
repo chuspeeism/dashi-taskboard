@@ -3,6 +3,7 @@ import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import { resolveInlineAttachments } from "./inlineAttachments";
 import { sprintPoints } from "../../shared/sprint-points.mjs";
 import { missingSprintLabels } from "../../shared/sprint-label.mjs";
+import { linearQaState } from "../../shared/linear-states.mjs";
 import {
   AGENT_LOOP_STORAGE_KEY,
   LOOP_RUNNER_STORAGE_KEY,
@@ -2512,21 +2513,31 @@ export function App() {
   }, [trackedCodexThreadIdsKey]);
 
   // Linear early analysis: next sprint's issues sit in their own group at the top of To do.
+  // Linear board: tasks waiting for QA leave In progress for the display-only Waiting for QA column.
+  const isQaColumnTask = (task: Task) => isLinearProject && linearQaState(task) === "waiting";
   const tasksByStatus = useMemo(() => {
     return Object.fromEntries(
       TASK_STATUSES.map((status) => [
         status,
-        filteredTasks.filter((task) => task.status === status && !task.nextCycle),
+        filteredTasks.filter((task) => task.status === status && !task.nextCycle && !isQaColumnTask(task)),
       ]),
     ) as Record<TaskStatus, Task[]>;
-  }, [filteredTasks]);
+  }, [filteredTasks, isLinearProject]);
   const nextSprintTasks = useMemo(() => filteredTasks.filter((task) => task.nextCycle), [filteredTasks]);
+  const qaColumnTasks = useMemo(
+    () => filteredTasks.filter((task) => !task.nextCycle && isQaColumnTask(task)),
+    [filteredTasks, isLinearProject],
+  );
 
-  const mainBoardItems = boardDisplaySettings.mainStatuses.filter(
+  const mainBoardItems: (typeof boardDisplaySettings.mainStatuses[number] | "waiting_qa")[] = boardDisplaySettings.mainStatuses.filter(
     (status) => status !== "blocked"
       || !hasLoadedTasks
       || tasks.some((task) => task.status === "blocked"),
   );
+  if (isLinearProject) {
+    const anchor = mainBoardItems.includes("in_review") ? "in_review" : "in_progress";
+    mainBoardItems.splice(mainBoardItems.indexOf(anchor) + 1, 0, "waiting_qa");
+  }
   const mainColumnCount = Math.max(mainBoardItems.length, 1);
   const mainBoardMinWidth = (mainColumnCount * 300) + ((mainColumnCount - 1) * 24);
   const mainBoardMaxWidth = (mainColumnCount * 400) + ((mainColumnCount - 1) * 24);
@@ -4206,7 +4217,44 @@ export function App() {
               <>
                 <div ref={boardScrollRef} className="board-scroll" aria-label={text("议题看板", "Issue board")}>
                   <div className="board">
-                    {mainBoardItems.map((item) => item === "archived" ? (
+                    {mainBoardItems.map((item) => item === "waiting_qa" ? (
+                      <BoardColumn
+                        key={item}
+                        scrollRef={() => {}}
+                        status="in_progress"
+                        qaColumn
+                        tasks={qaColumnTasks}
+                        presentations={taskPresentations}
+                        missingLabelIds={missingLabelIds}
+                        emptyMessage={hasActiveTaskFilters
+                          ? text("当前筛选下无匹配议题", "No issues match the current filters")
+                          : text("暂无议题", "No issues")}
+                        isDropTarget={false}
+                        draggedTaskId={draggedTaskId}
+                        draggedTaskHeight={draggedTaskHeight}
+                        movingTaskId={movingTaskId}
+                        settlingTaskId={settlingTaskId}
+                        contextMenuTaskId={contextMenu?.taskId ?? null}
+                        availableLabels={availableLabels}
+                        currentUser={currentUser}
+                        showCover={boardDisplaySettings.cover}
+                        showBody={boardDisplaySettings.body}
+                        showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
+                        createEnabled={false}
+                        isLinearProject
+                        onCreateLabel={persistProjectLabel}
+                        onCreate={() => {}}
+                        onEdit={openTaskDetail}
+                        onUpdate={updateTaskProperties}
+                        onComplete={(task) => moveTask(task, "done")}
+                        onContextMenu={openTaskContextMenu}
+                        onDragStart={startTaskDrag}
+                        onDragEnd={endTaskDrag}
+                        onDragEnter={setDropTarget}
+                        onDrop={finishTaskDrop}
+                        onOpenConversation={openTaskConversation}
+                      />
+                    ) : item === "archived" ? (
                       <ArchivedTasksColumn
                         key={item}
                         tasks={filteredArchivedTasks}
