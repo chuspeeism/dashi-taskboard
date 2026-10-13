@@ -85,12 +85,13 @@ const ASSIGNED_ISSUES_QUERY = `
 `;
 
 // Early analysis: my Defining Requirements issues in the next cycle, with their
-// links so an attached GitHub PR can mark the issue as already started.
+// links so an attached GitHub PR can mark the issue as already started. Smaller pages
+// keep it under Linear's query complexity limit with the extra attachments connection.
 const NEXT_CYCLE_ISSUES_QUERY = `
   query TaskboardNextCycleIssues($after: String, $filter: IssueFilter) {
     viewer {
-      assignedIssues(first: 100, after: $after, filter: $filter, orderBy: updatedAt) {
-        nodes { ${ISSUE_FIELDS} attachments(first: 50) { nodes { url } } }
+      assignedIssues(first: 25, after: $after, filter: $filter, orderBy: updatedAt) {
+        nodes { ${ISSUE_FIELDS} attachments(first: 20) { nodes { url } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -450,13 +451,14 @@ export function createLinearIntegration({
       ? resolveLinearCycle(team.cycles?.nodes ?? [], "next")
       : null;
     if (nextCycle) {
+      // A failed next-cycle fetch skips those issues for this sync; the sprint sync still completes.
       const nextIssues = await fetchAssignedIssues(config, {
         and: [
           { team: { key: { eq: config.teamKey } } },
           { cycle: { id: { eq: nextCycle.id } } },
           { state: { name: { eq: EARLY_ANALYSIS_STATE } } },
         ],
-      }, NEXT_CYCLE_ISSUES_QUERY);
+      }, NEXT_CYCLE_ISSUES_QUERY).catch(() => []);
       const marker = {
         name: typeof nextCycle.name === "string" && nextCycle.name.trim() ? nextCycle.name.trim() : null,
         number: Number(nextCycle.number),
