@@ -293,12 +293,49 @@
   }
 
   function findReferenceButton() {
+    return railReferenceButton() || sidebarReferenceButton();
+  }
+
+  function railReferenceButton() {
     const rail = document.querySelector("nav[data-app-navigation-rail]");
     if (!rail) return null;
     return Array.from(rail.querySelectorAll("button")).find((button) => (
       button.getAttribute(OWNED_ATTRIBUTE) !== "true"
       && buttonMatches(button.querySelector(".sr-only"), EXPLORE_LABELS)
     )) || null;
+  }
+
+  // Codex sometimes renders a classic expanded sidebar instead of the compact
+  // navigation rail, depending on its own feature flags. Support both so the
+  // entry is not lost while the rail is absent.
+  function sidebarReferenceButton() {
+    const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
+    if (!scroll) return null;
+    const buttons = Array.from(scroll.querySelectorAll("button"));
+    const explore = buttons.find((button) => (
+      button.getAttribute(OWNED_ATTRIBUTE) !== "true"
+      && buttonMatches(button, EXPLORE_LABELS)
+    ));
+    if (explore) return explore;
+    const plugin = buttons.find((button) => (
+      button.getAttribute(OWNED_ATTRIBUTE) !== "true"
+      && buttonMatches(button, ["插件", "plugins"])
+    ));
+    if (plugin?.parentElement) {
+      const siblings = Array.from(plugin.parentElement.children)
+        .filter((child) => child.tagName === "BUTTON");
+      if (siblings.length >= 3) return plugin;
+    }
+    const firstSection = scroll.querySelector("[data-app-action-sidebar-section]");
+    const sectionTop = firstSection?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
+    const groups = Array.from(scroll.querySelectorAll("div")).filter((element) => {
+      const directButtons = Array.from(element.children)
+        .filter((child) => child.tagName === "BUTTON");
+      return directButtons.length >= 3 && element.getBoundingClientRect().top < sectionTop;
+    });
+    const group = groups.sort((l, r) => r.children.length - l.children.length)[0];
+    return Array.from(group?.children || [])
+      .filter((child) => child.tagName === "BUTTON").at(-1) || null;
   }
 
   function replaceEntryIcon(button) {
@@ -333,7 +370,8 @@
     button.setAttribute(OWNED_ATTRIBUTE, "true");
     button.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
     button.querySelectorAll("span.absolute.end-0.top-0").forEach((node) => node.remove());
-    entryLabel = button.querySelector(".sr-only");
+    entryLabel = button.querySelector(".sr-only")
+      || button.querySelector(".text-fade-truncate");
     syncEntryText(button);
     replaceEntryIcon(button);
     button.addEventListener("click", (event) => {
@@ -395,8 +433,12 @@
     const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
     const surface = viewport?.closest("[data-app-shell-workspace-row]");
     const rail = surface?.querySelector("nav[data-app-navigation-rail]");
-    if (!frameHost || !viewport || !surface || !rail) return null;
-    return { frameHost, surface, rail };
+    if (frameHost && viewport && surface && rail) return { frameHost, surface, rail };
+    // The classic expanded sidebar renders no compact navigation rail, so the
+    // page is mounted into the viewport's own container instead.
+    const classicSurface = viewport?.parentElement;
+    if (!frameHost || !viewport || !classicSurface?.closest("main")) return null;
+    return { frameHost, surface: classicSurface, rail: null };
   }
 
   function syncNativeRailIcons() {
@@ -686,7 +728,8 @@
   function titlebarLeftInset() {
     if (!/Macintosh|Mac OS X/.test(navigator.userAgent)) return 0;
     if (nativeSidebarCollapsed()) return MACOS_TITLEBAR_SAFE_LEFT;
-    const surfaceLeft = findPageMount()?.rail.getBoundingClientRect().right;
+    const mount = findPageMount();
+    const surfaceLeft = mount?.rail ? mount.rail.getBoundingClientRect().right : mount?.surface?.getBoundingClientRect().left;
     if (!Number.isFinite(surfaceLeft)) return 0;
     return Math.max(0, Math.ceil(MACOS_TITLEBAR_SAFE_LEFT - surfaceLeft));
   }
@@ -1903,7 +1946,12 @@
       }
     }
     surface.setAttribute(HOST_ATTRIBUTE, "true");
-    page.style.left = `${rail.getBoundingClientRect().right - surface.getBoundingClientRect().left}px`;
+    // In rail mode the surface spans the whole workspace row, so the page is
+    // offset past the rail. The classic sidebar sits outside the mount surface,
+    // so the page fills it from the left edge.
+    page.style.left = rail
+      ? `${rail.getBoundingClientRect().right - surface.getBoundingClientRect().left}px`
+      : "0";
     Array.from(surface.children).forEach((child) => {
       if (child !== page && child.getAttribute(OWNED_ATTRIBUTE) !== "true") {
         child.setAttribute(HIDDEN_ATTRIBUTE, "true");
