@@ -80,6 +80,68 @@ $processId = [PackagedAppActivator]::Activate($appUserModelId, $arguments)
 [Console]::Out.Write($processId)
 `;
 
+const activatePackagedAppWindowScript = String.raw`
+$ErrorActionPreference = 'Stop'
+$source = @'
+using System;
+using System.Runtime.InteropServices;
+
+[ComImport]
+[Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IApplicationActivationManager
+{
+    [PreserveSig]
+    int ActivateApplication(
+        [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+        [MarshalAs(UnmanagedType.LPWStr)] string arguments,
+        uint options,
+        out uint processId);
+}
+
+[ComImport]
+[Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+class ApplicationActivationManager {}
+
+public static class PackagedAppActivator
+{
+    public static uint Activate(string appUserModelId, string arguments)
+    {
+        var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+        try
+        {
+            uint processId;
+            var result = manager.ActivateApplication(appUserModelId, arguments, 0, out processId);
+            if (result < 0) Marshal.ThrowExceptionForHR(result);
+            return processId;
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(manager);
+        }
+    }
+}
+'@
+Add-Type -TypeDefinition $source
+
+$app = $env:CODEX_TASKBOARD_CODEX_APP_PATH
+$package = Get-AppxPackage | Where-Object {
+  $app.StartsWith(($_.InstallLocation + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)
+} | Select-Object -First 1
+if ($null -eq $package) { throw "Unable to find the Codex package for $app" }
+
+$relativeExecutable = $app.Substring($package.InstallLocation.Length).TrimStart('\', '/').Replace('\', '/')
+$manifest = $package | Get-AppxPackageManifest
+$application = @($manifest.Package.Applications.Application) | Where-Object {
+  ([string]$_.Executable).Replace('\', '/') -eq $relativeExecutable
+} | Select-Object -First 1
+if ($null -eq $application) { throw "Unable to find the Codex application manifest entry" }
+
+$appUserModelId = $package.PackageFamilyName + '!' + $application.Id
+$processId = [PackagedAppActivator]::Activate($appUserModelId, '')
+[Console]::Out.Write($processId)
+`;
+
 function runWindowsPowerShell(script, environment, run = spawnSync) {
   const result = run(
     "powershell.exe",
@@ -128,6 +190,19 @@ export function activateWindowsCodex(appPath, profilePath, port, environment, ru
   const pid = Number(output);
   if (!Number.isInteger(pid) || pid <= 0) {
     throw new Error(`Packaged Codex activation returned an invalid process ID: ${output}`);
+  }
+  return pid;
+}
+
+export function activateWindowsCodexWindow(appPath, environment, run = spawnSync) {
+  const output = runWindowsPowerShell(
+    activatePackagedAppWindowScript,
+    { ...environment, CODEX_TASKBOARD_CODEX_APP_PATH: appPath },
+    run,
+  );
+  const pid = Number(output);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`Packaged Codex window activation returned an invalid process ID: ${output}`);
   }
   return pid;
 }
