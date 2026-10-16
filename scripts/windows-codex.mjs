@@ -80,66 +80,52 @@ $processId = [PackagedAppActivator]::Activate($appUserModelId, $arguments)
 [Console]::Out.Write($processId)
 `;
 
-const activatePackagedAppWindowScript = String.raw`
+// A package-wide AUMID cannot choose between the user's own Codex and the
+// launcher's managed instance, so the window is raised by process ID instead.
+const activateWindowScript = String.raw`
 $ErrorActionPreference = 'Stop'
 $source = @'
 using System;
 using System.Runtime.InteropServices;
 
-[ComImport]
-[Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IApplicationActivationManager
+public static class CodexWindowActivator
 {
-    [PreserveSig]
-    int ActivateApplication(
-        [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
-        [MarshalAs(UnmanagedType.LPWStr)] string arguments,
-        uint options,
-        out uint processId);
-}
-
-[ComImport]
-[Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
-class ApplicationActivationManager {}
-
-public static class PackagedAppActivator
-{
-    public static uint Activate(string appUserModelId, string arguments)
-    {
-        var manager = (IApplicationActivationManager)new ApplicationActivationManager();
-        try
-        {
-            uint processId;
-            var result = manager.ActivateApplication(appUserModelId, arguments, 0, out processId);
-            if (result < 0) Marshal.ThrowExceptionForHR(result);
-            return processId;
-        }
-        finally
-        {
-            Marshal.FinalReleaseComObject(manager);
-        }
-    }
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 '@
 Add-Type -TypeDefinition $source
 
-$app = $env:CODEX_TASKBOARD_CODEX_APP_PATH
-$package = Get-AppxPackage | Where-Object {
-  $app.StartsWith(($_.InstallLocation + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)
-} | Select-Object -First 1
-if ($null -eq $package) { throw "Unable to find the Codex package for $app" }
+$processId = [int]$env:CODEX_TASKBOARD_CODEX_APP_PID
+$process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+$handle = if ($process) { $process.MainWindowHandle } else { [IntPtr]::Zero }
 
-$relativeExecutable = $app.Substring($package.InstallLocation.Length).TrimStart('\', '/').Replace('\', '/')
-$manifest = $package | Get-AppxPackageManifest
-$application = @($manifest.Package.Applications.Application) | Where-Object {
-  ([string]$_.Executable).Replace('\', '/') -eq $relativeExecutable
-} | Select-Object -First 1
-if ($null -eq $application) { throw "Unable to find the Codex application manifest entry" }
+if ($handle -eq [IntPtr]::Zero) {
+  [Console]::Out.Write((ConvertTo-Json -Compress @{
+    handle = 0
+    minimized = $false
+    foreground = $false
+    reason = 'no-main-window'
+  }))
+  exit 0
+}
 
-$appUserModelId = $package.PackageFamilyName + '!' + $application.Id
-$processId = [PackagedAppActivator]::Activate($appUserModelId, '')
-[Console]::Out.Write($processId)
+# Only restore when minimized: an unconditional SW_RESTORE would unmaximize a
+# maximized window. ShowWindow reports the previous visibility, not success.
+if ([CodexWindowActivator]::IsIconic($handle)) {
+  [void][CodexWindowActivator]::ShowWindow($handle, 9)
+}
+$foreground = [CodexWindowActivator]::SetForegroundWindow($handle)
+$reason = 'foreground-denied'
+if ($foreground) { $reason = '' }
+
+[Console]::Out.Write((ConvertTo-Json -Compress @{
+  handle = $handle.ToInt64()
+  minimized = [CodexWindowActivator]::IsIconic($handle)
+  foreground = $foreground
+  reason = $reason
+}))
 `;
 
 function runWindowsPowerShell(script, environment, run = spawnSync) {
@@ -194,17 +180,23 @@ export function activateWindowsCodex(appPath, profilePath, port, environment, ru
   return pid;
 }
 
-export function activateWindowsCodexWindow(appPath, environment, run = spawnSync) {
+export function activateWindowsCodexWindow(pid, environment, run = spawnSync) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error(`Windows Codex window activation requires a process ID: ${pid}`);
+  }
   const output = runWindowsPowerShell(
-    activatePackagedAppWindowScript,
-    { ...environment, CODEX_TASKBOARD_CODEX_APP_PATH: appPath },
+    activateWindowScript,
+    { ...environment, CODEX_TASKBOARD_CODEX_APP_PID: String(pid) },
     run,
   );
-  const pid = Number(output);
-  if (!Number.isInteger(pid) || pid <= 0) {
-    throw new Error(`Packaged Codex window activation returned an invalid process ID: ${output}`);
+  const result = JSON.parse(output);
+  if (result.handle === 0) {
+    throw new Error(`Codex process ${pid} has no main window to activate`);
   }
-  return pid;
+  if (!result.foreground) {
+    throw new Error(`Windows refused to foreground the Codex window (pid ${pid})`);
+  }
+  return result;
 }
 
 export function stopWindowsCodex(pid, environment, run = spawnSync) {

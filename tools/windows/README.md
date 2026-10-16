@@ -16,8 +16,8 @@ Taskboard 是 CDP 注入型工具。它通过 `--remote-debugging-port` 连接 C
 
 本目录提供：
 
-- 源码修复：Windows 下复用 Store 应用的 AUMID 激活通道，把已运行的托管 Codex
-  窗口带到前台。
+- 源码修复：Windows 下按托管 Codex 的进程号定位它自己的主窗口，把已运行的实例
+  带到前台。
 - 只读诊断脚本：不改状态地判断入口、面板和窗口当前是否可用。
 
 ## 脚本
@@ -42,14 +42,17 @@ Taskboard 是 CDP 注入型工具。它通过 `--remote-debugging-port` 连接 C
 
 ## 验证记录
 
-本机 Windows 11 + Codex `26.1002.7124.0`：
+本机 Windows 11 + Codex `26.1007.9446.0`：
 
-- 新增的 `activateWindowsCodexWindow()` 真机调用成功，返回有效进程号。
+- `activateWindowsCodexWindow()` 真机调用：最小化的托管窗口被 `SW_RESTORE`
+  恢复并回到前台。
 - `node --test test/windows-codex.test.mjs` 5/5 通过。
 
 ## 限制
 
 - 最后一步集成验收需要关闭并重启 Codex，因此应在能接受会话中断时手动执行。
-- 源码修复依赖 Store 版 Codex 的应用包元数据；非 Store 安装需要改用窗口级激活方案。
-- `activateWindowsCodexWindow()` 返回的进程号来自应用激活通道，不一定是托管
-  Codex 自身的进程号；它只用于判断激活是否成功。
+- Windows 前台锁可能拒绝 `SetForegroundWindow`。此时窗口仍会从最小化恢复，但不会
+  获得焦点，调用方按失败记录日志。不做 `AttachThreadInput`（同步调用下有挂起风险）
+  或合成 ALT 之类的强制夺焦手段。
+- 按进程号取窗口依赖 `Process.MainWindowHandle`，它返回该进程的主窗口；若 Codex
+  进程没有主窗口（例如窗口已关闭到托盘），调用会失败并记录日志。
