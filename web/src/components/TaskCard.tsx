@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { analysisReportUrl, resolvePersistedAttachmentUrl } from "../api";
+import { resolvePersistedAttachmentUrl } from "../api";
+import { AnalysisReportLink } from "./AnalysisReportLink";
 import {
   TASK_PRIORITIES,
   type ActorIdentity,
@@ -614,15 +615,7 @@ export function TaskCard({
           {task.analysisReport && (
             <>
               {" · "}
-              <a
-                href={analysisReportUrl(task)}
-                target="_blank"
-                rel="noreferrer"
-                title={task.analysisReport}
-                onClick={(event) => event.stopPropagation()}
-              >
-                {text("查看报告", "View report")}
-              </a>
+              <AnalysisReportLink task={task} />
             </>
           )}
         </p>

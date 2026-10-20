@@ -10177,6 +10177,63 @@ kbd {
   pointer-events: auto;
 }
 
+.analysis-report-preview {
+  position: fixed;
+  z-index: 90;
+  width: 360px;
+  max-height: 240px;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--dialog-shadow);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.analysis-report-dialog {
+  display: flex;
+  width: min(760px, 100%);
+  max-height: min(80vh, 900px);
+  flex-direction: column;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: var(--dialog-shadow);
+}
+
+.analysis-report-dialog header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: var(--border-hairline) solid var(--border-strong);
+}
+
+.analysis-report-dialog h2 {
+  flex: 1;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 590;
+}
+
+.analysis-report-dialog header a.button {
+  text-decoration: none;
+}
+
+.analysis-report-body {
+  overflow: auto;
+  padding: 16px 20px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
 .detail-analysis-report {
   min-width: 0;
   color: #7c3aed;
