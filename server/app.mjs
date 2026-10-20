@@ -2963,7 +2963,7 @@ export function createTaskboardServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause|take-over|started-outside|analysed))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|heartbeat|pause|take-over|started-outside|analysed|analysis-report))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -3016,6 +3016,24 @@ export function createTaskboardServer(options = {}) {
           const task = database.setTaskAnalysed(id, report || null);
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
+        }
+        if (action === "analysis-report" && (request.method === "GET" || request.method === "HEAD")) {
+          // Serves the analysis report file recorded by `taskctl issue analysed`; only Markdown files.
+          const report = database.getTask(id)?.analysisReport;
+          if (!report || !path.isAbsolute(report) || path.extname(report).toLowerCase() !== ".md") {
+            throw new ApiError(404, "ANALYSIS_REPORT_NOT_FOUND", `Task '${id}' has no analysis report`);
+          }
+          const body = await readFile(report).catch(() => {
+            throw new ApiError(404, "ANALYSIS_REPORT_NOT_FOUND", `Analysis report '${report}' cannot be read`);
+          });
+          response.writeHead(200, {
+            "cache-control": "private, no-store",
+            "content-length": body.length,
+            "content-security-policy": "sandbox; default-src 'none'",
+            "content-type": "text/plain; charset=utf-8",
+          });
+          response.end(request.method === "HEAD" ? undefined : body);
+          return;
         }
         if (action === "pause" && request.method === "POST") {
           const body = await readJson(request);

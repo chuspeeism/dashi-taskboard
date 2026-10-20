@@ -25,6 +25,7 @@ import {
   listAttachments,
   listComments,
   listTaskActivities,
+  analysisReportUrl,
   resolveTaskboardUrl,
   setTaskPaused,
   takeOverTask,
@@ -1921,9 +1922,19 @@ export function TaskDetail({
             {currentTask.analysedAt && (
               <div className="detail-property-row">
                 <span className="detail-property-label">{text("已分析", "Analysed")}</span>
-                <span className="detail-analysis-report" title={currentTask.analysisReport ?? undefined}>
-                  {currentTask.analysisReport}
-                </span>
+                {currentTask.analysisReport ? (
+                  <a
+                    className="detail-analysis-report"
+                    href={analysisReportUrl(currentTask)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={currentTask.analysisReport}
+                  >
+                    {currentTask.analysisReport}
+                  </a>
+                ) : (
+                  <span className="detail-analysis-report" />
+                )}
               </div>
             )}
             <div className="detail-property-row">

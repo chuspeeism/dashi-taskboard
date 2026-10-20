@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { resolvePersistedAttachmentUrl } from "../api";
+import { AnalysisReportLink } from "./AnalysisReportLink";
 import {
   TASK_PRIORITIES,
   type ActorIdentity,
@@ -609,7 +610,15 @@ export function TaskCard({
         <p className="task-card-started-outside">{text("已有 PR", "Already has PR")}</p>
       )}
       {task.analysedAt && (
-        <p className="task-card-analysed">{text("已分析", "Analysed")}</p>
+        <p className="task-card-analysed">
+          {text("已分析", "Analysed")}
+          {task.analysisReport && (
+            <>
+              {" · "}
+              <AnalysisReportLink task={task} />
+            </>
+          )}
+        </p>
       )}
 
       {body && <p className="task-card-description">{body}</p>}
