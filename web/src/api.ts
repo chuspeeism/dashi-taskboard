@@ -865,6 +865,10 @@ export function attachmentContentUrl(attachment: { id: string }): string {
   return `api/attachments/${encodeURIComponent(attachment.id)}/content`;
 }
 
+export function analysisReportUrl(task: { id: string }): string {
+  return resolveTaskboardUrl(`/api/tasks/${encodeURIComponent(task.id)}/analysis-report`);
+}
+
 export function attachmentDownloadUrl(attachment: { id: string }): string {
   return `api/attachments/${encodeURIComponent(attachment.id)}/download`;
 }

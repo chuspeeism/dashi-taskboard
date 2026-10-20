@@ -10172,8 +10172,14 @@ kbd {
   font-weight: 590;
 }
 
+.task-card-analysed a {
+  color: inherit;
+  pointer-events: auto;
+}
+
 .detail-analysis-report {
   min-width: 0;
+  color: #7c3aed;
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
