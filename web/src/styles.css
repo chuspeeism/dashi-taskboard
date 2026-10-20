@@ -10191,9 +10191,22 @@ kbd {
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.45;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   pointer-events: none;
+}
+
+.analysis-report-preview :is(h1, h2, h3, h4) {
+  margin: 8px 0 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.analysis-report-preview :is(p, ul, ol) {
+  margin: 4px 0;
+}
+
+.analysis-report-preview :is(ul, ol) {
+  padding-left: 16px;
 }
 
 .analysis-report-dialog {

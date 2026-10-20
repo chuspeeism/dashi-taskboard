@@ -4,8 +4,6 @@ import { analysisReportUrl } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import { MarkdownDocument } from "./MarkdownDocument";
 
-const PREVIEW_LENGTH = 600;
-
 // Keeps events inside the portal from reaching the card (open, drag, context menu).
 const stop = (event: SyntheticEvent) => event.stopPropagation();
 
@@ -55,7 +53,7 @@ export function AnalysisReportLink({ task }: { task: { id: string; externalKey?:
           role="tooltip"
           style={{ left: Math.min(preview.x, window.innerWidth - 376), top: preview.y }}
         >
-          {content && content.length > PREVIEW_LENGTH ? `${content.slice(0, PREVIEW_LENGTH)}…` : body}
+          {content ? <MarkdownDocument value={content} /> : body}
         </div>,
         document.body,
       )}
