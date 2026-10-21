@@ -1,5 +1,5 @@
 import type { DragEvent } from "react";
-import { LINEAR_QA_WAITING_STATES, linearStatesForStatus } from "../../../shared/linear-states.mjs";
+import { LINEAR_DEFINING_STATE, LINEAR_QA_WAITING_STATES, linearStatesForStatus } from "../../../shared/linear-states.mjs";
 import { useTaskCardDragPreview } from "../useTaskCardDragPreview";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import { taskStatusLabel, useTaskboardI18n } from "../i18n";
@@ -45,6 +45,8 @@ interface BoardColumnProps {
   isLinearProject?: boolean;
   // Linear board only: display-only Waiting for QA column (cards keep status in_progress).
   qaColumn?: boolean;
+  // Linear board only: display-only Defining Requirements column (cards keep status backlog).
+  definingColumn?: boolean;
   onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   onCreate: (status: TaskStatus) => void;
   onEdit: (task: Task) => void;
@@ -81,6 +83,7 @@ export function BoardColumn({
   createEnabled = true,
   isLinearProject = false,
   qaColumn = false,
+  definingColumn = false,
   onCreateLabel,
   onCreate,
   onEdit,
@@ -95,13 +98,20 @@ export function BoardColumn({
 }: BoardColumnProps) {
   const { language, text } = useTaskboardI18n();
   const details = STATUS_DETAILS[status];
-  const label = qaColumn ? text("等待 QA", "Waiting for QA") : taskStatusLabel(language, status);
-  const columnId = qaColumn ? "waiting_qa" : status;
+  const displayOnly = qaColumn || definingColumn;
+  const label = qaColumn
+    ? text("等待 QA", "Waiting for QA")
+    : definingColumn
+      ? text("需求定義", "Defining Requirements")
+      : taskStatusLabel(language, status);
+  const columnId = qaColumn ? "waiting_qa" : definingColumn ? "defining" : status;
   const linearStates = !isLinearProject
     ? []
     : qaColumn
       ? LINEAR_QA_WAITING_STATES
-      : linearStatesForStatus(status).filter((state) => !LINEAR_QA_WAITING_STATES.includes(state));
+      : definingColumn
+        ? [LINEAR_DEFINING_STATE]
+        : linearStatesForStatus(status).filter((state) => !LINEAR_QA_WAITING_STATES.includes(state));
   const { findDropBefore, clearDropPreview, updateDropPreview, leaveDropPreview, getTaskDragShift } =
     useTaskCardDragPreview({ tasks, draggedTaskId, draggedTaskHeight, isDropTarget });
 
@@ -116,10 +126,10 @@ export function BoardColumn({
 
   return (
     <section
-      className={`board-column status-${status}${qaColumn ? " is-qa-column" : ""}${isDropTarget ? " is-drop-target" : ""}`}
+      className={`board-column status-${status}${displayOnly ? " is-qa-column" : ""}${isDropTarget ? " is-drop-target" : ""}`}
       aria-labelledby={`column-${columnId}`}
-      // QA states change only in Linear: the QA column is not a drop target.
-      {...(!qaColumn && {
+      // QA and Defining Requirements states change only in Linear: these columns are not drop targets.
+      {...(!displayOnly && {
         onDragEnter: () => onDragEnter(status),
         onDragOver: (event: DragEvent<HTMLElement>) => {
           onDragEnter(status);
@@ -187,7 +197,7 @@ export function BoardColumn({
         isMoving={movingTaskId === task.id}
         isSettling={settlingTaskId === task.id}
         isContextMenuOpen={contextMenuTaskId === task.id}
-        draggable={!qaColumn}
+        draggable={!displayOnly}
         availableLabels={availableLabels}
         projectName={projectNames?.[task.projectId]}
         currentUser={currentUser}

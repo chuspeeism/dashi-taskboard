@@ -6,3 +6,5 @@ export function linearQaState(task: {
   status: string;
   externalState?: string | null;
 }): "waiting" | "failed" | null;
+export const LINEAR_DEFINING_STATE: string;
+export function isLinearDefiningTask(task: { source?: string; externalState?: string | null }): boolean;

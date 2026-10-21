@@ -36,3 +36,10 @@ export function linearQaState(task) {
   if (task?.source !== "linear" || task.status !== "in_progress") return null;
   return QA_STATES.get(String(task.externalState ?? "").trim().toLowerCase()) ?? null;
 }
+
+// Backlog-mapped state that the Linear board shows in its own display-only column before To do.
+export const LINEAR_DEFINING_STATE = "Defining Requirements";
+
+export function isLinearDefiningTask(task) {
+  return task?.source === "linear" && String(task.externalState ?? "").trim().toLowerCase() === LINEAR_DEFINING_STATE.toLowerCase();
+}

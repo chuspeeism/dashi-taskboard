@@ -3,7 +3,7 @@ import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import { resolveInlineAttachments } from "./inlineAttachments";
 import { sprintPoints } from "../../shared/sprint-points.mjs";
 import { missingSprintLabels } from "../../shared/sprint-label.mjs";
-import { linearQaState } from "../../shared/linear-states.mjs";
+import { isLinearDefiningTask, linearQaState } from "../../shared/linear-states.mjs";
 import {
   AGENT_LOOP_STORAGE_KEY,
   LOOP_RUNNER_STORAGE_KEY,
@@ -2515,11 +2515,12 @@ export function App() {
   // Linear early analysis: next sprint's issues sit in their own group at the top of To do.
   // Linear board: tasks waiting for QA leave In progress for the display-only Waiting for QA column.
   const isQaColumnTask = (task: Task) => isLinearProject && linearQaState(task) === "waiting";
+  const isDefiningColumnTask = (task: Task) => isLinearProject && isLinearDefiningTask(task);
   const tasksByStatus = useMemo(() => {
     return Object.fromEntries(
       TASK_STATUSES.map((status) => [
         status,
-        filteredTasks.filter((task) => task.status === status && !task.nextCycle && !isQaColumnTask(task)),
+        filteredTasks.filter((task) => task.status === status && !task.nextCycle && !isQaColumnTask(task) && !isDefiningColumnTask(task)),
       ]),
     ) as Record<TaskStatus, Task[]>;
   }, [filteredTasks, isLinearProject]);
@@ -2529,7 +2530,12 @@ export function App() {
     [filteredTasks, isLinearProject],
   );
 
-  const mainBoardItems: (typeof boardDisplaySettings.mainStatuses[number] | "waiting_qa")[] = boardDisplaySettings.mainStatuses.filter(
+  const definingColumnTasks = useMemo(
+    () => filteredTasks.filter((task) => !task.nextCycle && isDefiningColumnTask(task)),
+    [filteredTasks, isLinearProject],
+  );
+
+  const mainBoardItems: (typeof boardDisplaySettings.mainStatuses[number] | "waiting_qa" | "defining")[] = boardDisplaySettings.mainStatuses.filter(
     (status) => status !== "blocked"
       || !hasLoadedTasks
       || tasks.some((task) => task.status === "blocked"),
@@ -2537,6 +2543,7 @@ export function App() {
   if (isLinearProject) {
     const anchor = mainBoardItems.includes("in_review") ? "in_review" : "in_progress";
     mainBoardItems.splice(mainBoardItems.indexOf(anchor) + 1, 0, "waiting_qa");
+    mainBoardItems.splice(Math.max(mainBoardItems.indexOf("todo"), 0), 0, "defining");
   }
   const mainColumnCount = Math.max(mainBoardItems.length, 1);
   const mainBoardMinWidth = (mainColumnCount * 300) + ((mainColumnCount - 1) * 24);
@@ -4217,7 +4224,44 @@ export function App() {
               <>
                 <div ref={boardScrollRef} className="board-scroll" aria-label={text("议题看板", "Issue board")}>
                   <div className="board">
-                    {mainBoardItems.map((item) => item === "waiting_qa" ? (
+                    {mainBoardItems.map((item) => item === "defining" ? (
+                      <BoardColumn
+                        key={item}
+                        scrollRef={() => {}}
+                        status="backlog"
+                        definingColumn
+                        tasks={definingColumnTasks}
+                        presentations={taskPresentations}
+                        missingLabelIds={missingLabelIds}
+                        emptyMessage={hasActiveTaskFilters
+                          ? text("当前筛选下无匹配议题", "No issues match the current filters")
+                          : text("暂无议题", "No issues")}
+                        isDropTarget={false}
+                        draggedTaskId={draggedTaskId}
+                        draggedTaskHeight={draggedTaskHeight}
+                        movingTaskId={movingTaskId}
+                        settlingTaskId={settlingTaskId}
+                        contextMenuTaskId={contextMenu?.taskId ?? null}
+                        availableLabels={availableLabels}
+                        currentUser={currentUser}
+                        showCover={boardDisplaySettings.cover}
+                        showBody={boardDisplaySettings.body}
+                        showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
+                        createEnabled={false}
+                        isLinearProject
+                        onCreateLabel={persistProjectLabel}
+                        onCreate={() => {}}
+                        onEdit={openTaskDetail}
+                        onUpdate={updateTaskProperties}
+                        onComplete={(task) => moveTask(task, "done")}
+                        onContextMenu={openTaskContextMenu}
+                        onDragStart={startTaskDrag}
+                        onDragEnd={endTaskDrag}
+                        onDragEnter={setDropTarget}
+                        onDrop={finishTaskDrop}
+                        onOpenConversation={openTaskConversation}
+                      />
+                    ) : item === "waiting_qa" ? (
                       <BoardColumn
                         key={item}
                         scrollRef={() => {}}
