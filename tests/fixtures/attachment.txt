@@ -1,0 +1,1 @@
+Dashi E2E attachment fixture
