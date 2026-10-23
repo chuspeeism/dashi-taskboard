@@ -33,7 +33,11 @@ import {
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { AiChatService } from "./ai-chat.mjs";
-import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
+import {
+  resolveAiWorkspace,
+  resolveMappedAiWorkspace,
+  unavailableAiCatalog,
+} from "./ai-chat-catalog.mjs";
 import { decodeComposerReferenceKey } from "../shared/composer-reference.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
@@ -2105,11 +2109,21 @@ export function createTaskboardServer(options = {}) {
           "workspacePath",
         ]), "GET /api/local/ai/catalog");
         const projectId = validateProjectId(url.searchParams.get("projectId") ?? undefined);
-        return sendJson(
-          response,
-          200,
-          await aiChat.getCatalog(projectId, undefined, aiExecutionTargetFromQuery(url.searchParams)),
-        );
+        let catalog;
+        try {
+          catalog = await aiChat.getCatalog(
+            projectId,
+            undefined,
+            aiExecutionTargetFromQuery(url.searchParams),
+          );
+        } catch (error) {
+          // A missing Codex CLI (spawn ENOENT) makes the optional catalog
+          // unavailable rather than broken. ApiError paths keep their own
+          // status (for example the per-project 409 workspace semantics).
+          if (error?.code !== "ENOENT") throw error;
+          catalog = unavailableAiCatalog();
+        }
+        return sendJson(response, 200, catalog);
       }
 
       if (pathname === "/api/local/ai/composer/candidates") {
