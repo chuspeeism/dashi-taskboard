@@ -7,13 +7,20 @@ import { test } from "node:test";
 
 import { createTaskboardServer } from "../server/index.mjs";
 
-async function createServerFixture(host = "127.0.0.1") {
+async function createServerFixture(host = "127.0.0.1", { withCodex = true } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-server-"));
   const workspacePath = path.join(directory, "workspace");
   await mkdir(workspacePath);
   const workspace = await realpath(workspacePath);
-  const codexExecutable = path.join(directory, "fake-codex.mjs");
-  await writeFile(codexExecutable, `#!/usr/bin/env node
+  // Without Codex the executable path never exists, which is the same spawn
+  // ENOENT a machine that has no Codex CLI produces. The name must not end in
+  // a Node script extension: executableCommand() would run such a path through
+  // process.execPath and turn the failure into MODULE_NOT_FOUND.
+  const codexExecutable = path.join(
+    directory,
+    withCodex ? "fake-codex.mjs" : "missing-codex",
+  );
+  if (withCodex) await writeFile(codexExecutable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "debug") {
   process.stdout.write('{"models":[{"slug":"gpt-real","display_name":"GPT Real","description":"","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],"service_tiers":[]}]}');
@@ -35,7 +42,7 @@ if (args[0] === "debug") {
   });
 }
 `);
-  await chmod(codexExecutable, 0o755);
+  if (withCodex) await chmod(codexExecutable, 0o755);
   const codexStatePath = path.join(directory, "codex-state.json");
   await writeFile(codexStatePath, JSON.stringify({
     "local-projects": { local: { rootPaths: [workspace] } },
@@ -54,7 +61,9 @@ if (args[0] === "debug") {
     workspace,
     async close() {
       await app.close();
-      await rm(directory, { recursive: true, force: true });
+      // maxRetries: Windows briefly keeps the workspace directory busy after
+      // the AI service shuts down, same as other fixtures in this repo.
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
 }
@@ -406,5 +415,23 @@ test("server close stops accepting requests before AI shutdown completes", async
     } else {
       await fixture.close();
     }
+  }
+});
+
+test("catalog reports unavailable instead of 500 when no Codex CLI exists", async () => {
+  const fixture = await createServerFixture("127.0.0.1", { withCodex: false });
+  try {
+    const catalog = await request(fixture.baseUrl, "/api/local/ai/catalog?projectId=local");
+    assert.equal(catalog.response.status, 200);
+    assert.equal(catalog.body.available, false);
+    assert.deepEqual(catalog.body.models, []);
+    assert.deepEqual(catalog.body.skills, []);
+    assert.deepEqual(catalog.body.sandboxes, [
+      "read-only",
+      "workspace-write",
+      "danger-full-access",
+    ]);
+  } finally {
+    await fixture.close();
   }
 });
