@@ -988,6 +988,19 @@ export async function loadSlashCommands(platform = process.platform) {
   });
 }
 
+// The local Codex CLI is an optional catalog source: when it is absent the
+// catalog is unavailable, which callers report as a normal empty payload
+// instead of a server error.
+export function unavailableAiCatalog() {
+  return {
+    available: false,
+    models: [],
+    skills: [],
+    commands: [],
+    sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+  };
+}
+
 export async function discoverAiCatalog({
   codexExecutable,
   workspacePath,
