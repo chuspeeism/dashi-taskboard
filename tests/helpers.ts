@@ -72,3 +72,12 @@ export async function setDate(screen: Screen, label: string, value: string) {
   // flight, and a second edit issued before it resolves conflicts.
   await expect(screen.getByLabel(label)).toBeEnabled();
 }
+
+export async function expectLabels(browser: Browser, title: string, labels: string[]) {
+  // Creating a label first POSTs it to the project and only then PATCHes the
+  // issue, so the label PATCH can still be issued after a later edit and then
+  // conflict with it. Waiting for the label to reach the task keeps the next
+  // edit from overlapping it.
+  await expect.poll(async () => (await tasks(browser)).find(task => task.title === title)?.labels)
+    .toEqual(labels);
+}

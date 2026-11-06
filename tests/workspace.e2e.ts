@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/web';
 import { expect } from 'e2e';
-import { createIssue, createProject, openIssue, pick, setDate, tasks } from './helpers';
+import { createIssue, createProject, expectLabels, openIssue, pick, setDate, tasks } from './helpers';
 
 test('project create, switch, delete empty project and reject deleting a populated project', async ({ app, screen }) => {
   await app.open('/?lang=en');
@@ -39,9 +39,9 @@ test('search, status/priority/label filters and dashboard, board, list, gantt vi
   await screen.getByLabel('Search labels').fill('view-label');
   await screen.getByRole('button', 'Create “view-label”').tap();
   await screen.getByLabel('Search labels').press('Escape');
-  // The label save PATCH is still in flight after the picker closes; let it
-  // settle before the date edits below start their own PATCHes.
-  await expect(screen.getByRole('button', 'Select or create labels')).toBeEnabled();
+  // Creating the label POSTs it, then PATCHes the issue; wait for the label to
+  // reach the task so that save cannot overlap the date edits below.
+  await expectLabels(browser, 'Search alpha', ['view-label']);
   await setDate(screen, 'Start date', '2026-10-06');
   await setDate(screen, 'Due date', '2026-10-08');
   await screen.getByRole('button', 'Back to issue board').tap();

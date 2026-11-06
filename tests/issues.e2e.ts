@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/web';
 import { expect } from 'e2e';
-import { createIssue, createProject, openIssue, pick, setDate, tasks } from './helpers';
+import { createIssue, createProject, expectLabels, openIssue, pick, setDate, tasks } from './helpers';
 
 test('issue creation, inline editing, properties, recurrence and persisted reload', async ({ app, screen, browser }) => {
   await app.open('/?lang=en');
@@ -20,7 +20,7 @@ test('issue creation, inline editing, properties, recurrence and persisted reloa
   await screen.getByLabel('Search labels').fill('e2e-label');
   await screen.getByRole('button', 'Create “e2e-label”').tap();
   await screen.getByLabel('Search labels').press('Escape');
-  await expect(screen.getByRole('button', 'Select or create labels')).toBeEnabled();
+  await expectLabels(browser, 'UI edited issue', ['e2e-label']);
   await setDate(screen, 'Start date', '2026-10-06');
   await setDate(screen, 'Due date', '2026-10-07');
   // Recurrence is a property picker like Status/Priority, not a native select.
