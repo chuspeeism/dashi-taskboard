@@ -1011,24 +1011,11 @@
       .find((row) => normalizeThreadId(row.getAttribute("data-app-action-sidebar-thread-id")) === normalizeThreadId(threadId)) || null;
   }
 
-  function routeForThread(threadId) {
-    return `/local/${encodeURIComponent(threadId)}`;
-  }
-
-  function threadRowProjectId(row) {
-    return row?.closest?.("[data-app-action-sidebar-project-list-id]")
-      ?.getAttribute("data-app-action-sidebar-project-list-id")
-      || row?.closest?.("[data-app-action-sidebar-project-id]")
-        ?.getAttribute("data-app-action-sidebar-project-id")
-      || "";
-  }
-
-  function findThreadRowInProject(threadId, projectId) {
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
-      .find((row) => (
-        normalizeThreadId(row.getAttribute("data-app-action-sidebar-thread-id")) === normalizeThreadId(threadId)
-        && threadRowProjectId(row) === projectId
-      )) || null;
+  function routeForThread(threadId, hostId = "") {
+    const path = `/local/${encodeURIComponent(threadId)}`;
+    return hostId && hostId !== "local"
+      ? `${path}?hostId=${encodeURIComponent(hostId)}`
+      : path;
   }
 
   function projectRowById(projectId) {
@@ -1093,16 +1080,6 @@
     ));
   }
 
-  async function waitForRemoteThreadRow(threadId, projectId) {
-    const deadline = Date.now() + 8_000;
-    let row = findThreadRowInProject(threadId, projectId);
-    while (!row && Date.now() < deadline) {
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
-      row = findThreadRowInProject(threadId, projectId);
-    }
-    return row;
-  }
-
   async function openThread(payload) {
     const threadId = typeof payload?.threadId === "string" ? payload.threadId : "";
     if (typeof threadId !== "string" || !threadId.trim()) return;
@@ -1120,16 +1097,12 @@
           ? payload.workspacePath.trim()
           : "";
         await waitForRemoteProject(projectId, hostId, workspacePath);
-        const row = await waitForRemoteThreadRow(normalizedThreadId, projectId);
-        if (!row?.isConnected) {
-          throw new Error(hostText(
-            "目标 SSH 远程项目中找不到该对话",
-            "The conversation is not available in the target SSH remote project",
-          ));
-        }
         lastNativeThreadId = normalizedThreadId;
         closeTaskboard(false);
-        row.click?.();
+        await dispatchHostMessage({
+          type: "navigate-to-route",
+          path: routeForThread(normalizedThreadId, hostId),
+        });
       } catch (error) {
         postToFrame({
           type: "taskboard:thread-open-error",
