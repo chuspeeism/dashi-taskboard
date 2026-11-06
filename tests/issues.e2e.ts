@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/web';
 import { expect } from 'e2e';
-import { createIssue, createProject, openIssue, pick, tasks } from './helpers';
+import { createIssue, createProject, expectLabels, openIssue, pick, setDate, tasks } from './helpers';
 
 test('issue creation, inline editing, properties, recurrence and persisted reload', async ({ app, screen, browser }) => {
   await app.open('/?lang=en');
@@ -20,8 +20,9 @@ test('issue creation, inline editing, properties, recurrence and persisted reloa
   await screen.getByLabel('Search labels').fill('e2e-label');
   await screen.getByRole('button', 'Create “e2e-label”').tap();
   await screen.getByLabel('Search labels').press('Escape');
-  await screen.getByLabel('Start date').fill('2026-10-06');
-  await screen.getByLabel('Due date').fill('2026-10-07');
+  await expectLabels(browser, 'UI edited issue', ['e2e-label']);
+  await setDate(screen, 'Start date', '2026-10-06');
+  await setDate(screen, 'Due date', '2026-10-07');
   // Recurrence is a property picker like Status/Priority, not a native select.
   await pick(screen, 'Recurrence', 'Daily');
   await expect.poll(async () => (await tasks(browser)).find(task => task.title === 'UI edited issue')).toMatchObject({
@@ -33,7 +34,7 @@ test('issue creation, inline editing, properties, recurrence and persisted reloa
   await expect(screen.getByRole('button', 'Status')).toContainText('In progress');
   await expect(screen.getByLabel('Due date')).toHaveValue('2026-10-07');
   await expect(screen.getByRole('button', 'Recurrence')).toContainText('Daily');
-  await screen.getByLabel('Due date').fill('');
+  await setDate(screen, 'Due date', '');
   // Clearing the due date also clears the recurrence.
   await expect(screen.getByRole('button', 'Recurrence')).toContainText('Does not repeat');
   await expect.poll(async () => (await tasks(browser)).find(task => task.title === 'UI edited issue')?.recurrence).toBeNull();
