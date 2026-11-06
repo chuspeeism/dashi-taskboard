@@ -8,7 +8,7 @@ A local-first issue board that runs in a browser and can be embedded in Codex th
 
 ## Requirements
 
-- Node.js 22.5 or newer
+- Node.js 22.22.3 or newer in the 22.x line, or 24.8 or newer
 - macOS App and DMG builds: Xcode Command Line Tools and Rust 1.88 or newer with the `aarch64-apple-darwin` and `x86_64-apple-darwin` targets. `npm install` installs the Tauri CLI used by this project.
 - Windows NSIS builds: the Microsoft Store Codex App, Rust 1.88 or newer, and Visual Studio Build Tools with the C++ workload and Windows SDK.
 

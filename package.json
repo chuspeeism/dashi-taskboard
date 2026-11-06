@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.5"
+    "node": "^22.22.3 || >=24.8.0"
   },
   "bin": {
     "taskctl": "./cli/taskctl.mjs"
@@ -34,7 +34,7 @@
     "taskctl": "node cli/taskctl.mjs",
     "test": "node --test && npm run test:components",
     "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx --environment jsdom",
-    "test:e2e": "E2E_TELEMETRY_DISABLED=1 e2e run",
+    "test:e2e": "e2e run",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
     "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",

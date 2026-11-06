@@ -60,12 +60,14 @@ test('search, status/priority/label filters and dashboard, board, list, gantt vi
     await screen.getByRole('button', /^Filter issues/).tap();
   }
   await screen.getByRole('button', 'Dashboard').tap();
-  await expect(browser.locator('.dashboard-view')).toBeVisible();
+  await expect(screen.getByRole('heading', 'Project completion')).toBeVisible();
   await screen.getByRole('button', 'List').tap();
   await expect(screen.getByText('Search alpha')).toBeVisible();
   await expect(screen.getByText('Search beta')).toBeVisible();
   await screen.getByRole('button', 'Gantt').tap();
-  await expect(browser.locator('.gantt-view')).toBeVisible();
+  // The title-area toggle only exists on the Gantt surface, so it identifies
+  // the view without leaning on a styling class name.
+  await expect(screen.getByRole('button', 'Collapse title area')).toBeVisible();
   await expect(screen.getByText('Search alpha').first()).toBeVisible();
   await screen.getByRole('button', 'Issue board').tap();
   await expect(screen.getByRole('article', 'Search alpha')).toBeVisible();

@@ -23,6 +23,7 @@ jobs:
     outputs:
       run_full: ${{ steps.scope.outputs.run_full }}
       run_native: ${{ steps.native-scope.outputs.run_native }}
+      run_e2e: ${{ steps.native-scope.outputs.run_e2e }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name == 'pull_request'
@@ -42,7 +43,10 @@ jobs:
             (path.startsWith('web/public/') && path !== 'web/public/codex-app-icon.png') ||
             path.startsWith('docs/') ||
             /^(?:README(?:\.[^/]+)?\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
-          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${!webOrDocsOnly}\n`);
+          const docsOnly = paths.every(path =>
+            path.startsWith('docs/') ||
+            /^(?:README(?:\.[^/]+)?\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
+          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${!webOrDocsOnly}\nrun_e2e=${!docsOnly}\n`);
           console.log(webOrDocsOnly ? 'Web/docs-only PR: run the ordinary Check.' : 'Native/runtime/build inputs changed: run all launcher checks.');
           NODE
       - name: Reuse successful PR Check for the exact tested merge tree
@@ -262,6 +266,8 @@ jobs:
 
   e2e:
     name: E2E web suite
+    needs: main-check-scope
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_e2e != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -270,13 +276,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
       - run: npm ci
       - name: Install the Playwright Chromium browser
         run: npx -y playwright@1.64.0 install --with-deps chromium
       - run: npm run build:web
       - run: npm run test:e2e
+        env:
+          E2E_TELEMETRY_DISABLED: "1"
       - name: Preserve e2e failure artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

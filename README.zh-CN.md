@@ -8,7 +8,7 @@
 
 ## 系统要求
 
-- Node.js 22.5 或更高版本
+- Node.js 22.22.3 或更高的 22.x 版本，或 24.8 或更高版本
 - 构建 macOS App 和 DMG：Xcode Command Line Tools、Rust 1.88 或更高版本，以及 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` target。`npm install` 会安装本项目使用的 Tauri CLI。
 - 构建 Windows NSIS：Microsoft Store 版 Codex App、Rust 1.88 或更高版本，以及带 C++ 工作负载和 Windows SDK 的 Visual Studio Build Tools。
 

@@ -2,6 +2,9 @@
 // - Data lives in a throwaway temp directory (never the developer's `.data`).
 // - The Codex executable is pointed at a nonexistent path and external
 //   fetches are disabled, so a test can never reach Codex or the network.
+//   The path must not end in .js/.mjs/.cjs: `executableCommand` runs a
+//   Node-script extension through `process.execPath`, which would make the
+//   "disabled" stand-in a real node process instead of a missing binary.
 // - Static web UI is served from dist/web (run `npm run build:web` first).
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
