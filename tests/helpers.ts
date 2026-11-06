@@ -60,4 +60,15 @@ export async function pick(screen: Screen, property: string, value: string) {
   await screen.getByRole('button', property).tap();
   await screen.getByRole('option', value).tap();
   await expect(screen.getByRole('button', property)).toContainText(value);
+  // A save disables the trigger until its PATCH resolves. Waiting for it to
+  // re-enable keeps the next edit from PATCHing with the same stale version,
+  // which the server rejects as VERSION_CONFLICT.
+  await expect(screen.getByRole('button', property)).toBeEnabled();
+}
+
+export async function setDate(screen: Screen, label: string, value: string) {
+  await screen.getByLabel(label).fill(value);
+  // Same reason as `pick`: the date input is disabled while its PATCH is in
+  // flight, and a second edit issued before it resolves conflicts.
+  await expect(screen.getByLabel(label)).toBeEnabled();
 }
