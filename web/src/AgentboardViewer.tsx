@@ -123,7 +123,7 @@ function activitySummary(activity: TaskChangeActivity): string {
   }).join("、");
 }
 
-export function AgentboardViewer() {
+export function AgentboardViewer({ pollIntervalMs = 3000 }: { pollIntervalMs?: number }) {
   const [session, setSession] = useState<"loading" | "guest" | "authenticated">("loading");
   const [loginKey, setLoginKey] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -169,12 +169,16 @@ export function AgentboardViewer() {
 
   useEffect(() => {
     if (session !== "authenticated") return;
-    void reload().catch((error: unknown) => setLoadError(error instanceof Error ? error.message : "无法读取看板"));
-    const interval = window.setInterval(() => {
-      void reload().catch((error: unknown) => setLoadError(error instanceof Error ? error.message : "无法读取看板"));
-    }, 15000);
-    return () => window.clearInterval(interval);
-  }, [session, reload]);
+    let stopped = false;
+    let timer: number;
+    async function refresh() {
+      try { await reload(); }
+      catch (error) { if (!stopped) setLoadError(error instanceof Error ? error.message : "无法读取看板"); }
+      if (!stopped) timer = window.setTimeout(() => void refresh(), pollIntervalMs);
+    }
+    void refresh();
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [session, reload, pollIntervalMs]);
 
   useEffect(() => {
     if (!selectedTask) {

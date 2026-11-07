@@ -126,6 +126,9 @@ export function createTaskDockServer(options = {}) {
   function taskFor(principal, id) {
     const task = db.getTask(id);
     if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+    return taskWithCollaboration(task);
+  }
+  function taskWithCollaboration(task) {
     const claim = sql.prepare("SELECT a.id, a.name FROM agentboard_claims c JOIN agentboard_agents a ON a.id = c.agent_id WHERE c.task_id = ?").get(task.id);
     return { ...task, executor: task.assignee.type, checklist: checklists.list(task.id), claimedBy: claim ? actor(claim) : null };
   }
@@ -183,7 +186,7 @@ export function createTaskDockServer(options = {}) {
     if (name === "list_tasks") {
       const filters = { projectId: args.projectId, status: args.status, archived: "false" };
       const tasks = db.listTasks(filters);
-      return { tasks: tasks.map((task) => taskFor(principal, task.id)) };
+      return { tasks: tasks.map(taskWithCollaboration) };
     }
     if (name === "get_task") return { task: taskFor(principal, args.taskId) };
     const task = taskFor(principal, args.taskId);
