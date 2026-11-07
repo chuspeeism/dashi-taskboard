@@ -393,8 +393,8 @@
 .agentboard-app .issue-list-title-cell small, .agentboard-app .agentboard-list-row time,
 .agentboard-list-row .agentboard-list-agent { font-size: 13px; }
 .agentboard-app .agentboard-board-layout { display: flex; flex-direction: column; gap: 12px; overflow: auto; }
-.agentboard-app .agentboard-board-layout .board-scroll { flex: 0 0 auto; overflow: visible; }
-.agentboard-app .agentboard-board-layout .board { display: grid; width: 100%; height: auto; min-height: 0; align-items: start; align-content: start; grid-auto-rows: max-content; }
+.agentboard-app .agentboard-board-layout .board-scroll { flex: 0 0 auto; max-width: none; overflow: auto; }
+.agentboard-app .agentboard-board-layout .board { display: grid; grid-template-columns: repeat(var(--taskdock-columns, 7), minmax(300px, 1fr)); width: 100%; height: auto; min-height: 0; align-items: start; align-content: start; grid-auto-rows: max-content; }
 .agentboard-app .agentboard-board-layout .board-column { height: auto; }
 .agentboard-app .agentboard-board-layout .column-list { flex: 0 0 auto; height: auto; max-height: none; overflow: visible; }
 .taskdock-board-options { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--text-tertiary); }
@@ -435,7 +435,6 @@
   .agentboard-app .search-field { flex: 1 1 100%; }
   .agentboard-app .issue-list-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "agent"; gap: 6px; }
   .agentboard-app .agentboard-list-row .agentboard-list-agent { display: block; grid-area: agent; padding-left: 80px; }
-  .agentboard-app .agentboard-board-layout .board { grid-template-columns: minmax(0, 1fr); }
   .agentboard-app .agentboard-board-layout .board-scroll { flex-basis: auto; }
   .agentboard-app .dashboard-metric.is-actionable { border-bottom: 1px solid var(--border); }
   .agentboard-app .dashboard-metric.is-actionable:nth-child(odd) { border-left: 0; }

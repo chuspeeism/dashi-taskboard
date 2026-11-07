@@ -307,7 +307,7 @@ export function AgentboardViewer() {
     {view === "settings" && <TaskdockSettings projects={projects} agents={agents} reload={reload} />}
     {view === "board" ? <div className="issue-board-layout agentboard-board-layout">
       <div className="taskdock-board-options"><span>所有状态的任务均直接展示</span><label><input type="checkbox" checked={hideEmpty} onChange={(event) => setHideEmpty(event.target.checked)} />隐藏空列</label></div>
-      <div className="board-scroll"><div className="board" style={{ "--taskdock-columns": Math.max(1, Math.min(3, shownBoardStatuses.length)) } as CSSProperties}>
+      <div className="board-scroll"><div className="board" style={{ "--taskdock-columns": Math.max(1, shownBoardStatuses.length) } as CSSProperties}>
         {shownBoardStatuses.map((status) => {
           const columnTasks = visibleTasks.filter((task) => task.status === status);
           return <section key={status} className={`board-column status-${status}`}><header className="column-header"><div className="column-heading"><span className="column-status-icon"><StatusIcon status={status} size={16} /></span><h2>{taskStatusLabel("zh", status)}</h2><span className="agentboard-column-count">{columnTasks.length}</span></div></header><div className="column-list">{columnTasks.map(taskCard)}{columnTasks.length === 0 && <div className="column-empty"><strong>暂无任务</strong><span>进入此状态的任务会显示在这里</span></div>}</div></section>;
