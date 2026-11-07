@@ -401,12 +401,6 @@
 .taskdock-board-options label { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; color: var(--text-secondary); cursor: pointer; }
 .taskdock-board-options input { accent-color: var(--accent); }
 .taskdock-status-filter select { max-width: 140px; min-height: 38px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; }
-.taskdock-other-statuses { flex: none; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
-.taskdock-other-statuses summary { padding: 14px 18px; cursor: pointer; color: var(--text-secondary); font-size: 13px; }
-.taskdock-other-statuses > div { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 16px 16px; }
-.taskdock-other-statuses button { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-raised); color: var(--text-secondary); }
-.taskdock-other-statuses button:hover { background: var(--surface-hover); }
-.taskdock-other-statuses button span { color: var(--text-tertiary); }
 .taskdock-view-empty { padding: 24px; color: var(--text-secondary); font-size: 14px; }
 .agentboard-app .dashboard-metric.is-actionable { appearance: none; margin: 0; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--text-primary); font: inherit; text-align: left; }
 .agentboard-app .dashboard-metric.is-actionable:first-child { border-left: 0; }
