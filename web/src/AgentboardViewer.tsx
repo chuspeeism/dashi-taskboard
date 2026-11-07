@@ -257,9 +257,8 @@ export function AgentboardViewer() {
   });
   const boardStatuses = statusFilter && statusFilter !== "overdue" ? [statusFilter]
     : statusFilter === "overdue" ? statusOrder.filter((status) => visibleTasks.some((task) => task.status === status))
-    : (["todo", "in_progress", "in_review", ...(visibleTasks.some((task) => task.status === "blocked") ? ["blocked"] : [])] as TaskStatus[]);
+    : statusOrder;
   const shownBoardStatuses = boardStatuses.filter((status) => !hideEmpty || visibleTasks.some((task) => task.status === status));
-  const otherStatuses = statusOrder.filter((status) => !boardStatuses.includes(status));
   const timeline = detail ? [
     ...detail.comments.map((comment) => ({ id: comment.id, at: comment.createdAt, actor: comment.authorName, label: "评论", body: comment.body, attachments: comment.attachments })),
     ...detail.activities.map((activity) => ({ id: activity.id, at: activity.createdAt, actor: activity.actorName, label: "操作", body: activitySummary(activity), attachments: [] as Attachment[] })),
@@ -307,7 +306,7 @@ export function AgentboardViewer() {
     />}
     {view === "settings" && <TaskdockSettings projects={projects} agents={agents} reload={reload} />}
     {view === "board" ? <div className="issue-board-layout agentboard-board-layout">
-      <div className="taskdock-board-options"><span>优先展示待办、处理中与等你确认的任务</span><label><input type="checkbox" checked={hideEmpty} onChange={(event) => setHideEmpty(event.target.checked)} />隐藏空列</label></div>
+      <div className="taskdock-board-options"><span>所有状态的任务均直接展示</span><label><input type="checkbox" checked={hideEmpty} onChange={(event) => setHideEmpty(event.target.checked)} />隐藏空列</label></div>
       <div className="board-scroll"><div className="board" style={{ "--taskdock-columns": Math.max(1, shownBoardStatuses.length) } as CSSProperties}>
         {shownBoardStatuses.map((status) => {
           const columnTasks = visibleTasks.filter((task) => task.status === status);
@@ -315,7 +314,6 @@ export function AgentboardViewer() {
         })}
         {shownBoardStatuses.length === 0 && <p className="taskdock-view-empty">没有符合条件的任务，可切换状态或取消隐藏空列。</p>}
       </div></div>
-      {!statusFilter && <details className="taskdock-other-statuses"><summary>其他状态 · {visibleTasks.filter((task) => otherStatuses.includes(task.status)).length} 个任务</summary><div>{otherStatuses.map((status) => <button type="button" key={status} onClick={() => { setCollapsed(new Set()); navigate({ view: "list", status }); }}><StatusIcon status={status} size={16} />{taskStatusLabel("zh", status)}<span>{visibleTasks.filter((task) => task.status === status).length}</span></button>)}</div></details>}
     </div> : view === "list" ? <div className="issue-list-view agentboard-list"><div className="issue-list-groups">
       {statusOrder.filter((status) => !statusFilter || statusFilter === "overdue" || status === statusFilter).map((status) => {
         const groupTasks = visibleTasks.filter((task) => task.status === status);
