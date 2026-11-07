@@ -126,6 +126,9 @@ export function createTaskDockServer(options = {}) {
   function taskFor(principal, id) {
     const task = db.getTask(id);
     if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+    return taskWithCollaboration(task);
+  }
+  function taskWithCollaboration(task) {
     const claim = sql.prepare("SELECT a.id, a.name FROM agentboard_claims c JOIN agentboard_agents a ON a.id = c.agent_id WHERE c.task_id = ?").get(task.id);
     return { ...task, executor: task.assignee.type, checklist: checklists.list(task.id), claimedBy: claim ? actor(claim) : null };
   }
@@ -179,14 +182,28 @@ export function createTaskDockServer(options = {}) {
     } catch (error) { sql.exec("ROLLBACK"); throw error; }
     return artifactFromRow(sql.prepare("SELECT * FROM agentboard_artifacts WHERE id = ?").get(id));
   }
+  function artifactsFor(taskId) {
+    return sql.prepare("SELECT * FROM agentboard_artifacts WHERE task_id = ? ORDER BY created_at, id").all(taskId).map(artifactFromRow);
+  }
   async function operation(principal, name, args = {}) {
+    if (name === "list_projects") {
+      return { projects: db.listProjects().filter((p) => p.id !== "local" || p.issueCount > 0).map(projectInfo) };
+    }
+    if (name === "get_project_readme") return { readme: db.getProjectReadme(validateProjectId(args.projectId)) };
     if (name === "list_tasks") {
       const filters = { projectId: args.projectId, status: args.status, archived: "false" };
       const tasks = db.listTasks(filters);
-      return { tasks: tasks.map((task) => taskFor(principal, task.id)) };
+      return { tasks: tasks.map(taskWithCollaboration) };
     }
     if (name === "get_task") return { task: taskFor(principal, args.taskId) };
     const task = taskFor(principal, args.taskId);
+    if (name === "get_task_context") {
+      return {
+        task, project: projectInfo(db.getProject(task.projectId)), readme: db.getProjectReadme(task.projectId),
+        comments: db.listComments(task.id), activities: db.listTaskActivities(task.id),
+        artifacts: artifactsFor(task.id), attachments: db.listAttachments(task.id),
+      };
+    }
     if (["create_checklist_item", "update_checklist_item", "delete_checklist_item"].includes(name)) {
       activeProject(task.projectId);
       const { taskId, itemId, ...input } = args;
@@ -248,6 +265,9 @@ export function createTaskDockServer(options = {}) {
       catch { return json(response, 200, { authenticated: false }); }
     }
     const principal = authenticate(request);
+    if (pathname === "/mcp" && request.method === "GET") {
+      return json(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "TaskDock MCP uses POST requests; no SSE stream is offered" } }, { allow: "POST" });
+    }
     if (pathname === "/api/revisions" && request.method === "GET") return json(response, 200, { changed: true, revision: Date.now() });
     if (pathname === "/api/agents" && request.method === "GET") {
       return json(response, 200, { agents: sql.prepare("SELECT id FROM agentboard_agents WHERE deleted_at IS NULL ORDER BY created_at, id").all().map((row) => agentInfo(row.id)) });
@@ -316,8 +336,7 @@ export function createTaskDockServer(options = {}) {
       }
     }
     if (pathname === "/api/projects" && request.method === "GET") {
-      const projects = db.listProjects().filter((p) => p.id !== "local" || p.issueCount > 0).map(projectInfo);
-      return json(response, 200, { projects });
+      return json(response, 200, await operation(principal, "list_projects"));
     }
     if (pathname === "/api/projects" && request.method === "POST") {
       const input = await body(request);
@@ -347,7 +366,7 @@ export function createTaskDockServer(options = {}) {
           return json(response, 201, { attachment });
         } catch (error) { await unlink(file); throw error; }
       }
-      if (!readmeRoute[2] && request.method === "GET") return json(response, 200, { readme: db.getProjectReadme(projectId) });
+      if (!readmeRoute[2] && request.method === "GET") return json(response, 200, await operation(principal, "get_project_readme", { projectId }));
       if (!readmeRoute[2] && request.method === "PUT") {
         activeProject(projectId);
         const input = parseProjectReadmeSave(await body(request));
@@ -410,7 +429,7 @@ export function createTaskDockServer(options = {}) {
       if (action === "comments" && request.method === "GET") return json(response, 200, { comments: db.listComments(task.id) });
       if (action === "comments" && request.method === "POST") return json(response, 201, await operation(principal, "add_comment", { ...await body(request), taskId: id }));
       if (action === "activities" && request.method === "GET") return json(response, 200, { activities: db.listTaskActivities(task.id) });
-      if (action === "artifacts" && request.method === "GET") return json(response, 200, { artifacts: sql.prepare("SELECT * FROM agentboard_artifacts WHERE task_id = ? ORDER BY created_at, id").all(task.id).map(artifactFromRow) });
+      if (action === "artifacts" && request.method === "GET") return json(response, 200, { artifacts: artifactsFor(task.id) });
       if (action === "artifacts" && request.method === "POST") return json(response, 201, await operation(principal, "submit_artifact", { ...await body(request), taskId: id }));
       if (action === "attachments" && request.method === "GET") return json(response, 200, { attachments: db.listAttachments(task.id) });
       if (action === "attachments" && request.method === "POST") {
@@ -453,8 +472,11 @@ export function createTaskDockServer(options = {}) {
       if (rpc.method === "initialize") return json(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { protocolVersion: rpc.params?.protocolVersion ?? "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "TaskDock", version: "1.0.0" } } });
       if (rpc.method === "notifications/initialized") { response.writeHead(202); return response.end(); }
       if (rpc.method === "tools/list") return json(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { tools: [
+        ["list_projects", "Read available projects, including archive state, before selecting work. Uses the same identity and visibility as GET /api/projects.", {}, []],
+        ["get_project_readme", "Read a project's shared instructions before acting. Uses the same data as GET /api/projects/:id/readme.", { projectId: { type: "string" } }, ["projectId"]],
+        ["get_task_context", "Read complete task context before acting: task with executor/checklist/current claim, project and shared instructions, all comments, activities, artifacts, and attachment metadata. Equivalent to the corresponding REST reads; no history is truncated. Fetch attachment bodies with the existing authenticated /api/attachments/:id/content or /download URLs. User updates do not authorize work; respect waiting instructions and existing ownership.", { taskId: { type: "string" } }, ["taskId"]],
         ["list_tasks", "List tasks in an authorized project. Status values: backlog (待立项, not scheduled), todo (待办, ready to start), in_progress (active execution), in_review (awaiting review/confirmation), done (accepted completion). Current ownership is claimedBy, separate from status; read task history before continuing earlier work.", { projectId: { type: "string" }, status: { type: "string" } }, []],
-        ["get_task", "Get a task, executor, checklist results and notes, and current claim. User updates do not start work; act only when instructed. claimedBy is current ownership, not historical execution; an unclaimed in_review or done task may already have outputs. Read full context via REST before acting.", { taskId: { type: "string" } }, ["taskId"]],
+        ["get_task", "Get a task, executor, checklist results and notes, and current claim. User updates do not start work; act only when instructed. claimedBy is current ownership, not historical execution; an unclaimed in_review or done task may already have outputs. Read get_task_context before acting.", { taskId: { type: "string" } }, ["taskId"]],
         ["claim_task", "Claim an unclaimed active todo using its current version; sets in_progress. Keep the claim while executing or preparing handoff. Leave backlog and explicitly waiting tasks unclaimed.", { taskId: { type: "string" }, version: { type: "integer" } }, ["taskId", "version"]],
         ["release_task", "Release your current claim using the latest task version. Completed handoff: submit outputs, comment, update to in_review, then release; in_review is preserved. Abandoning in_progress returns it to todo. done is preserved. Comments, artifacts and claim history remain.", { taskId: { type: "string" }, version: { type: "integer" } }, ["taskId", "version"]],
         ["update_task", "Update an unclaimed task or your claimed task using its current version; use the returned version for the next update or release. Set in_review before releasing completed work. Mark done only with explicit user acceptance or instruction.", { taskId: { type: "string" }, version: { type: "integer" }, status: { type: "string" }, title: { type: "string" }, description: { type: "string" }, executor: executorSchema }, ["taskId", "version"]],
