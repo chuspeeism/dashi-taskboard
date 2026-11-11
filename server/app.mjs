@@ -45,7 +45,7 @@ import { TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
-import { createRequestLog, markRequestLogResponse } from "./request-log.mjs";
+import { createRequestLog, markRequestLogResponse, markTaskSave, markCommentSave } from "./request-log.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -2505,6 +2505,7 @@ export function createTaskboardServer(options = {}) {
             actor,
             assignee: resolveAssignee(assigneeTarget, actor),
           });
+          markTaskSave(response, task, null, Object.keys(input));
           events.emit("task.created", { task });
           return sendJson(response, 201, { task });
         }
@@ -2561,6 +2562,7 @@ export function createTaskboardServer(options = {}) {
             origin,
             agentSession,
           );
+          markTaskSave(response, result.task, version, ["relations"]);
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
@@ -2579,6 +2581,7 @@ export function createTaskboardServer(options = {}) {
             origin,
             agentSession,
           );
+          markTaskSave(response, result.task, version, ["relations"]);
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
@@ -2634,6 +2637,7 @@ export function createTaskboardServer(options = {}) {
             ...resolveInputThreadBinding(parseCommentCreate(await readJson(request))),
             actor: actorFromRequest(request),
           });
+          markCommentSave(response, comment);
           const task = database.getTask(taskId);
           events.emit("comment.created", { comment, task });
           return sendJson(response, 201, { comment });
@@ -2665,6 +2669,7 @@ export function createTaskboardServer(options = {}) {
             patch.threadBinding,
             patch.agentSession,
           );
+          markCommentSave(response, comment);
           const task = database.getTask(comment.taskId);
           events.emit("comment.updated", { comment, task });
           return sendJson(response, 200, { comment });
@@ -2944,6 +2949,7 @@ export function createTaskboardServer(options = {}) {
             }
             throw error;
           }
+          markTaskSave(response, task, version, Object.keys(changes));
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }
@@ -2990,6 +2996,7 @@ export function createTaskboardServer(options = {}) {
             actorFromRequest(request),
             move.agentSession,
           );
+          markTaskSave(response, task, move.version, ["status", "sortOrder"]);
           events.emit("task.moved", { task });
           return sendJson(response, 200, { task });
         }
@@ -3009,6 +3016,7 @@ export function createTaskboardServer(options = {}) {
             actorFromRequest(request),
             agentSession,
           );
+          markTaskSave(response, task, version, ["archivedAt"]);
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
@@ -3028,6 +3036,7 @@ export function createTaskboardServer(options = {}) {
             actorFromRequest(request),
             agentSession,
           );
+          markTaskSave(response, task, version, ["archivedAt"]);
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }

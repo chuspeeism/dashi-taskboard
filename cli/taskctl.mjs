@@ -11,6 +11,8 @@ import { randomUUID } from "node:crypto";
 import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
 import { projectIssueSummary } from "./issue-summary.mjs";
+import { createInvocationLog, invocationLogFile, readInvocationLog } from "./invocation-log.mjs";
+import { diagnoseRequests, REQUEST_TOOLS, UNKNOWN_MODEL } from "../shared/request-diagnostics.mjs";
 import {
   DEFAULT_PROJECT_ID,
   TASK_STATUSES,
@@ -41,8 +43,9 @@ const COMMAND_OPTIONS = new Map([
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
-  ["log list", new Set(["limit", "source-thread", "task", "request-id", "json"])],
-  ["log analyze", new Set(["limit", "source-thread", "task", "request-id", "json"])],
+  ["log list", new Set(["limit", "source-thread", "task", "request-id", "since", "until", "json"])],
+  ["log analyze", new Set(["limit", "source-thread", "task", "request-id", "since", "until", "json"])],
+  ["log diagnose", new Set(["limit", "source-thread", "task", "since", "until", "json"])],
   ["issue list", new Set(["project", "status", "archived", "view", "json"])],
   ["issue get", new Set(["view", "json"])],
   [
@@ -126,11 +129,13 @@ const COMMAND_OPTIONS = new Map([
 ]);
 
 const HELP_TEXT = new Map([
-  ["log", `Usage: taskctl log list|analyze [options]
+  ["log", `Usage: taskctl log list|analyze|diagnose [options]
 
 Read this local service's persistent HTTP request metadata, or group it by self-reported source.
-Options: --source-thread UUID, --task ISSUE_ID, --request-id UUID, --limit N (1-1000), --json
-No matching record does not prove a request was never sent. HTTP success is not business acceptance.`],
+Options: --source-thread UUID, --task ISSUE_ID, --since ISO_TIME, --until ISO_TIME, --limit N (1-1000), --json
+list/analyze also accept --request-id UUID.
+diagnose joins the local CLI journal and server records to locate failed steps, saves and version readbacks.
+Model remains unknown without trusted runtime metadata. No record does not prove no call.`],
   ["", `Usage: taskctl RESOURCE ACTION [options]
 
 Commands:
@@ -142,7 +147,7 @@ Commands:
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
   cloud login --url URL --actor-name NAME
   cloud status|logout
-  log list|analyze [--source-thread ID] [--task ID] [--request-id ID] [--limit N] [--json]
+  log list|analyze|diagnose [--source-thread ID] [--task ID] [--limit N] [--json]
   issue list|get|create|update|move|archive|restore|tree|relation
   comment list ISSUE_ID [--after CURSOR]
   comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]
@@ -244,6 +249,7 @@ Example:
 
 HELP_TEXT.set("log list", HELP_TEXT.get("log"));
 HELP_TEXT.set("log analyze", HELP_TEXT.get("log"));
+HELP_TEXT.set("log diagnose", HELP_TEXT.get("log"));
 
 class TaskctlError extends Error {
   constructor(message, { code = "TASKCTL_ERROR", exitCode = 2, details, trace } = {}) {
@@ -318,6 +324,7 @@ export function parseArgs(argv) {
 export async function main(argv = process.argv.slice(2), overrides = {}) {
   const stdout = overrides.stdout ?? process.stdout;
   const stderr = overrides.stderr ?? process.stderr;
+  let invocation;
 
   try {
     const parsed = parseArgs(argv);
@@ -330,11 +337,28 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
       stdout.write(`${help}\n`);
       return 0;
     }
-    const result = await execute(parsed, overrides);
+    const tool = `${parsed.resource ?? ""} ${parsed.action ?? ""}`.trim();
+    if (REQUEST_TOOLS.has(tool)) {
+      const env = overrides.env ?? process.env;
+      const rawSource = parsed.options["agent-platform"] ? null : parsed.options["thread-id"] ?? env.CODEX_THREAD_ID;
+      const threadId = typeof rawSource === "string" && REQUEST_UUID.test(rawSource) ? rawSource.toLowerCase() : null;
+      const firstOperand = parsed.operands[0];
+      const taskId = typeof firstOperand === "string" && /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(firstOperand)
+        && (parsed.resource === "issue" || tool === "comment list" || tool === "comment add") ? firstOperand : null;
+      const file = invocationLogFile(parsed.options["runtime-file"] ?? env.CODEX_TASKBOARD_RUNTIME_FILE ?? sourceRuntimeFile);
+      const context = { invocationId: randomUUID(), tool, taskId, source: { client: "taskctl", threadId, attribution: "self_reported" }, model: UNKNOWN_MODEL };
+      const audit = tool.startsWith("log ") ? async () => {} : createInvocationLog(file, context);
+      invocation = { ...context, file, audit };
+      await audit({ event: "cli_started" });
+    }
+    const result = await execute(parsed, { ...overrides, invocation });
+    await invocation?.audit({ event: "cli_finished", exitCode: 0, errorCode: null });
     writeJson(stdout, { ...result, schemaVersion: SCHEMA_VERSION });
     return 0;
   } catch (error) {
     const normalized = normalizeError(error);
+    await invocation?.audit({ event: "cli_finished", exitCode: normalized.exitCode,
+      errorCode: /^[A-Z][A-Z0-9_]{0,79}$/.test(normalized.code) ? normalized.code : "UNKNOWN_ERROR" });
     const payload = {
       schemaVersion: SCHEMA_VERSION,
       error: {
@@ -356,7 +380,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, log list/analyze, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, log list/analyze/diagnose, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -366,10 +390,43 @@ async function execute(parsed, overrides) {
     ? processEnv
     : { ...processEnv, CODEX_TASKBOARD_RUNTIME_FILE: parsed.options["runtime-file"] };
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
+  if (command === "log diagnose") {
+    expectOperandCount(parsed, 0);
+    const limit = Number(parsed.options.limit ?? 200);
+    const sourceThreadId = parsed.options["source-thread"]?.toLowerCase();
+    const taskId = parsed.options.task;
+    const since = parsed.options.since;
+    const until = parsed.options.until;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000
+      || (sourceThreadId !== undefined && !REQUEST_UUID.test(sourceThreadId))
+      || (taskId !== undefined && !/^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(taskId))
+      || [since, until].some((v) => v !== undefined && (!/^\d{4}-\d\d-\d\dT/.test(v) || !Number.isFinite(Date.parse(v))))
+      || (since && until && Date.parse(since) > Date.parse(until))) {
+      throw usageError("Invalid diagnostic filter");
+    }
+    const local = await readInvocationLog(overrides.invocation.file, limit, sourceThreadId, since, until);
+    let server = { records: [], coverage: { available: false } };
+    try {
+      const target = env.CODEX_TASKBOARD_COMPANION_URL !== undefined
+        ? await resolveCompanionUrl(env, overrides) : await resolveTaskboardBaseUrl(env, overrides);
+      const api = createApiClient(overrides, target, overrides.invocation.source.threadId);
+      const query = new URLSearchParams({ limit: String(limit) });
+      if (sourceThreadId) query.set("sourceThreadId", sourceThreadId);
+      if (since) query.set("since", since);
+      if (until) query.set("until", until);
+      server = await api.request("GET", `/api/local/request-logs?${query}`);
+      if (!Array.isArray(server.records) || !server.coverage || typeof server.coverage !== "object") {
+        throw new TaskctlError("Request log response is invalid", { code: "INVALID_RESPONSE", exitCode: 4 });
+      }
+    } catch (error) {
+      server = { records: [], coverage: { available: false, errorCode: normalizeError(error).code } };
+    }
+    return diagnoseRequests(server.records, local.records, { client: { ...local.coverage, requestedWindow: { since: since ?? null, until: until ?? null } }, server: server.coverage }, { sourceThreadId, taskId });
+  }
   const target = usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
       ? await resolveCompanionUrl(env, overrides)
       : await resolveTaskboardBaseUrl(env, overrides);
-  const api = createApiClient(overrides, target, parsed.options["thread-id"] ?? env.CODEX_THREAD_ID);
+  const api = createApiClient(overrides, target, overrides.invocation?.source.threadId);
   switch (command) {
     case "log list":
     case "log analyze": {
@@ -378,6 +435,7 @@ async function execute(parsed, overrides) {
       for (const [option, parameter] of [
         ["limit", "limit"], ["source-thread", "sourceThreadId"],
         ["task", "taskId"], ["request-id", "requestId"],
+        ["since", "since"], ["until", "until"],
       ]) {
         if (parsed.options[option] !== undefined) search.set(parameter, parsed.options[option]);
       }
@@ -538,6 +596,7 @@ function createApiClient(overrides, {
   url: explicitBaseUrl,
   windowsTransport = false,
 } = {}, sourceThreadId) {
+  const invocation = overrides.invocation;
   const fetchImplementation = overrides.fetch
     ?? (windowsTransport
       ? (url, init) => fetchThroughWindows(url, init, overrides)
@@ -560,29 +619,40 @@ function createApiClient(overrides, {
     try {
       const url = resolveApiUrl(baseUrl, pathname);
       const init = createInit();
+      await invocation?.audit({ event: "request_started", clientRequestId, method: init.method ?? "GET" });
       response = await fetchImplementation(url, {
         ...init,
         headers: {
           accept: "application/json",
           "x-taskboard-client": "taskctl",
           "x-taskboard-request-id": clientRequestId,
+          ...(invocation ? { "x-taskboard-invocation-id": invocation.invocationId, "x-taskboard-tool": invocation.tool } : {}),
           ...(threadId ? { "x-taskboard-source-thread": threadId } : {}),
           ...init.headers,
         },
       });
     } catch (error) {
-      const transportCode = error?.cause?.code;
+      const rawTransportCode = error?.cause?.code ?? error?.code;
+      const transportCode = ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EPERM", "EACCES",
+        "ETIMEDOUT", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT",
+        "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET"].includes(rawTransportCode) ? rawTransportCode : null;
       const notConnected = ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"].includes(transportCode);
+      await invocation?.audit({ event: "transport_error", clientRequestId, delivery: notConnected ? "not_connected" : "unknown",
+        transportCode });
       throw new TaskctlError("Cannot reach the configured Taskboard service", {
         code: "SERVICE_UNAVAILABLE",
         exitCode: 3,
         trace: {
           clientRequestId, requestId: null,
           delivery: notConnected ? "not_connected" : "unknown",
-          transportCode: notConnected ? transportCode : null,
+          transportCode,
         },
       });
     }
+
+    const responseRequestId = response.headers.get("x-taskboard-request-id");
+    await invocation?.audit({ event: "http_response", clientRequestId, status: response.status,
+      requestId: REQUEST_UUID.test(responseRequestId ?? "") ? responseRequestId : null });
 
     if (!response.ok) {
       const payload = await readResponse(response);

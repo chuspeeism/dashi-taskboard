@@ -5,6 +5,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 
 import { ApiError } from "../shared/api-fields.mjs";
+import { REQUEST_TOOLS, UNKNOWN_MODEL, diagnoseRequests } from "../shared/request-diagnostics.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const TASK_ID = /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i;
@@ -64,6 +65,33 @@ export function markRequestLogResponse(response, value) {
   if (typeof code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(code)) context.errorCode = code;
   const taskId = value?.task?.id ?? value?.comment?.taskId;
   if (!context.taskId && typeof taskId === "string" && TASK_ID.test(taskId)) context.taskId = taskId;
+  if (context.method === "GET" && context.route === "/api/tasks/:taskId" && value?.task) {
+    context.taskRead = { id: value.task.id, version: value.task.version };
+  }
+  if (context.method === "GET" && context.route === "/api/tasks/:taskId/comments" && Array.isArray(value?.comments)) {
+    context.commentReads = value.comments.map(({ id, version }) => ({ id, version }));
+  }
+}
+
+// Called only after the existing database method has committed, not from an HTTP status.
+export function markTaskSave(response, task, beforeVersion = null, requestedFields = []) {
+  const context = contexts.get(response);
+  if (!context) return;
+  context.effect = {
+    entity: "task", id: task.id, taskId: task.id, beforeVersion, version: task.version,
+    versionChanged: beforeVersion === null || task.version !== beforeVersion,
+    requestedFields,
+    evidence: "local_database_commit_returned",
+  };
+}
+
+export function markCommentSave(response, comment) {
+  const context = contexts.get(response);
+  if (!context) return;
+  context.effect = {
+    entity: "comment", id: comment.id, taskId: comment.taskId, version: comment.version,
+    evidence: "local_database_save_returned",
+  };
 }
 
 export function createRequestLog(dataDirectory) {
@@ -94,6 +122,9 @@ export function createRequestLog(dataDirectory) {
       const context = {
         requestId: randomUUID(),
         clientRequestId: uuid(request.headers["x-taskboard-request-id"]),
+        invocationId: uuid(request.headers["x-taskboard-invocation-id"]),
+        tool: REQUEST_TOOLS.has(request.headers["x-taskboard-tool"]) ? request.headers["x-taskboard-tool"] : null,
+        model: UNKNOWN_MODEL,
         method: METHODS.has(request.method) ? request.method : "OTHER",
         ...routeInfo(request.url, prefix),
         source: {
@@ -125,7 +156,7 @@ export function createRequestLog(dataDirectory) {
     },
     async flush() { await pending; },
     async read(searchParams) {
-      const allowed = new Set(["limit", "sourceThreadId", "taskId", "requestId", "view"]);
+      const allowed = new Set(["limit", "sourceThreadId", "taskId", "requestId", "view", "since", "until"]);
       if ([...searchParams.keys()].some((key) => !allowed.has(key))) {
         throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Unsupported request log filter");
       }
@@ -134,11 +165,15 @@ export function createRequestLog(dataDirectory) {
       const taskId = searchParams.get("taskId");
       const requestId = searchParams.get("requestId");
       const view = searchParams.get("view") ?? "list";
+      const since = searchParams.get("since");
+      const until = searchParams.get("until");
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000
         || (sourceThreadId !== null && !uuid(sourceThreadId))
         || (requestId !== null && !uuid(requestId))
         || (taskId !== null && !TASK_ID.test(taskId))
-        || !["list", "analysis"].includes(view)) {
+        || !["list", "analysis"].includes(view)
+        || [since, until].some((v) => v !== null && (!/^\d{4}-\d\d-\d\dT/.test(v) || !Number.isFinite(Date.parse(v))))
+        || (since && until && Date.parse(since) > Date.parse(until))) {
         throw new ApiError(400, "INVALID_FIELD", "Invalid request log filter");
       }
       await pending;
@@ -150,8 +185,10 @@ export function createRequestLog(dataDirectory) {
         for await (const line of lines) {
           let record;
           try { record = JSON.parse(line); } catch { unreadableRecords += 1; continue; }
+          if (since && Date.parse(record.time) < Date.parse(since)) continue;
+          if (until && Date.parse(record.time) > Date.parse(until)) continue;
           if (sourceThreadId && record.source?.threadId !== uuid(sourceThreadId)) continue;
-          if (taskId && record.taskId !== taskId) continue;
+          if (taskId && record.taskId !== taskId && record.effect?.taskId !== taskId && record.taskRead?.id !== taskId) continue;
           if (requestId && record.requestId !== uuid(requestId) && record.clientRequestId !== uuid(requestId)) continue;
           records.push(record);
           if (records.length > limit) { records.shift(); truncated = true; }
@@ -164,6 +201,8 @@ export function createRequestLog(dataDirectory) {
         attribution: "self_reported_not_authenticated",
         truncated, writeFailures, unreadableRecords,
         readAt: new Date().toISOString(),
+        requestedWindow: { since, until },
+        returnedWindow: { firstEventAt: records[0]?.time ?? null, lastEventAt: records.at(-1)?.time ?? null },
         absenceIsNotProofOfNoRequest: true,
       };
       if (view === "list") return { records, coverage };
@@ -188,6 +227,7 @@ export function createRequestLog(dataDirectory) {
       }
       return {
         sources: [...sources.values()], coverage,
+        diagnosis: diagnoseRequests(records, [], { server: coverage }),
         interpretation: "A matching server record proves arrival here. Success/rejected describe HTTP results, not correct business fields or user acceptance. No matching record does not prove no attempt or no arrival; correlate the CLI clientRequestId and delivery report. A received-only record has no terminal result in this window.",
       };
     },
