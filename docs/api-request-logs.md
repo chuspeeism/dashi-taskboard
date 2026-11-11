@@ -13,6 +13,8 @@ taskctl log list --request-id REQUEST_UUID --json
 
 服务端先按来源、任务和时间筛选，再截取匹配记录；来源筛选同时匹配HTTP声明和客户端上下文。任务筛选接受现有UUID、卡号及Jira命名空间ID，不把Jira请求丢成无目标记录。
 
+客户端按自身目标卡或服务端已关联的调用ID筛选，再截取；附件等没有直接任务操作数的命令通过同次调用ID保留完整客户端结果。任务筛选不会把HTTP成功后的本地文件写入失败隐藏成读取成功。没有HTTP证据的请求前失败，仅按客户端实际记录的目标归属，不猜附件或评论所属卡。
+
 ## 真实记录路径
 
 1. `taskctl`为一次CLI调用生成`invocationId`，写入`cli_started`，随后记录请求尝试、HTTP响应或传输错误、`cli_finished`。参数值、文件路径、正文均不写入。显式runtime下文件位于descriptor旁的`logs/taskctl-invocations.jsonl`；未显式指定时使用该CLI源码runtime位置旁的journal，不宣称自动发现的其他平台descriptor共用这个文件。

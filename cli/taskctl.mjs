@@ -432,7 +432,6 @@ async function execute(parsed, overrides) {
       || (since && until && Date.parse(since) > Date.parse(until))) {
       throw usageError("Invalid diagnostic filter");
     }
-    const local = await readInvocationLog(overrides.invocation.file, limit, sourceThreadId, since, until, taskId);
     let server = { records: [], coverage: { available: false } };
     try {
       const target = env.CODEX_TASKBOARD_COMPANION_URL !== undefined
@@ -451,6 +450,8 @@ async function execute(parsed, overrides) {
     } catch (error) {
       server = { records: [], coverage: { available: false, errorCode: normalizeError(error).code } };
     }
+    const correlatedInvocationIds = new Set(server.records.map((record) => record.invocationId).filter(Boolean));
+    const local = await readInvocationLog(overrides.invocation.file, limit, sourceThreadId, since, until, taskId, correlatedInvocationIds);
     return diagnoseRequests(server.records, local.records, { client: { ...local.coverage, requestedWindow: { since: since ?? null, until: until ?? null } }, server: server.coverage }, { sourceThreadId, taskId });
   }
   const target = usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined

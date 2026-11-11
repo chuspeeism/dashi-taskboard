@@ -70,7 +70,12 @@ test("diagnostic filters precede the server record limit and accept existing Jir
       assert.ok(diagnosis.value.invocations.some((v) => v.outcome === "http_rejected"));
     }
     const missingFile = path.join(directory, "PRIVATE_MISSING_DESCRIPTION");
-    for (const taskId of [wanted.identifier, `JIRA:${"a".repeat(64)}:10001`]) {
+    const preHttpTask = await fetch(`http://127.0.0.1:${address.port}/api/tasks`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "local", title: "Pre-HTTP-only source fixture", threadId: A }),
+    });
+    const preHttpIdentifier = (await preHttpTask.json()).task.identifier;
+    for (const taskId of [preHttpIdentifier, `JIRA:${"a".repeat(64)}:10001`]) {
       const failed = await command(runtimeFile, A, ["issue", "update", taskId,
         "--if-version", "1", "--description-file", missingFile]);
       assert.equal(failed.value.error.code, "FILE_READ_FAILED");
@@ -474,6 +479,19 @@ test("key input, attachment and deletion paths leave metadata without claiming u
     const downloaded = path.join(directory, "downloaded.txt");
     assert.equal((await command(runtimeFile, A, ["attachment", "download", attachment.value.attachment.id, "--output", downloaded])).exitCode, 0);
     assert.equal(await readFile(downloaded, "utf8"), "PRIVATE_ATTACHMENT_BODY");
+    const failedDownload = await command(runtimeFile, A, ["attachment", "download", attachment.value.attachment.id, "--output", directory]);
+    assert.equal(failedDownload.exitCode, 2);
+    assert.equal(failedDownload.value.error.code, "FILE_WRITE_FAILED");
+    const sourceDiagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", A]);
+    const downloadFailure = sourceDiagnosis.value.invocations.find((v) => v.tool === "attachment download"
+      && v.cliErrorCode === "FILE_WRITE_FAILED");
+    assert.equal(downloadFailure.outcome, "failed_after_http_response");
+    const taskDiagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", A, "--task", task.id]);
+    const sameFailure = taskDiagnosis.value.invocations.find((v) => v.invocationId === downloadFailure.invocationId);
+    assert.equal(sameFailure.outcome, downloadFailure.outcome);
+    assert.equal(sameFailure.cliExitCode, 2);
+    assert.equal(sameFailure.cliErrorCode, "FILE_WRITE_FAILED");
+    assert.equal(taskDiagnosis.value.coverage.client.truncated, false);
     assert.equal((await command(runtimeFile, A, ["comment", "delete", comment.value.comment.id, "--if-version", String(comment.value.comment.version)])).exitCode, 0);
     const attachmentDeleted = await fetch(`${url}/api/attachments/${attachment.value.attachment.id}`, { method: "DELETE" });
     assert.equal(attachmentDeleted.status, 204);
