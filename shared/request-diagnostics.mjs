@@ -66,14 +66,15 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
       }
       requests.set(id, entry);
     }
-    const saves = records.filter((r) => r.effect && r.event === "completed").map((saved) => {
+    const saves = records.filter((r) => r.effect && ["completed", "aborted"].includes(r.event)).map((saved) => {
       const effect = saved.effect;
       if (effect.operation === "deleted" || effect.entity === "attachment") return {
         ...effect, readback: effect.operation === "deleted" ? "not_checked_for_deletion" : "not_checked_for_attachment",
         readbackEvidence: null, contentCorrectness: "not_checked_by_metadata_log",
       };
       const reads = source.threadId ? terminals.slice(terminals.indexOf(saved) + 1).filter((r) => (
-        r.source?.threadId === source.threadId && r.requestId !== saved.requestId
+        r.event === "completed" && r.result === "success"
+        && r.source?.threadId === source.threadId && r.requestId !== saved.requestId
         && (effect.entity === "task" ? r.taskRead?.id === effect.id
           : r.commentReads?.some((c) => c.id === effect.id))
       )) : [];
@@ -108,7 +109,7 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
     const noVersionChange = saves.length && saves.every((s) => s.entity === "task" && !s.versionChanged);
     const onlyDeletion = saves.length && saves.every((s) => s.operation === "deleted");
     const onlyAttachments = saves.length && saves.every((s) => s.entity === "attachment");
-    const outcome = saves.length ? (rejected || ended?.exitCode > 0 ? "partial_success"
+    const outcome = saves.length ? (rejected || ended?.exitCode > 0 || records.some((r) => r.event === "aborted") ? "partial_success"
       : onlyDeletion ? "deletion_committed" : onlyAttachments ? "attachment_saved"
         : noVersionChange ? "save_returned_without_version_change" : "save_committed")
       : rejected ? "http_rejected"

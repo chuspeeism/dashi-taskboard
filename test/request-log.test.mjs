@@ -17,6 +17,64 @@ const cli = fileURLToPath(new URL("../cli/taskctl.mjs", import.meta.url));
 const A = "10000000-0000-4000-8000-000000000001";
 const B = "10000000-0000-4000-8000-000000000002";
 
+test("interrupted responses retain committed writes without confirming aborted readbacks", () => {
+  const source = { threadId: A, attribution: "self_reported" };
+  const saved = { invocationId: A, requestId: A, event: "completed", result: "success",
+    method: "PATCH", status: 200, time: "2026-01-01T00:00:00Z", source, tool: "issue update",
+    effect: { entity: "task", id: B, taskId: B, version: 2, beforeVersion: 1,
+      versionChanged: true, evidence: "local_database_commit_returned" } };
+  const aborted = diagnoseRequests([{ ...saved, event: "aborted", result: "aborted" }]).invocations[0];
+  assert.equal(aborted.outcome, "partial_success");
+  assert.equal(aborted.saves[0].version, 2);
+  assert.equal(aborted.saves[0].readback, "not_observed");
+  const deleted = diagnoseRequests([{ ...saved, event: "aborted", result: "aborted",
+    effect: { entity: "comment", operation: "deleted", id: B, taskId: B,
+      version: null, evidence: "local_database_delete_returned" } }]).invocations[0];
+  assert.equal(deleted.outcome, "partial_success");
+  assert.equal(deleted.saves[0].readback, "not_checked_for_deletion");
+  const read = { invocationId: B, requestId: B, event: "aborted", result: "aborted",
+    method: "GET", status: 200, time: "2026-01-01T00:00:01Z", source,
+    tool: "issue get", taskRead: { id: B, version: 2 } };
+  assert.equal(diagnoseRequests([saved, read]).invocations[0].saves[0].readback, "not_observed");
+  assert.equal(diagnoseRequests([saved, { ...read, event: "completed", result: "success" }])
+    .invocations[0].saves[0].readback, "version_confirmed");
+});
+
+test("diagnostic filters precede the server record limit and accept existing Jira task IDs", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-filtered-diagnosis-"));
+  const runtimeFile = path.join(directory, "runtime.json");
+  const app = createTaskboardServer({ dataDirectory: directory, instanceToken: "", instanceSecret: "" });
+  try {
+    const address = await app.listen({ port: 0 });
+    await writeFile(runtimeFile, JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}` }));
+    const wanted = (await command(runtimeFile, A, ["issue", "create", "--project", "local", "--title", "Wanted read"])).value.task;
+    const other = (await command(runtimeFile, A, ["issue", "create", "--project", "local", "--title", "Unrelated traffic"])).value.task;
+    await command(runtimeFile, B, ["issue", "get", wanted.id]);
+    await command(runtimeFile, A, ["issue", "get", wanted.id]);
+    for (let i = 0; i < 4; i += 1) await command(runtimeFile, A, ["issue", "get", other.id]);
+    const bySource = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", B, "--limit", "4"]);
+    assert.equal(bySource.exitCode, 0);
+    assert.ok(bySource.value.invocations.some((v) => v.outcome === "read_only"
+      && v.requests.some((r) => r.result === "success")));
+    const byTask = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", A, "--task", wanted.id, "--limit", "4"]);
+    assert.equal(byTask.exitCode, 0);
+    assert.ok(byTask.value.invocations.some((v) => v.outcome === "read_only"
+      && v.bindingComparisons.some((b) => b.taskId === wanted.id)));
+    for (const taskId of [`JIRA:${"a".repeat(64)}:10001`, "JIRA:0123456789abcdef:10002", "jira:10003"]) {
+      assert.equal((await command(runtimeFile, B, ["issue", "get", taskId])).value.error.code, "TASK_NOT_FOUND");
+      const logs = await command(runtimeFile, A, ["log", "list", "--task", taskId]);
+      assert.equal(logs.exitCode, 0);
+      assert.ok(logs.value.records.some((r) => r.taskId === taskId && r.errorCode === "TASK_NOT_FOUND"));
+      const diagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", B, "--task", taskId]);
+      assert.equal(diagnosis.exitCode, 0);
+      assert.ok(diagnosis.value.invocations.some((v) => v.outcome === "http_rejected"));
+    }
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function command(runtimeFile, threadId, args) {
   const env = { ...process.env, CODEX_TASKBOARD_RUNTIME_FILE: runtimeFile, CODEX_THREAD_ID: threadId };
   delete env.CODEX_TASKBOARD_URL;

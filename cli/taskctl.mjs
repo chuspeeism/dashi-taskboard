@@ -427,7 +427,7 @@ async function execute(parsed, overrides) {
     const until = parsed.options.until;
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000
       || (sourceThreadId !== undefined && !REQUEST_UUID.test(sourceThreadId))
-      || (taskId !== undefined && !/^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(taskId))
+      || (taskId !== undefined && !/^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12}|jira:(?:(?:[0-9a-f]{16}|[0-9a-f]{64}):)?[0-9]{1,20})$/i.test(taskId))
       || [since, until].some((v) => v !== undefined && (!/^\d{4}-\d\d-\d\dT/.test(v) || !Number.isFinite(Date.parse(v))))
       || (since && until && Date.parse(since) > Date.parse(until))) {
       throw usageError("Invalid diagnostic filter");
@@ -440,6 +440,8 @@ async function execute(parsed, overrides) {
       const api = createApiClient(overrides, target, overrides.invocation.source.threadId);
       const query = new URLSearchParams({ limit: String(limit) });
       // Join the client invocation with server records even when explicit caller and context differ.
+      if (sourceThreadId) query.set("sourceThreadId", sourceThreadId);
+      if (taskId) query.set("taskId", taskId);
       if (since) query.set("since", since);
       if (until) query.set("until", until);
       server = await api.request("GET", `/api/local/request-logs?${query}`);

@@ -11,6 +11,8 @@ taskctl log list --request-id REQUEST_UUID --json
 
 `diagnose`结合本机CLI调用记录和同一服务的HTTP日志，按一次工具调用给出工具、时间、来源、请求步骤、结果、错误码、保存证据、读回证据和下一步。它不修改卡片，也不自动重送失败请求。`list/analyze`还支持`--source-thread`、`--task`、`--since`、`--until`；`limit`为最近匹配事件数，范围1–1000，不能把截取窗口当完整历史。
 
+服务端先按来源、任务和时间筛选，再截取匹配记录；来源筛选同时匹配HTTP声明和客户端上下文。任务筛选接受现有UUID、卡号及Jira命名空间ID，不把Jira请求丢成无目标记录。
+
 ## 真实记录路径
 
 1. `taskctl`为一次CLI调用生成`invocationId`，写入`cli_started`，随后记录请求尝试、HTTP响应或传输错误、`cli_finished`。参数值、文件路径、正文均不写入。显式runtime下文件位于descriptor旁的`logs/taskctl-invocations.jsonl`；未显式指定时使用该CLI源码runtime位置旁的journal，不宣称自动发现的其他平台descriptor共用这个文件。
@@ -40,6 +42,8 @@ HTTP日志在服务数据目录的`logs/api-requests.jsonl`。只读接口为`GE
 | `incomplete_evidence` / `not_observed` | 当前窗口缺少足够证据 | 不能据此断言“没有调用” |
 
 `saves[].readback=version_confirmed`证明随后独立读到了保存版本；`not_observed`不是保存失败，`different_version_observed`说明读到别的版本。元数据不检查正文是否符合目标，也不等于用户验收。已返回但版本未变的任务操作另标`save_returned_without_version_change`。
+
+连接中断不抹掉已返回的数据库保存/删除回执，诊断保留该效果并标`partial_success`；中断的GET不能充当成功版本读回。只有完成且成功的独立响应才能提供读回证据。
 
 ## 来源、模型和覆盖边界
 

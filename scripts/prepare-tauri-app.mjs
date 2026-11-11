@@ -266,10 +266,12 @@ async function copyApplicationResources() {
     path.join(appResources, "inject", "codex-taskboard.user.js"),
   );
   await mkdir(path.join(appResources, "cli"), { recursive: true });
-  await copyFile(
-    path.join(projectRoot, "cli", "taskctl.mjs"),
-    path.join(appResources, "cli", "taskctl.mjs"),
-  );
+  for (const fileName of ["taskctl.mjs", "issue-summary.mjs", "invocation-log.mjs"]) {
+    await copyFile(
+      path.join(projectRoot, "cli", fileName),
+      path.join(appResources, "cli", fileName),
+    );
+  }
 
   if (target === windowsTarget) {
     const taskctlWrapper = [
