@@ -659,6 +659,14 @@ export async function updateTask(task: Task, draft: TaskDraft, threadId?: string
   return data.task;
 }
 
+export async function releaseTask(task: Task): Promise<Task> {
+  const data = await request<{ task: Task }>(`/api/tasks/${encodeURIComponent(task.id)}/release`, {
+    method: "POST",
+    body: JSON.stringify({ version: task.version }),
+  });
+  return data.task;
+}
+
 export async function moveTask(
   task: Task,
   status: TaskStatus,

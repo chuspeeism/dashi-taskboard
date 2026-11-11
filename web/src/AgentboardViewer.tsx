@@ -3,6 +3,7 @@ import {
   getAgentboardSession,
   createTask,
   updateTask,
+  releaseTask,
   listAttachments,
   listTaskdockAgents,
   loginTaskdock,
@@ -140,6 +141,8 @@ export function AgentboardViewer({ pollIntervalMs = 3000 }: { pollIntervalMs?: n
   const [detail, setDetail] = useState<Detail | null>(null);
   const [editor, setEditor] = useState<{ task: Task | null } | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [releaseBusy, setReleaseBusy] = useState(false);
+  const [releaseError, setReleaseError] = useState("");
   const [search, setSearch] = useState("");
   const [readmeRevision, setReadmeRevision] = useState(0);
   const [collapsed, setCollapsed] = useState<Set<TaskStatus>>(() => new Set(statusFilter ? [] : ["backlog", "done", "canceled"]));
@@ -179,6 +182,8 @@ export function AgentboardViewer({ pollIntervalMs = 3000 }: { pollIntervalMs?: n
     void refresh();
     return () => { stopped = true; window.clearTimeout(timer); };
   }, [session, reload, pollIntervalMs]);
+
+  useEffect(() => { setReleaseError(""); }, [taskId]);
 
   useEffect(() => {
     if (!selectedTask) {
@@ -232,6 +237,20 @@ export function AgentboardViewer({ pollIntervalMs = 3000 }: { pollIntervalMs?: n
 
   function taskChanged(saved: Task) {
     setTasks((current) => current.map((task) => task.id === saved.id ? saved : task));
+  }
+
+  async function releaseClaim(task: Task) {
+    if (releaseBusy) return;
+    setReleaseBusy(true);
+    setReleaseError("");
+    try {
+      const saved = await releaseTask(task);
+      taskChanged(saved);
+    } catch (error) {
+      setReleaseError(error instanceof Error ? error.message : "释放认领失败");
+    } finally {
+      setReleaseBusy(false);
+    }
   }
 
   if (session === "loading") return <div className="agentboard-login">正在连接 TaskDock…</div>;
@@ -330,7 +349,8 @@ export function AgentboardViewer({ pollIntervalMs = 3000 }: { pollIntervalMs?: n
   </main>
     {selectedTask && <TaskdockDialog className="agentboard-detail-backdrop" labelledBy="taskdock-detail-title" onClose={() => setSelectedTask(null)}><section className="agentboard-detail">
       <div className="agentboard-detail-head"><span>{selectedTask.identifier}</span><button type="button" onClick={() => setSelectedTask(null)} aria-label="关闭详情">×</button></div>
-      <div className="agentboard-task-heading"><h2 id="taskdock-detail-title">{selectedTask.title}</h2><button className="agentboard-edit-task" type="button" onClick={() => setEditor({ task: selectedTask })}>编辑任务</button></div><div className="agentboard-properties"><span>状态：{taskStatusLabel("zh", selectedTask.status)}</span><span>优先级：{taskPriorityLabel("zh", selectedTask.priority)}</span>{taskExecutor(selectedTask) === "agent" && <span>认领 Agent：{selectedTask.claimedBy?.name ?? "未认领"}</span>}{selectedTask.labels.map((label) => <span key={label}>{label}</span>)}</div>
+      <div className="agentboard-task-heading"><h2 id="taskdock-detail-title">{selectedTask.title}</h2><button className="agentboard-edit-task" type="button" onClick={() => setEditor({ task: selectedTask })}>编辑任务</button>{selectedTask.claimedBy && <button className="agentboard-edit-task" type="button" onClick={() => void releaseClaim(selectedTask)} disabled={releaseBusy}>{releaseBusy ? "释放中…" : "释放认领"}</button>}</div><div className="agentboard-properties"><span>状态：{taskStatusLabel("zh", selectedTask.status)}</span><span>优先级：{taskPriorityLabel("zh", selectedTask.priority)}</span>{taskExecutor(selectedTask) === "agent" && <span>认领 Agent：{selectedTask.claimedBy?.name ?? "未认领"}</span>}{selectedTask.labels.map((label) => <span key={label}>{label}</span>)}</div>
+      {releaseError && <p className="agentboard-error" role="alert">{releaseError}</p>}
       <nav className="taskdock-detail-tabs" aria-label="任务详情分区">{([ ["description", "说明"], ["checklist", "清单"], ["artifacts", `成果${detail ? ` ${detail.artifacts.length}` : ""}`], ["history", "历史"] ] as [DetailSection, string][]).map(([section, title]) => <button type="button" key={section} aria-pressed={detailSection === section} onClick={() => navigate({ section })}>{title}</button>)}</nav>
       {detailSection === "description" && <section><h3>任务说明</h3><MarkdownDocument value={selectedTask.description || "暂无描述"} /></section>}
       {detailSection === "checklist" && <section><div className="taskdock-detail-executor">执行者：{taskExecutor(selectedTask) === "user" ? "我做" : "Agent 做"}</div><TaskdockWork task={selectedTask} onChanged={taskChanged} onViewHistory={() => navigate({ section: "history" })} /></section>}
