@@ -321,13 +321,46 @@ export function parseArgs(argv) {
   };
 }
 
+function createCommandInvocation(parsed, overrides) {
+  const requestedTool = `${parsed.resource ?? ""} ${parsed.action ?? ""}`.trim();
+  const tool = REQUEST_TOOLS.has(requestedTool) ? requestedTool : "unrecognized_command";
+  const env = overrides.env ?? process.env;
+  const rawSource = parsed.options["agent-platform"] ? null : parsed.options["thread-id"] ?? env.CODEX_THREAD_ID;
+  const threadId = typeof rawSource === "string" && REQUEST_UUID.test(rawSource) ? rawSource.toLowerCase() : null;
+  const clientContextThreadId = typeof env.CODEX_THREAD_ID === "string" && REQUEST_UUID.test(env.CODEX_THREAD_ID)
+    ? env.CODEX_THREAD_ID.toLowerCase() : null;
+  const explicitCallerThreadId = typeof parsed.options["thread-id"] === "string" && REQUEST_UUID.test(parsed.options["thread-id"])
+    ? parsed.options["thread-id"].toLowerCase() : null;
+  const firstOperand = parsed.operands[0];
+  const taskId = typeof firstOperand === "string" && /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(firstOperand)
+    && (parsed.resource === "issue" || tool === "comment list" || tool === "comment add") ? firstOperand : null;
+  const file = invocationLogFile(parsed.options["runtime-file"] ?? env.CODEX_TASKBOARD_RUNTIME_FILE ?? sourceRuntimeFile);
+  const context = { invocationId: randomUUID(), tool, taskId, clientContextThreadId, explicitCallerThreadId, source: {
+    client: "taskctl", threadId, attribution: "self_reported",
+    declarationSource: parsed.options["agent-platform"] ? "unavailable_for_external_agent"
+      : parsed.options["thread-id"] ? "cli_explicit_thread_id" : "environment_CODEX_THREAD_ID",
+  }, model: UNKNOWN_MODEL };
+  const audit = tool.startsWith("log ") ? async () => {} : createInvocationLog(file, context);
+  return { ...context, file, audit };
+}
+
+function clientLoggingWarning(invocation) {
+  const state = invocation?.audit.coverage;
+  return state?.writeFailures ? {
+    code: "CLIENT_JOURNAL_WRITE_FAILED", invocationId: invocation.invocationId,
+    failedEvents: state.writeFailures, errorCode: state.lastErrorCode,
+    message: "Client journal is incomplete. Business result is separate; do not replay the operation because logging failed.",
+  } : undefined;
+}
+
 export async function main(argv = process.argv.slice(2), overrides = {}) {
   const stdout = overrides.stdout ?? process.stdout;
   const stderr = overrides.stderr ?? process.stderr;
   let invocation;
+  let parsed;
 
   try {
-    const parsed = parseArgs(argv);
+    parsed = parseArgs(argv);
     if (parsed.options.help) {
       const scope = `${parsed.resource ?? ""} ${parsed.action ?? ""}`.trim();
       const help = HELP_TEXT.get(scope);
@@ -337,34 +370,19 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
       stdout.write(`${help}\n`);
       return 0;
     }
-    const tool = `${parsed.resource ?? ""} ${parsed.action ?? ""}`.trim();
-    if (REQUEST_TOOLS.has(tool)) {
-      const env = overrides.env ?? process.env;
-      const rawSource = parsed.options["agent-platform"] ? null : parsed.options["thread-id"] ?? env.CODEX_THREAD_ID;
-      const threadId = typeof rawSource === "string" && REQUEST_UUID.test(rawSource) ? rawSource.toLowerCase() : null;
-      const clientContextThreadId = typeof env.CODEX_THREAD_ID === "string" && REQUEST_UUID.test(env.CODEX_THREAD_ID)
-        ? env.CODEX_THREAD_ID.toLowerCase() : null;
-      const explicitCallerThreadId = typeof parsed.options["thread-id"] === "string" && REQUEST_UUID.test(parsed.options["thread-id"])
-        ? parsed.options["thread-id"].toLowerCase() : null;
-      const firstOperand = parsed.operands[0];
-      const taskId = typeof firstOperand === "string" && /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(firstOperand)
-        && (parsed.resource === "issue" || tool === "comment list" || tool === "comment add") ? firstOperand : null;
-      const file = invocationLogFile(parsed.options["runtime-file"] ?? env.CODEX_TASKBOARD_RUNTIME_FILE ?? sourceRuntimeFile);
-      const context = { invocationId: randomUUID(), tool, taskId, clientContextThreadId, explicitCallerThreadId, source: {
-        client: "taskctl", threadId, attribution: "self_reported",
-        declarationSource: parsed.options["agent-platform"] ? "unavailable_for_external_agent"
-          : parsed.options["thread-id"] ? "cli_explicit_thread_id" : "environment_CODEX_THREAD_ID",
-      }, model: UNKNOWN_MODEL };
-      const audit = tool.startsWith("log ") ? async () => {} : createInvocationLog(file, context);
-      invocation = { ...context, file, audit };
-      await audit({ event: "cli_started" });
-    }
+    invocation = createCommandInvocation(parsed, overrides);
+    await invocation.audit({ event: "cli_started" });
     const result = await execute(parsed, { ...overrides, invocation });
     await invocation?.audit({ event: "cli_finished", exitCode: 0, errorCode: null });
-    writeJson(stdout, { ...result, schemaVersion: SCHEMA_VERSION });
+    const loggingWarning = clientLoggingWarning(invocation);
+    writeJson(stdout, { ...result, ...(loggingWarning ? { loggingWarning } : {}), schemaVersion: SCHEMA_VERSION });
     return 0;
   } catch (error) {
     const normalized = normalizeError(error);
+    if (!parsed) {
+      invocation = createCommandInvocation({ resource: argv[0], action: argv[1], operands: [], options: {} }, overrides);
+      await invocation.audit({ event: "cli_started", phase: "argument_parse_failed", targetResolved: false });
+    }
     await invocation?.audit({ event: "cli_finished", exitCode: normalized.exitCode,
       errorCode: /^[A-Z][A-Z0-9_]{0,79}$/.test(normalized.code) ? normalized.code : "UNKNOWN_ERROR" });
     const payload = {
@@ -378,6 +396,8 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
       payload.error.details = normalized.details;
     }
     if (normalized.trace !== undefined) payload.error.trace = normalized.trace;
+    const loggingWarning = clientLoggingWarning(invocation);
+    if (loggingWarning) payload.loggingWarning = loggingWarning;
     writeJson(stderr, payload);
     return normalized.exitCode;
   }
@@ -636,6 +656,8 @@ function createApiClient(overrides, {
           "x-taskboard-request-id": clientRequestId,
           ...(invocation ? { "x-taskboard-invocation-id": invocation.invocationId, "x-taskboard-tool": invocation.tool } : {}),
           ...(invocation?.clientContextThreadId ? { "x-taskboard-client-context-thread": invocation.clientContextThreadId } : {}),
+          ...(invocation ? { "x-taskboard-client-journal-status": invocation.audit.coverage
+            ? invocation.audit.coverage.writeFailures ? "failed" : "ok" : "disabled" } : {}),
           ...(threadId ? { "x-taskboard-source-thread": threadId } : {}),
           ...init.headers,
         },

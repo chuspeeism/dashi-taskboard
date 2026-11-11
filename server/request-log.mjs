@@ -83,8 +83,8 @@ function routeInfo(requestUrl, prefix) {
   if (/^\/api\/comments\/[^/]+(?:\/attachments)?$/.test(pathname)) {
     return { route: `/api/comments/:commentId${pathname.endsWith("/attachments") ? "/attachments" : ""}`, taskId: null };
   }
-  const attachment = pathname.match(/^\/api\/attachments\/[^/]+\/(content|download)$/);
-  if (attachment) return { route: `/api/attachments/:attachmentId/${attachment[1]}`, taskId: null };
+  const attachment = pathname.match(/^\/api\/attachments\/[^/]+(?:\/(content|download))?$/);
+  if (attachment) return { route: `/api/attachments/:attachmentId${attachment[1] ? `/${attachment[1]}` : ""}`, taskId: null };
   const project = pathname.match(/^\/api\/projects\/[^/]+(?:\/(readme|development-contexts|summary))?$/);
   if (project) return { route: `/api/projects/:projectId${project[1] ? `/${project[1]}` : ""}`, taskId: null };
   return { route: "unmatched", taskId: null };
@@ -132,6 +132,23 @@ export function markCommentSave(response, comment, task) {
   markTaskBinding(response, task, "after");
 }
 
+export function markAttachmentSave(response, attachment, task) {
+  const context = contexts.get(response);
+  if (!context) return;
+  context.effect = { entity: "attachment", operation: "saved", id: attachment.id,
+    taskId: attachment.taskId ?? task?.id ?? null, version: null, evidence: "local_database_save_returned" };
+  markTaskBinding(response, task, "after");
+}
+
+export function markDeletion(response, record, entity, task) {
+  const context = contexts.get(response);
+  if (!context) return;
+  context.effect = { entity, operation: "deleted", id: record.id,
+    taskId: entity === "task" ? record.id : record.taskId, beforeVersion: record.version ?? null,
+    version: null, evidence: "local_database_delete_returned" };
+  if (task) markTaskBinding(response, task, "after");
+}
+
 export function createRequestLog(dataDirectory) {
   const directory = path.join(dataDirectory, "logs");
   const file = path.join(directory, "api-requests.jsonl");
@@ -162,6 +179,8 @@ export function createRequestLog(dataDirectory) {
         clientRequestId: uuid(request.headers["x-taskboard-request-id"]),
         invocationId: uuid(request.headers["x-taskboard-invocation-id"]),
         clientContextThreadId: uuid(request.headers["x-taskboard-client-context-thread"]),
+        clientJournalStatus: ["ok", "failed", "disabled"].includes(request.headers["x-taskboard-client-journal-status"])
+          ? request.headers["x-taskboard-client-journal-status"] : "unknown",
         tool: REQUEST_TOOLS.has(request.headers["x-taskboard-tool"]) ? request.headers["x-taskboard-tool"] : null,
         model: UNKNOWN_MODEL,
         method: METHODS.has(request.method) ? request.method : "OTHER",

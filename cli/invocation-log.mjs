@@ -9,14 +9,19 @@ export function invocationLogFile(runtimeFile) {
 }
 
 export function createInvocationLog(file, context) {
-  return async (event) => {
+  const coverage = { writeFailures: 0, lastErrorCode: null };
+  const audit = async (event) => {
     try {
       await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       await appendFile(file, `${JSON.stringify({ ...context, ...event, time: new Date().toISOString() })}\n`, { mode: 0o600 });
-    } catch {
-      // Logging must not replay or prevent a business operation. Missing evidence stays unknown.
+    } catch (error) {
+      coverage.writeFailures += 1;
+      coverage.lastErrorCode = ["EACCES", "EPERM", "ENOSPC", "EDQUOT", "EROFS", "EISDIR", "ENOTDIR",
+        "ENOENT", "EMFILE", "ENFILE", "EIO"].includes(error.code) ? error.code : "UNKNOWN_IO_ERROR";
     }
   };
+  audit.coverage = coverage;
+  return audit;
 }
 
 export async function readInvocationLog(file, limit, sourceThreadId, since, until) {

@@ -68,6 +68,10 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
     }
     const saves = records.filter((r) => r.effect && r.event === "completed").map((saved) => {
       const effect = saved.effect;
+      if (effect.operation === "deleted" || effect.entity === "attachment") return {
+        ...effect, readback: effect.operation === "deleted" ? "not_checked_for_deletion" : "not_checked_for_attachment",
+        readbackEvidence: null, contentCorrectness: "not_checked_by_metadata_log",
+      };
       const reads = source.threadId ? terminals.slice(terminals.indexOf(saved) + 1).filter((r) => (
         r.source?.threadId === source.threadId && r.requestId !== saved.requestId
         && (effect.entity === "task" ? r.taskRead?.id === effect.id
@@ -102,8 +106,11 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
     const rejected = steps.some((r) => r.status >= 400 || r.clientHttpStatus >= 400);
     const onlyReads = records.filter((r) => r.method).every((r) => ["GET", "HEAD"].includes(r.method));
     const noVersionChange = saves.length && saves.every((s) => s.entity === "task" && !s.versionChanged);
+    const onlyDeletion = saves.length && saves.every((s) => s.operation === "deleted");
+    const onlyAttachments = saves.length && saves.every((s) => s.entity === "attachment");
     const outcome = saves.length ? (rejected || ended?.exitCode > 0 ? "partial_success"
-      : noVersionChange ? "save_returned_without_version_change" : "save_committed")
+      : onlyDeletion ? "deletion_committed" : onlyAttachments ? "attachment_saved"
+        : noVersionChange ? "save_returned_without_version_change" : "save_committed")
       : rejected ? "http_rejected"
         : steps.some((r) => r.delivery === "not_connected") ? "connection_not_established"
           : steps.some((r) => r.delivery === "unknown") ? "transport_outcome_unknown"
@@ -126,6 +133,9 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
       },
       bindingObservation: bindingComparisons.length ? "observed" : "not_observed",
       bindingComparisons, bindingChanges,
+      clientJournalReport: records.some((r) => r.clientJournalStatus === "failed") ? "write_failure_reported" : "no_failure_report_observed",
+      loggingNextAction: records.some((r) => r.clientJournalStatus === "failed")
+        ? "修复客户端日志写入问题；业务结果单独核实，不因日志失败重复写卡。" : null,
       model: UNKNOWN_MODEL,
       tool: records.find((r) => r.tool)?.tool ?? null,
       startedAt: records[0].time, lastObservedAt: records.at(-1).time,
@@ -136,7 +146,8 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
           : outcome === "server_record_not_observed" ? "客户端已有HTTP响应，当前服务日志未匹配；核日志窗口、来源和服务目标。"
         : rejected ? "按具体HTTP错误码处理；成功保存与失败步骤分别核实，不重放整个流程。"
           : steps.some((r) => r.delivery) ? "用客户端关联ID核查传输结果；unknown时不盲目重送写请求。"
-            : saves.some((s) => s.readback !== "version_confirmed") ? "独立读取保存的卡片或评论；未观察到读回不等于保存失败。"
+            : saves.some((s) => s.operation === "deleted" || s.entity === "attachment") ? "已有删除或附件的数据库回执；单独核不存在/附件可读，不重复操作。"
+              : saves.some((s) => s.readback !== "version_confirmed") ? "独立读取保存的卡片或评论；未观察到读回不等于保存失败。"
               : saves.length ? "保存和版本读回已有证据；仍需核对实际内容与任务验收。"
                 : outcome === "read_only" ? "仅观察到读取；若本轮应回写进展，还需核准确原会话的保存回执。"
                   : "证据不足；核原会话与工具回执，不能据缺日志断言未调用。",

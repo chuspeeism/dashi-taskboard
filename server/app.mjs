@@ -45,7 +45,7 @@ import { TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
-import { createRequestLog, markRequestLogResponse, markTaskSave, markCommentSave, observeTaskBinding } from "./request-log.mjs";
+import { createRequestLog, markRequestLogResponse, markTaskSave, markCommentSave, observeTaskBinding, markAttachmentSave, markDeletion, markTaskBinding } from "./request-log.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -2679,6 +2679,7 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "DELETE") {
           const { version } = parseVersionMutation(await readJson(request));
           const comment = database.deleteComment(id, version);
+          markDeletion(response, comment, "comment", database.getTask(comment.taskId));
           for (const attachment of comment.attachments) {
             try {
               await unlink(path.join(resolved.attachmentsDirectory, attachment.id));
@@ -2732,6 +2733,7 @@ export function createTaskboardServer(options = {}) {
             throw error;
           }
           const task = database.getTask(comment.taskId);
+          markAttachmentSave(response, attachment, task);
           events.emit("attachment.created", { attachment, comment: database.getComment(commentId), task });
           return sendJson(response, 201, { attachment });
         }
@@ -2776,6 +2778,7 @@ export function createTaskboardServer(options = {}) {
             await unlink(storagePath);
             throw error;
           }
+          markAttachmentSave(response, attachment, task);
           events.emit("attachment.created", { attachment, task });
           return sendJson(response, 201, { attachment });
         }
@@ -2801,6 +2804,7 @@ export function createTaskboardServer(options = {}) {
         }
         const attachment = database.getAttachment(id) ?? database.getProjectReadmeAttachment(id);
         if (!attachment) throw new ApiError(404, "ATTACHMENT_NOT_FOUND", `Attachment '${id}' does not exist`);
+        if (attachment.taskId) markTaskBinding(response, database.getTask(attachment.taskId), "read");
         const body = await readFile(path.join(resolved.attachmentsDirectory, attachment.id));
         const encodedFilename = encodeURIComponent(attachment.filename).replace(/['()*]/g, (character) => (
           `%${character.charCodeAt(0).toString(16).toUpperCase()}`
@@ -2845,6 +2849,7 @@ export function createTaskboardServer(options = {}) {
         }
         database.deleteAttachment(id);
         const task = database.getTask(attachment.taskId);
+        markDeletion(response, attachment, "attachment", task);
         events.emit("attachment.deleted", { attachment, task });
         return sendEmpty(response, 204);
       }
@@ -2962,6 +2967,7 @@ export function createTaskboardServer(options = {}) {
           }
           const { version } = parseVersionMutation(await readJson(request));
           const deleted = database.deleteArchivedTask(id, version);
+          markDeletion(response, deleted.task, "task");
           for (const attachmentId of deleted.attachmentIds) {
             try {
               await unlink(path.join(resolved.attachmentsDirectory, attachmentId));

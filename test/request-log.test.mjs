@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -336,6 +336,95 @@ test("card binding is independent of declared caller, with before/after changes,
     const raw = await readFile(path.join(directory, "logs", "api-requests.jsonl"), "utf8");
     assert.equal(raw.includes("PRIVATE_BINDING_WORKSPACE"), false);
     assert.equal(raw.includes("PRIVATE_UNSUPPORTED_THREAD_ID"), false);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("client journal failure is visible while business success and rejection keep their real results", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-journal-failure-"));
+  const runtimeFile = path.join(directory, "runtime.json");
+  const app = createTaskboardServer({ dataDirectory: directory, instanceToken: "", instanceSecret: "" });
+  try {
+    const address = await app.listen({ port: 0 });
+    const url = `http://127.0.0.1:${address.port}`;
+    await writeFile(runtimeFile, JSON.stringify({ version: 1, url }));
+    const response = await fetch(`${url}/api/tasks`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "local", title: "Journal failure fixture", threadId: A }) });
+    const task = (await response.json()).task;
+    await mkdir(path.join(directory, "logs", "taskctl-invocations.jsonl"), { recursive: true });
+    const saved = await command(runtimeFile, A, ["issue", "update", task.id, "--title", "Still saved", "--if-version", String(task.version)]);
+    assert.equal(saved.exitCode, 0);
+    assert.equal(saved.value.task.version, task.version + 1);
+    assert.equal(saved.value.loggingWarning.code, "CLIENT_JOURNAL_WRITE_FAILED");
+    assert.equal(saved.value.loggingWarning.errorCode, "EISDIR");
+    assert.ok(saved.value.loggingWarning.failedEvents > 0);
+    assert.equal(JSON.stringify(saved.value.loggingWarning).includes(directory), false);
+    const read = await command(runtimeFile, A, ["issue", "get", task.id]);
+    assert.equal(read.value.task.title, "Still saved");
+    const rejected = await command(runtimeFile, A, ["issue", "update", task.id, "--title", "Not saved", "--if-version", String(task.version)]);
+    assert.equal(rejected.exitCode, 5);
+    assert.equal(rejected.value.error.code, "VERSION_CONFLICT");
+    assert.equal(rejected.value.loggingWarning.code, "CLIENT_JOURNAL_WRITE_FAILED");
+    const diagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", A]);
+    assert.equal(diagnosis.exitCode, 0);
+    assert.equal(diagnosis.value.coverage.client.errorCode, "JOURNAL_UNREADABLE");
+    assert.ok(diagnosis.value.invocations.some((r) => r.outcome === "save_committed" && r.clientJournalReport === "write_failure_reported"));
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("key input, attachment and deletion paths leave metadata without claiming unperformed readbacks", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-key-call-paths-"));
+  const runtimeFile = path.join(directory, "runtime.json");
+  const app = createTaskboardServer({ dataDirectory: directory, instanceToken: "", instanceSecret: "" });
+  try {
+    const address = await app.listen({ port: 0 });
+    const url = `http://127.0.0.1:${address.port}`;
+    await writeFile(runtimeFile, JSON.stringify({ version: 1, url }));
+    const response = await fetch(`${url}/api/tasks`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "local", title: "Key calls fixture", threadId: A }) });
+    const task = (await response.json()).task;
+    const parseFailure = await command(runtimeFile, A, ["issue", "update", task.id, "--title"]);
+    assert.equal(parseFailure.exitCode, 2);
+    const unknown = await command(runtimeFile, A, ["PRIVATE_UNKNOWN_COMMAND", "get"]);
+    assert.equal(unknown.exitCode, 2);
+    const comment = await command(runtimeFile, A, ["comment", "add", task.id, "--body", "PRIVATE_KEY_COMMENT"]);
+    const file = path.join(directory, "PRIVATE_UPLOAD_FILENAME.txt");
+    await writeFile(file, "PRIVATE_ATTACHMENT_BODY");
+    const attachment = await command(runtimeFile, A, ["attachment", "upload", "--task", task.id, "--file", file]);
+    assert.equal(attachment.exitCode, 0);
+    assert.equal((await command(runtimeFile, A, ["attachment", "upload", "--comment", comment.value.comment.id, "--file", file])).exitCode, 0);
+    const downloaded = path.join(directory, "downloaded.txt");
+    assert.equal((await command(runtimeFile, A, ["attachment", "download", attachment.value.attachment.id, "--output", downloaded])).exitCode, 0);
+    assert.equal(await readFile(downloaded, "utf8"), "PRIVATE_ATTACHMENT_BODY");
+    assert.equal((await command(runtimeFile, A, ["comment", "delete", comment.value.comment.id, "--if-version", String(comment.value.comment.version)])).exitCode, 0);
+    const attachmentDeleted = await fetch(`${url}/api/attachments/${attachment.value.attachment.id}`, { method: "DELETE" });
+    assert.equal(attachmentDeleted.status, 204);
+    const current = await command(runtimeFile, A, ["issue", "get", task.id]);
+    const archived = await command(runtimeFile, A, ["issue", "archive", task.id, "--if-version", String(current.value.task.version)]);
+    assert.equal(archived.exitCode, 0);
+    const deleted = await fetch(`${url}/api/tasks/${task.id}`, { method: "DELETE", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: archived.value.task.version }) });
+    assert.equal(deleted.status, 204);
+    assert.equal((await fetch(`${url}/api/tasks/${task.id}`)).status, 404);
+    const diagnosis = await command(runtimeFile, A, ["log", "diagnose", "--limit", "1000"]);
+    assert.ok(diagnosis.value.invocations.some((r) => r.tool === "unrecognized_command" && r.outcome === "failed_before_http"));
+    assert.ok(diagnosis.value.invocations.some((r) => r.tool === "issue update" && r.outcome === "failed_before_http"));
+    assert.ok(diagnosis.value.invocations.some((r) => r.outcome === "attachment_saved" && r.saves[0].readback === "not_checked_for_attachment"));
+    for (const entity of ["comment", "task", "attachment"]) {
+      assert.ok(diagnosis.value.invocations.some((r) => r.outcome === "deletion_committed" && r.saves[0].entity === entity
+        && r.saves[0].readback === "not_checked_for_deletion"));
+    }
+    for (const name of ["api-requests.jsonl", "taskctl-invocations.jsonl"]) {
+      const raw = await readFile(path.join(directory, "logs", name), "utf8");
+      for (const secret of ["PRIVATE_UNKNOWN_COMMAND", "PRIVATE_UPLOAD_FILENAME", "PRIVATE_ATTACHMENT_BODY", "PRIVATE_KEY_COMMENT"]) {
+        assert.equal(raw.includes(secret), false, `${name} leaked ${secret}`);
+      }
+    }
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
