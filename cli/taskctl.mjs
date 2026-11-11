@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 
 import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
+import { projectIssueSummary } from "./issue-summary.mjs";
 import {
   DEFAULT_PROJECT_ID,
   TASK_STATUSES,
@@ -42,8 +43,8 @@ const COMMAND_OPTIONS = new Map([
   ["cloud logout", new Set(["json"])],
   ["log list", new Set(["limit", "source-thread", "task", "request-id", "json"])],
   ["log analyze", new Set(["limit", "source-thread", "task", "request-id", "json"])],
-  ["issue list", new Set(["project", "status", "archived", "json"])],
-  ["issue get", new Set(["json"])],
+  ["issue list", new Set(["project", "status", "archived", "view", "json"])],
+  ["issue get", new Set(["view", "json"])],
   [
     "issue create",
     new Set([
@@ -170,8 +171,8 @@ Run taskctl issue --help for all issue arguments.`],
   ["issue", `Usage: taskctl issue ACTION [arguments] [options]
 
 Actions:
-  list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--json]
-  get ISSUE_ID [--json]
+  list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--view full|summary] [--json]
+  get ISSUE_ID [--view full|summary] [--json]
   create --project PROJECT_ID --title TITLE
     [--description TEXT | --description-file FILE]
     [--status STATUS] [--priority PRIORITY] [--labels a,b]
@@ -430,7 +431,7 @@ async function execute(parsed, overrides) {
       return listIssues(api, parsed.options);
     case "issue get":
       expectOperandCount(parsed, 1);
-      return api.request("GET", taskPath(parsed.operands[0]));
+      return getIssue(api, parsed.operands[0], parsed.options);
     case "issue create":
       expectOperandCount(parsed, 0);
       return createIssue(api, parsed.options, overrides);
@@ -887,6 +888,7 @@ async function readSecretFromInput(input, output) {
 }
 
 async function listIssues(api, options) {
+  const view = issueView(options);
   if (options.status !== undefined) {
     assertStatus(options.status);
   }
@@ -898,7 +900,20 @@ async function listIssues(api, options) {
   if (options.status !== undefined) search.set("status", options.status);
   if (options.archived !== undefined) search.set("archived", options.archived);
   const query = search.size > 0 ? `?${search}` : "";
-  return api.request("GET", `/api/tasks${query}`);
+  const result = await api.request("GET", `/api/tasks${query}`);
+  return view === "summary" ? { ...result, tasks: result.tasks.map(projectIssueSummary) } : result;
+}
+
+function issueView(options) {
+  const view = options.view ?? "full";
+  if (view !== "full" && view !== "summary") throw usageError("--view must be full or summary");
+  return view;
+}
+
+async function getIssue(api, taskId, options) {
+  const view = issueView(options);
+  const result = await api.request("GET", taskPath(taskId));
+  return view === "summary" ? { ...result, task: projectIssueSummary(result.task) } : result;
 }
 
 async function createIssue(api, options, overrides) {

@@ -30,3 +30,16 @@ CLI自动把当前 `CODEX_THREAD_ID` 中的Codex UUID声明为来源，写命令
 这是追加日志，当前未实现自动清理/轮转；读取分析只处理匹配窗口，不宣称完整历史审计。保持数据目录的正常磁盘管理。
 
 直接验证：`node --test test/request-log.test.mjs`。它在独立临时目录启动真实HTTP服务，执行不同声明来源的CLI读取及成功/失败请求，核对关联、拒绝、持久化和敏感哨兵；不访问生产卡、不替换共享runtime。
+
+# Integration with the active summary CLI
+
+The combined candidate retains the active `issue get/list --view full|summary`
+implementation and its relation projection unchanged. Log commands are separate;
+they do not add fields to the three summary texts. Both full and summary reads
+send the same request correlation/source headers and use the existing GET APIs.
+
+The task's `deliverables/api-request-logs/integration/active-log-only.patch` is a
+three-file incremental patch against the recorded active source, not a whole-CLI
+replacement. Its SHA preconditions and direct verification receipt are in the
+adjacent `merge-proof.json`. A passing patch preflight does not activate the
+running service; the normal review and shared-runtime integration gates remain.

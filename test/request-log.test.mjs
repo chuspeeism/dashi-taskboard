@@ -49,10 +49,43 @@ test("real CLI sources, HTTP success/rejection, persistence, and no sensitive re
         "content-type": "application/json", "x-taskboard-client": "taskctl",
         "x-taskboard-source-thread": A, authorization: "Bearer PRIVATE_AUTH_SENTINEL",
       },
-      body: JSON.stringify({ projectId: "local", title: "Log fixture", description: "PRIVATE_BODY_SENTINEL", threadId: A }),
+      body: JSON.stringify({
+        projectId: "local", title: "Log fixture", threadId: A,
+        description: "**目标：** 保留摘要和关系\n**当前进展：** 日志已合并\n**下一步：** 读取结果\n\n## 技术详情与原始记录\nPRIVATE_BODY_SENTINEL",
+      }),
     });
     assert.equal(created.status, 201);
     const task = (await created.json()).task;
+
+    const parentResponse = await fetch(`${url}/api/tasks`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: "local", title: "Summary parent fixture", threadId: A }),
+    });
+    assert.equal(parentResponse.status, 201);
+    const parent = (await parentResponse.json()).task;
+    const relation = await fetch(`${url}/api/tasks/${task.id}/relations/parent/${parent.id}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: task.version, threadId: A }),
+    });
+    assert.equal(relation.status, 200);
+
+    const defaultFull = await command(runtimeFile, B, ["issue", "get", task.id]);
+    const full = await command(runtimeFile, B, ["issue", "get", task.id, "--view", "full"]);
+    assert.deepEqual(defaultFull.value, full.value);
+    const summaryGet = await command(runtimeFile, B, ["issue", "get", task.id, "--view", "summary"]);
+    const summaryList = await command(runtimeFile, B, ["issue", "list", "--view", "summary"]);
+    assert.equal(summaryGet.exitCode, 0);
+    assert.equal(summaryList.exitCode, 0);
+    const summary = summaryGet.value.task;
+    assert.deepEqual(summary, summaryList.value.tasks.find((value) => value.id === task.id));
+    assert.deepEqual(summary.summary, { goal: "保留摘要和关系", progress: "日志已合并", next: "读取结果" });
+    assert.equal(summary.summaryComplete, true);
+    assert.equal("description" in summary, false);
+    assert.equal(JSON.stringify(summary).includes("PRIVATE_BODY_SENTINEL"), false);
+    assert.equal(summary.relations.parent.id, parent.id);
+    for (const field of ["id", "version", "threadId", "threadBinding", "relations"]) {
+      assert.deepEqual(summary[field], full.value.task[field]);
+    }
 
     assert.equal((await command(runtimeFile, A, ["issue", "list"])).exitCode, 0);
     assert.equal((await command(runtimeFile, B, ["issue", "get", task.id])).exitCode, 0);
