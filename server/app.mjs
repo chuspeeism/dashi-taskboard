@@ -45,6 +45,7 @@ import { TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
+import { createRequestLog, markRequestLogResponse } from "./request-log.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -91,6 +92,7 @@ const CONTENT_TYPES = new Map([
 ]);
 
 function sendJson(response, status, value, headers = {}) {
+  markRequestLogResponse(response, value);
   const body = JSON.stringify(value);
   response.writeHead(status, {
     "cache-control": "no-store",
@@ -133,6 +135,7 @@ async function sendFetchResponse(response, upstream) {
       || name === "content-length"
       || name === "set-cookie"
       || name === "transfer-encoding"
+      || name === "x-taskboard-request-id"
     ) {
       continue;
     }
@@ -1379,6 +1382,7 @@ export function createTaskboardServer(options = {}) {
   );
   const routePrefix = resolved.instanceToken ? `/${resolved.instanceToken}` : "";
   const database = new TaskboardDatabase(resolved.databasePath);
+  const requestLog = createRequestLog(resolved.dataDirectory);
   const events = new EventHub();
   let clientStorageWrite = Promise.resolve();
 
@@ -1725,6 +1729,7 @@ export function createTaskboardServer(options = {}) {
   }
 
   const server = createServer(async (request, response) => {
+    requestLog.begin(request, response, routePrefix);
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     try {
@@ -1826,6 +1831,11 @@ export function createTaskboardServer(options = {}) {
           });
         }
         return sendJson(response, 200, { status: "ok" });
+      }
+
+      if (pathname === "/api/local/request-logs") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        return sendJson(response, 200, await requestLog.read(url.searchParams));
       }
 
       if (pathname === "/api/client-storage") {
@@ -3214,6 +3224,7 @@ export function createTaskboardServer(options = {}) {
       await aiChat.close();
       await projectSummary.close();
       await serverClosed;
+      await requestLog.flush();
       listening = false;
       database.close();
     },

@@ -688,16 +688,24 @@ test("manual linked-thread options and commands are no longer accepted", async (
 });
 
 test("API conflicts produce stable JSON on stderr and exit code 5", async () => {
+  let clientRequestId;
   const result = await run(
     ["issue", "archive", "TASK-1", "--if-version", "1"],
-    async () => response({ error: { code: "VERSION_CONFLICT", message: "Task changed" } }, 409),
+    async (_url, init) => {
+      clientRequestId = init.headers["x-taskboard-request-id"];
+      return response({ error: { code: "VERSION_CONFLICT", message: "Task changed" } }, 409);
+    },
   );
 
   assert.equal(result.exitCode, 5);
   assert.deepEqual(result.stderr, {
     schemaVersion: 2,
-    error: { code: "VERSION_CONFLICT", message: "Task changed" },
+    error: {
+      code: "VERSION_CONFLICT", message: "Task changed",
+      trace: { clientRequestId, requestId: null, delivery: "http_response" },
+    },
   });
+  assert.match(clientRequestId, /^[0-9a-f-]{36}$/);
 });
 
 test("usage errors are stable and never call the service", async () => {

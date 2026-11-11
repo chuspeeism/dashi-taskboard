@@ -6,6 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
 
 import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
@@ -38,6 +39,8 @@ const COMMAND_OPTIONS = new Map([
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
+  ["log list", new Set(["limit", "source-thread", "task", "request-id", "json"])],
+  ["log analyze", new Set(["limit", "source-thread", "task", "request-id", "json"])],
   ["issue list", new Set(["project", "status", "archived", "json"])],
   ["issue get", new Set(["json"])],
   [
@@ -121,6 +124,11 @@ const COMMAND_OPTIONS = new Map([
 ]);
 
 const HELP_TEXT = new Map([
+  ["log", `Usage: taskctl log list|analyze [options]
+
+Read this local service's persistent HTTP request metadata, or group it by self-reported source.
+Options: --source-thread UUID, --task ISSUE_ID, --request-id UUID, --limit N (1-1000), --json
+No matching record does not prove a request was never sent. HTTP success is not business acceptance.`],
   ["", `Usage: taskctl RESOURCE ACTION [options]
 
 Commands:
@@ -132,6 +140,7 @@ Commands:
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
   cloud login --url URL --actor-name NAME
   cloud status|logout
+  log list|analyze [--source-thread ID] [--task ID] [--request-id ID] [--limit N] [--json]
   issue list|get|create|update|move|archive|restore|tree|relation
   comment list ISSUE_ID [--after CURSOR]
   comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]
@@ -231,13 +240,17 @@ Example:
   taskctl comment list LOCAL-275 --after CURSOR --json`],
 ]);
 
+HELP_TEXT.set("log list", HELP_TEXT.get("log"));
+HELP_TEXT.set("log analyze", HELP_TEXT.get("log"));
+
 class TaskctlError extends Error {
-  constructor(message, { code = "TASKCTL_ERROR", exitCode = 2, details } = {}) {
+  constructor(message, { code = "TASKCTL_ERROR", exitCode = 2, details, trace } = {}) {
     super(message);
     this.name = "TaskctlError";
     this.code = code;
     this.exitCode = exitCode;
     this.details = details;
+    this.trace = trace;
   }
 }
 
@@ -330,6 +343,7 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
     if (normalized.details !== undefined) {
       payload.error.details = normalized.details;
     }
+    if (normalized.trace !== undefined) payload.error.trace = normalized.trace;
     writeJson(stderr, payload);
     return normalized.exitCode;
   }
@@ -340,7 +354,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, log list/analyze, issue list/get/create/update/move/archive/restore/tree/relation, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -353,8 +367,20 @@ async function execute(parsed, overrides) {
   const target = usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
       ? await resolveCompanionUrl(env, overrides)
       : await resolveTaskboardBaseUrl(env, overrides);
-  const api = createApiClient(overrides, target);
+  const api = createApiClient(overrides, target, parsed.options["thread-id"] ?? env.CODEX_THREAD_ID);
   switch (command) {
+    case "log list":
+    case "log analyze": {
+      expectOperandCount(parsed, 0);
+      const search = new URLSearchParams({ view: command === "log analyze" ? "analysis" : "list" });
+      for (const [option, parameter] of [
+        ["limit", "limit"], ["source-thread", "sourceThreadId"],
+        ["task", "taskId"], ["request-id", "requestId"],
+      ]) {
+        if (parsed.options[option] !== undefined) search.set(parameter, parsed.options[option]);
+      }
+      return api.request("GET", `/api/local/request-logs?${search}`);
+    }
     case "project list":
       expectOperandCount(parsed, 0);
       return api.request("GET", "/api/projects");
@@ -509,7 +535,7 @@ async function execute(parsed, overrides) {
 function createApiClient(overrides, {
   url: explicitBaseUrl,
   windowsTransport = false,
-} = {}) {
+} = {}, sourceThreadId) {
   const fetchImplementation = overrides.fetch
     ?? (windowsTransport
       ? (url, init) => fetchThroughWindows(url, init, overrides)
@@ -525,6 +551,10 @@ function createApiClient(overrides, {
 
   async function sendRequest(pathname, createInit) {
     let response;
+    const clientRequestId = randomUUID();
+    const threadId = typeof sourceThreadId === "string"
+      && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sourceThreadId)
+      ? sourceThreadId.toLowerCase() : null;
     try {
       const url = resolveApiUrl(baseUrl, pathname);
       const init = createInit();
@@ -533,14 +563,22 @@ function createApiClient(overrides, {
         headers: {
           accept: "application/json",
           "x-taskboard-client": "taskctl",
+          "x-taskboard-request-id": clientRequestId,
+          ...(threadId ? { "x-taskboard-source-thread": threadId } : {}),
           ...init.headers,
         },
       });
     } catch (error) {
-      throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+      const transportCode = error?.cause?.code;
+      const notConnected = ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"].includes(transportCode);
+      throw new TaskctlError("Cannot reach the configured Taskboard service", {
         code: "SERVICE_UNAVAILABLE",
         exitCode: 3,
-        details: error instanceof Error ? error.message : String(error),
+        trace: {
+          clientRequestId, requestId: null,
+          delivery: notConnected ? "not_connected" : "unknown",
+          transportCode: notConnected ? transportCode : null,
+        },
       });
     }
 
@@ -551,6 +589,11 @@ function createApiClient(overrides, {
         code: apiError.code,
         exitCode: response.status === 409 ? 5 : 4,
         details: apiError.details,
+        trace: {
+          clientRequestId,
+          requestId: response.headers.get("x-taskboard-request-id"),
+          delivery: "http_response",
+        },
       });
     }
     return response;
