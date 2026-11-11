@@ -22,6 +22,38 @@ function uuid(value) {
   return typeof value === "string" && UUID.test(value) ? value.toLowerCase() : null;
 }
 
+export function markTaskBinding(response, task, phase) {
+  const context = contexts.get(response);
+  if (!context || !task) return;
+  const full = task.threadBinding?.threadId;
+  const legacy = task.threadId;
+  const raw = full ?? legacy;
+  const conflicting = full && legacy && full.toLowerCase() !== legacy.toLowerCase();
+  const snapshot = {
+    taskId: task.id, identifier: task.identifier, taskVersion: task.version, phase,
+    boundThreadId: uuid(raw),
+    bindingState: conflicting ? "conflicting_saved_ids" : raw == null ? "missing"
+      : uuid(raw) ? "present" : "unsupported_identifier_format",
+    bindingSource: full ? "taskboard_database_full_binding" : legacy ? "taskboard_database_legacy_thread" : "taskboard_database",
+    observedAt: new Date().toISOString(),
+  };
+  context.taskBindings ??= [];
+  context.taskBindings.push(snapshot);
+}
+
+// After existing auth/proxy routing: read the local card, never infer its binding from the caller.
+export function observeTaskBinding(response, getTask) {
+  const context = contexts.get(response);
+  if (!context?.taskId) return;
+  try {
+    const task = getTask(context.taskId);
+    context.bindingLookup = task ? "observed" : "task_not_found";
+    markTaskBinding(response, task, "before");
+  } catch {
+    context.bindingLookup = "unavailable";
+  }
+}
+
 // Only known route literals and validated task identifiers survive. Never store raw URLs.
 function routeInfo(requestUrl, prefix) {
   let pathname;
@@ -65,6 +97,11 @@ export function markRequestLogResponse(response, value) {
   if (typeof code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(code)) context.errorCode = code;
   const taskId = value?.task?.id ?? value?.comment?.taskId;
   if (!context.taskId && typeof taskId === "string" && TASK_ID.test(taskId)) context.taskId = taskId;
+  if (value?.task) markTaskBinding(response, value.task, context.method === "GET" ? "read" : "after");
+  if (value?.relatedTask) markTaskBinding(response, value.relatedTask, "after");
+  if (context.method === "GET" && context.route === "/api/tasks" && Array.isArray(value?.tasks)) {
+    for (const task of value.tasks) markTaskBinding(response, task, "read");
+  }
   if (context.method === "GET" && context.route === "/api/tasks/:taskId" && value?.task) {
     context.taskRead = { id: value.task.id, version: value.task.version };
   }
@@ -85,13 +122,14 @@ export function markTaskSave(response, task, beforeVersion = null, requestedFiel
   };
 }
 
-export function markCommentSave(response, comment) {
+export function markCommentSave(response, comment, task) {
   const context = contexts.get(response);
   if (!context) return;
   context.effect = {
     entity: "comment", id: comment.id, taskId: comment.taskId, version: comment.version,
     evidence: "local_database_save_returned",
   };
+  markTaskBinding(response, task, "after");
 }
 
 export function createRequestLog(dataDirectory) {
@@ -123,12 +161,14 @@ export function createRequestLog(dataDirectory) {
         requestId: randomUUID(),
         clientRequestId: uuid(request.headers["x-taskboard-request-id"]),
         invocationId: uuid(request.headers["x-taskboard-invocation-id"]),
+        clientContextThreadId: uuid(request.headers["x-taskboard-client-context-thread"]),
         tool: REQUEST_TOOLS.has(request.headers["x-taskboard-tool"]) ? request.headers["x-taskboard-tool"] : null,
         model: UNKNOWN_MODEL,
         method: METHODS.has(request.method) ? request.method : "OTHER",
         ...routeInfo(request.url, prefix),
         source: {
           attribution: "self_reported",
+          declarationSource: "x-taskboard-source-thread",
           client: request.headers["x-taskboard-client"] === "taskctl" ? "taskctl" : "other",
           threadId: uuid(request.headers["x-taskboard-source-thread"]),
         },
@@ -187,8 +227,10 @@ export function createRequestLog(dataDirectory) {
           try { record = JSON.parse(line); } catch { unreadableRecords += 1; continue; }
           if (since && Date.parse(record.time) < Date.parse(since)) continue;
           if (until && Date.parse(record.time) > Date.parse(until)) continue;
-          if (sourceThreadId && record.source?.threadId !== uuid(sourceThreadId)) continue;
-          if (taskId && record.taskId !== taskId && record.effect?.taskId !== taskId && record.taskRead?.id !== taskId) continue;
+          if (sourceThreadId && record.source?.threadId !== uuid(sourceThreadId)
+            && record.clientContextThreadId !== uuid(sourceThreadId)) continue;
+          if (taskId && record.taskId !== taskId && record.effect?.taskId !== taskId && record.taskRead?.id !== taskId
+            && !record.taskBindings?.some((b) => b.taskId === taskId || b.identifier === taskId)) continue;
           if (requestId && record.requestId !== uuid(requestId) && record.clientRequestId !== uuid(requestId)) continue;
           records.push(record);
           if (records.length > limit) { records.shift(); truncated = true; }

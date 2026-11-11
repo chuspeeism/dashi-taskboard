@@ -8,6 +8,24 @@ export const REQUEST_TOOLS = new Set([
 ]);
 export const UNKNOWN_MODEL = { id: null, provenance: "unavailable_at_tool_boundary" };
 
+function compareBinding(snapshot, source, clientContextThreadId) {
+  const declaredCallerThreadId = source?.threadId ?? null;
+  const missing = [];
+  if (snapshot.bindingState === "missing") missing.push("task_bound_thread");
+  if (!declaredCallerThreadId) missing.push("declared_caller_thread");
+  const status = !["present", "missing"].includes(snapshot.bindingState) ? "unknown"
+    : missing.length ? "missing" : snapshot.boundThreadId === declaredCallerThreadId ? "same" : "different";
+  return {
+    ...snapshot, declaredCallerThreadId,
+    clientContextThreadId: clientContextThreadId ?? null,
+    contextComparison: snapshot.bindingState !== "present" || !clientContextThreadId ? "unknown_or_missing"
+      : snapshot.boundThreadId === clientContextThreadId ? "same" : "different",
+    callerDeclarationSource: source?.declarationSource ?? "unavailable",
+    status, missing,
+    verifiedCallerThreadId: null, verifiedComparison: "unknown_no_authenticated_caller_identity",
+  };
+}
+
 // This diagnoses observed evidence, never an unobserved model turn or its intent.
 export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {}, filters = {}) {
   const groups = new Map();
@@ -23,9 +41,11 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
   for (const group of groups.values()) {
     const records = group.records.sort((a, b) => a.time.localeCompare(b.time));
     const source = records.find((r) => r.source)?.source ?? { threadId: null, attribution: "unknown" };
-    if (filters.sourceThreadId && source.threadId !== filters.sourceThreadId) continue;
+    if (filters.sourceThreadId && !records.some((r) => r.source?.threadId === filters.sourceThreadId
+      || r.clientContextThreadId === filters.sourceThreadId)) continue;
     if (filters.taskId && !records.some((r) => (
       r.taskId === filters.taskId || r.effect?.taskId === filters.taskId || r.taskRead?.id === filters.taskId
+      || r.taskBindings?.some((b) => b.taskId === filters.taskId || b.identifier === filters.taskId)
     ))) continue;
     const requests = new Map();
     for (const record of records) {
@@ -66,6 +86,18 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
       };
     });
     const ended = records.findLast((r) => r.event === "cli_finished");
+    const bindingComparisons = records.filter((r) => r.event === "completed" || r.event === "aborted")
+      .flatMap((r) => (r.taskBindings ?? []).filter((b) => !filters.taskId
+        || b.taskId === filters.taskId || b.identifier === filters.taskId)
+        .map((snapshot) => compareBinding(snapshot, r.source, r.clientContextThreadId)));
+    const bindingChanges = [];
+    for (const taskId of new Set(bindingComparisons.map((b) => b.taskId))) {
+      const before = bindingComparisons.findLast((b) => b.taskId === taskId && b.phase === "before");
+      const after = bindingComparisons.findLast((b) => b.taskId === taskId && b.phase === "after");
+      if (before && after) bindingChanges.push({ taskId, before: before.boundThreadId, after: after.boundThreadId,
+        changed: [before, after].every((b) => ["present", "missing"].includes(b.bindingState))
+          ? before.boundThreadId !== after.boundThreadId : null });
+    }
     const steps = [...requests.values()];
     const rejected = steps.some((r) => r.status >= 400 || r.clientHttpStatus >= 400);
     const onlyReads = records.filter((r) => r.method).every((r) => ["GET", "HEAD"].includes(r.method));
@@ -85,6 +117,15 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
       invocationId: group.invocationId, source,
       sourceStatus: source.threadId ? "declared_not_authenticated" : "missing",
       attributionWarning: source.threadId ? null : "来源缺失，不能从卡片绑定反推请求会话。",
+      callerIdentity: {
+        clientContextThreadId: records.find((r) => r.clientContextThreadId)?.clientContextThreadId ?? null,
+        explicitCallerThreadId: records.find((r) => r.explicitCallerThreadId)?.explicitCallerThreadId ?? null,
+        clientDeclaredThreadId: records.find((r) => r.event === "cli_started")?.source?.threadId ?? null,
+        httpDeclaredThreadIds: [...new Set(records.filter((r) => r.event === "received").map((r) => r.source?.threadId ?? null))],
+        verifiedThreadId: null, verification: "no_authenticated_per_conversation_identity",
+      },
+      bindingObservation: bindingComparisons.length ? "observed" : "not_observed",
+      bindingComparisons, bindingChanges,
       model: UNKNOWN_MODEL,
       tool: records.find((r) => r.tool)?.tool ?? null,
       startedAt: records[0].time, lastObservedAt: records.at(-1).time,
@@ -106,6 +147,7 @@ export function diagnoseRequests(serverRecords, clientRecords = [], coverage = {
     invocations, coverage,
     limits: {
       sourceIdentity: "self_reported_not_authenticated", model: "unknown_without_trusted_runtime_metadata",
+      bindingComparison: "identifier_comparison_only_not_authorization_or_authenticated_identity",
       executionCompletion: "not_observed_by_taskctl_or_http_log",
       absence: "not_observed_is_not_proof_of_not_called",
       acceptance: "http_success_or_version_readback_is_not_content_correctness_or_user_acceptance",

@@ -45,7 +45,7 @@ import { TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
-import { createRequestLog, markRequestLogResponse, markTaskSave, markCommentSave } from "./request-log.mjs";
+import { createRequestLog, markRequestLogResponse, markTaskSave, markCommentSave, observeTaskBinding } from "./request-log.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -2289,6 +2289,8 @@ export function createTaskboardServer(options = {}) {
         }
       }
 
+      observeTaskBinding(response, (id) => database.getTask(id));
+
       if (pathname === "/api/projects") {
         if (request.method === "GET") {
           if ([...url.searchParams.keys()].length > 0) {
@@ -2637,8 +2639,8 @@ export function createTaskboardServer(options = {}) {
             ...resolveInputThreadBinding(parseCommentCreate(await readJson(request))),
             actor: actorFromRequest(request),
           });
-          markCommentSave(response, comment);
           const task = database.getTask(taskId);
+          markCommentSave(response, comment, task);
           events.emit("comment.created", { comment, task });
           return sendJson(response, 201, { comment });
         }
@@ -2669,8 +2671,8 @@ export function createTaskboardServer(options = {}) {
             patch.threadBinding,
             patch.agentSession,
           );
-          markCommentSave(response, comment);
           const task = database.getTask(comment.taskId);
+          markCommentSave(response, comment, task);
           events.emit("comment.updated", { comment, task });
           return sendJson(response, 200, { comment });
         }

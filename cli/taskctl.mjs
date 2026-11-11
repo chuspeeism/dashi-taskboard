@@ -342,11 +342,19 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
       const env = overrides.env ?? process.env;
       const rawSource = parsed.options["agent-platform"] ? null : parsed.options["thread-id"] ?? env.CODEX_THREAD_ID;
       const threadId = typeof rawSource === "string" && REQUEST_UUID.test(rawSource) ? rawSource.toLowerCase() : null;
+      const clientContextThreadId = typeof env.CODEX_THREAD_ID === "string" && REQUEST_UUID.test(env.CODEX_THREAD_ID)
+        ? env.CODEX_THREAD_ID.toLowerCase() : null;
+      const explicitCallerThreadId = typeof parsed.options["thread-id"] === "string" && REQUEST_UUID.test(parsed.options["thread-id"])
+        ? parsed.options["thread-id"].toLowerCase() : null;
       const firstOperand = parsed.operands[0];
       const taskId = typeof firstOperand === "string" && /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(firstOperand)
         && (parsed.resource === "issue" || tool === "comment list" || tool === "comment add") ? firstOperand : null;
       const file = invocationLogFile(parsed.options["runtime-file"] ?? env.CODEX_TASKBOARD_RUNTIME_FILE ?? sourceRuntimeFile);
-      const context = { invocationId: randomUUID(), tool, taskId, source: { client: "taskctl", threadId, attribution: "self_reported" }, model: UNKNOWN_MODEL };
+      const context = { invocationId: randomUUID(), tool, taskId, clientContextThreadId, explicitCallerThreadId, source: {
+        client: "taskctl", threadId, attribution: "self_reported",
+        declarationSource: parsed.options["agent-platform"] ? "unavailable_for_external_agent"
+          : parsed.options["thread-id"] ? "cli_explicit_thread_id" : "environment_CODEX_THREAD_ID",
+      }, model: UNKNOWN_MODEL };
       const audit = tool.startsWith("log ") ? async () => {} : createInvocationLog(file, context);
       invocation = { ...context, file, audit };
       await audit({ event: "cli_started" });
@@ -411,7 +419,7 @@ async function execute(parsed, overrides) {
         ? await resolveCompanionUrl(env, overrides) : await resolveTaskboardBaseUrl(env, overrides);
       const api = createApiClient(overrides, target, overrides.invocation.source.threadId);
       const query = new URLSearchParams({ limit: String(limit) });
-      if (sourceThreadId) query.set("sourceThreadId", sourceThreadId);
+      // Join the client invocation with server records even when explicit caller and context differ.
       if (since) query.set("since", since);
       if (until) query.set("until", until);
       server = await api.request("GET", `/api/local/request-logs?${query}`);
@@ -627,6 +635,7 @@ function createApiClient(overrides, {
           "x-taskboard-client": "taskctl",
           "x-taskboard-request-id": clientRequestId,
           ...(invocation ? { "x-taskboard-invocation-id": invocation.invocationId, "x-taskboard-tool": invocation.tool } : {}),
+          ...(invocation?.clientContextThreadId ? { "x-taskboard-client-context-thread": invocation.clientContextThreadId } : {}),
           ...(threadId ? { "x-taskboard-source-thread": threadId } : {}),
           ...init.headers,
         },

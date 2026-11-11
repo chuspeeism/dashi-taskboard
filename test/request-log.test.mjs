@@ -266,3 +266,78 @@ test("diagnosis locates CLI failures, saves and independent readbacks without in
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("card binding is independent of declared caller, with before/after changes, missing data and no authenticated identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-binding-log-"));
+  const runtimeFile = path.join(directory, "runtime.json");
+  const app = createTaskboardServer({ dataDirectory: directory, instanceToken: "", instanceSecret: "" });
+  try {
+    const address = await app.listen({ port: 0 });
+    const url = `http://127.0.0.1:${address.port}`;
+    await writeFile(runtimeFile, JSON.stringify({ version: 1, url }));
+    async function create(input) {
+      const response = await fetch(`${url}/api/tasks`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId: "local", title: "Binding fixture", ...input }),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).task;
+    }
+    const bound = await create({ threadId: A, threadBinding: {
+      threadId: A, codexProjectId: "local", codexProjectKind: "local", codexHostId: "local",
+      workspacePath: "/PRIVATE_BINDING_WORKSPACE",
+    } });
+    const unbound = await create({ threadBinding: null });
+    const unsupported = await create({ threadId: "PRIVATE_UNSUPPORTED_THREAD_ID" });
+    await command(runtimeFile, A, ["issue", "get", bound.id]);
+    await command(runtimeFile, B, ["issue", "get", bound.id]);
+    await command(runtimeFile, B, ["issue", "list", "--project", "local"]);
+    await command(runtimeFile, A, ["issue", "get", unbound.id]);
+    await command(runtimeFile, A, ["issue", "get", unsupported.id]);
+    await fetch(`${url}/api/tasks/${bound.id}`); // No declared caller; card binding must not fill it.
+    const denied = await fetch(`${url}/api/tasks/${bound.id}`, {
+      headers: { origin: "https://untrusted.example", "x-taskboard-source-thread": A },
+    });
+    assert.equal(denied.status, 403);
+    let diagnosis = await command(runtimeFile, A, ["log", "diagnose", "--limit", "1000"]);
+    const comparisons = diagnosis.value.invocations.flatMap((r) => r.bindingComparisons);
+    assert.ok(comparisons.some((b) => b.taskId === bound.id && b.status === "same" && b.boundThreadId === A && b.declaredCallerThreadId === A));
+    assert.ok(comparisons.some((b) => b.taskId === bound.id && b.status === "different" && b.declaredCallerThreadId === B));
+    assert.ok(comparisons.some((b) => b.taskId === bound.id && b.status === "missing" && b.missing.includes("declared_caller_thread") && b.boundThreadId === A));
+    assert.ok(comparisons.some((b) => b.taskId === unbound.id && b.status === "missing" && b.missing.includes("task_bound_thread")));
+    assert.ok(comparisons.some((b) => b.taskId === unsupported.id && b.status === "unknown" && b.bindingState === "unsupported_identifier_format"));
+    assert.ok(comparisons.some((b) => b.bindingSource === "taskboard_database_full_binding"));
+    assert.ok(diagnosis.value.invocations.every((r) => r.callerIdentity.verifiedThreadId === null));
+    assert.ok(comparisons.every((b) => b.verifiedCallerThreadId === null));
+    assert.ok(diagnosis.value.invocations.some((r) => r.outcome === "http_rejected" && r.bindingObservation === "not_observed"));
+    const focused = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", B, "--task", bound.id]);
+    assert.ok(focused.value.invocations.some((r) => r.tool === "issue list"));
+    assert.ok(focused.value.invocations.flatMap((r) => r.bindingComparisons).every((b) => b.taskId === bound.id));
+    const explicit = await command(runtimeFile, B, ["issue", "update", bound.id, "--title", "Explicit caller fixture",
+      "--thread-id", A, "--if-version", String(bound.version)]);
+    assert.equal(explicit.exitCode, 0);
+    const explicitDiagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", B, "--task", bound.id]);
+    const explicitCall = explicitDiagnosis.value.invocations.find((r) => r.callerIdentity.explicitCallerThreadId === A);
+    assert.equal(explicitCall.callerIdentity.clientContextThreadId, B);
+    assert.equal(explicitCall.callerIdentity.clientDeclaredThreadId, A);
+    assert.deepEqual(explicitCall.callerIdentity.httpDeclaredThreadIds, [A]);
+    assert.equal(explicitCall.callerIdentity.verifiedThreadId, null);
+    assert.ok(explicitCall.bindingComparisons.every((b) => b.status === "same" && b.contextComparison === "different"));
+    // Existing ordinary CLI behavior can change the binding. Logging must not hide the original difference.
+    const updated = await command(runtimeFile, B, ["issue", "update", bound.id, "--title", "Binding changed fixture", "--if-version", String(explicit.value.task.version)]);
+    assert.equal(updated.exitCode, 0);
+    diagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", B, "--task", bound.id]);
+    const mutation = diagnosis.value.invocations.find((r) => r.tool === "issue update" && r.callerIdentity.clientDeclaredThreadId === B);
+    assert.equal(mutation.bindingComparisons.find((b) => b.phase === "before").status, "different");
+    assert.equal(mutation.bindingComparisons.find((b) => b.phase === "after").status, "same");
+    assert.deepEqual(mutation.bindingChanges, [{ taskId: bound.id, before: A, after: B, changed: true }]);
+    const historical = diagnoseRequests([{ requestId: A, event: "completed", method: "GET", result: "success", time: "2026-01-01T00:00:00Z", source: { threadId: A } }]);
+    assert.equal(historical.invocations[0].bindingObservation, "not_observed");
+    const raw = await readFile(path.join(directory, "logs", "api-requests.jsonl"), "utf8");
+    assert.equal(raw.includes("PRIVATE_BINDING_WORKSPACE"), false);
+    assert.equal(raw.includes("PRIVATE_UNSUPPORTED_THREAD_ID"), false);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

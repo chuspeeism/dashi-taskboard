@@ -27,7 +27,7 @@ export async function readInvocationLog(file, limit, sourceThreadId, since, unti
     for await (const line of lines) {
       let record;
       try { record = JSON.parse(line); } catch { coverage.unreadableRecords += 1; continue; }
-      if (sourceThreadId && record.source?.threadId !== sourceThreadId) continue;
+      if (sourceThreadId && record.source?.threadId !== sourceThreadId && record.clientContextThreadId !== sourceThreadId) continue;
       if (since && Date.parse(record.time) < Date.parse(since)) continue;
       if (until && Date.parse(record.time) > Date.parse(until)) continue;
       records.push(record);

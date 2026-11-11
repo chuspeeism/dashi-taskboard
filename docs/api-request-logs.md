@@ -40,6 +40,8 @@ HTTP日志在服务数据目录的`logs/api-requests.jsonl`。只读接口为`GE
 
 ## 来源、模型和覆盖边界
 
+- `bindingComparisons`按目标卡记录数据库绑定threadId、任务版本、快照阶段（before/read/after）及来源，并与本HTTP请求的声明来源标示`same`、`different`、`missing`；不支持的旧ID格式或冲突标`unknown`，没有观察到绑定的旧日志标`not_observed`，不推断成卡片未绑定。列表逐卡记录，写请求保留修改前后，`bindingChanges`指出改绑，不能用修改后的“一致”遮掉原不同。快照不是事务锁；以记录中的时间/版本为准。只记绑定会话ID，不记录工作目录等完整绑定内容。
+- `callerIdentity`分别保留环境声明的`clientContextThreadId`、CLI显式`explicitCallerThreadId`及HTTP声明ID。即使命令显式caller与环境不同，也不覆盖环境上下文；`status`比较卡片绑定与HTTP声明，`contextComparison`比较卡片绑定与环境声明。`--source-thread`可按两种声明查找。它们都是自报，`verifiedThreadId`保持null：当前接口没有逐会话认证，服务访问token不证明发起会话身份。对照是ID差异，不自动判授权或阻断调用；协调者读取其它owner卡时不同可以是正常情况。
 - 来源是有效`CODEX_THREAD_ID`或写命令显式调用者的自报值，不是认证身份。外部agent归属选项不会冒用环境里的Codex来源；浏览器/其他客户端未声明来源时保持未知，不从卡片owner反推请求者。
 - 当前逐请求入口没有可信的实际模型后端信息，`model.id=null`、`provenance=unavailable_at_tool_boundary`。不把用户请求的模型、环境中的随意字符串或会话默认设置冒充这次真正运行的模型。
 - CLI结束不是任务会话结束。本功能未接入可信的会话完成事件，也没有自动监听；协调者需用真实会话回执给定时间窗口，再核调用。没有日志可能是未接入、另一设备/服务、来源丢失、窗口截断、记录失败或确实没调用，不能只凭空白定论。
