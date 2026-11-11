@@ -19,6 +19,7 @@ import {
 
 export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
+const REQUEST_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 const execFileAsync = promisify(execFile);
 
@@ -553,7 +554,7 @@ function createApiClient(overrides, {
     let response;
     const clientRequestId = randomUUID();
     const threadId = typeof sourceThreadId === "string"
-      && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sourceThreadId)
+      && REQUEST_UUID.test(sourceThreadId)
       ? sourceThreadId.toLowerCase() : null;
     try {
       const url = resolveApiUrl(baseUrl, pathname);
@@ -585,13 +586,14 @@ function createApiClient(overrides, {
     if (!response.ok) {
       const payload = await readResponse(response);
       const apiError = extractApiError(payload, response.status);
+      const serverRequestId = response.headers.get("x-taskboard-request-id");
       throw new TaskctlError(apiError.message, {
         code: apiError.code,
         exitCode: response.status === 409 ? 5 : 4,
         details: apiError.details,
         trace: {
           clientRequestId,
-          requestId: response.headers.get("x-taskboard-request-id"),
+          requestId: REQUEST_UUID.test(serverRequestId ?? "") ? serverRequestId : null,
           delivery: "http_response",
         },
       });
