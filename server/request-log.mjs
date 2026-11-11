@@ -5,10 +5,9 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 
 import { ApiError } from "../shared/api-fields.mjs";
-import { REQUEST_TOOLS, UNKNOWN_MODEL, diagnoseRequests } from "../shared/request-diagnostics.mjs";
+import { REQUEST_TOOLS, REQUEST_TASK_ID as TASK_ID, UNKNOWN_MODEL, diagnoseRequests } from "../shared/request-diagnostics.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const TASK_ID = /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12}|jira:(?:(?:[0-9a-f]{16}|[0-9a-f]{64}):)?[0-9]{1,20})$/i;
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const contexts = new WeakMap();
 const STATIC_ROUTES = new Set([

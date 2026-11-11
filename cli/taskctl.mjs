@@ -12,7 +12,7 @@ import { parseAgentSession } from "../shared/task-input.mjs";
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
 import { projectIssueSummary } from "./issue-summary.mjs";
 import { createInvocationLog, invocationLogFile, readInvocationLog } from "./invocation-log.mjs";
-import { diagnoseRequests, REQUEST_TOOLS, UNKNOWN_MODEL } from "../shared/request-diagnostics.mjs";
+import { diagnoseRequests, REQUEST_TOOLS, REQUEST_TASK_ID, UNKNOWN_MODEL } from "../shared/request-diagnostics.mjs";
 import {
   DEFAULT_PROJECT_ID,
   TASK_STATUSES,
@@ -332,7 +332,7 @@ function createCommandInvocation(parsed, overrides) {
   const explicitCallerThreadId = typeof parsed.options["thread-id"] === "string" && REQUEST_UUID.test(parsed.options["thread-id"])
     ? parsed.options["thread-id"].toLowerCase() : null;
   const firstOperand = parsed.operands[0];
-  const taskId = typeof firstOperand === "string" && /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12})$/i.test(firstOperand)
+  const taskId = typeof firstOperand === "string" && REQUEST_TASK_ID.test(firstOperand)
     && (parsed.resource === "issue" || tool === "comment list" || tool === "comment add") ? firstOperand : null;
   const file = invocationLogFile(parsed.options["runtime-file"] ?? env.CODEX_TASKBOARD_RUNTIME_FILE ?? sourceRuntimeFile);
   const context = { invocationId: randomUUID(), tool, taskId, clientContextThreadId, explicitCallerThreadId, source: {
@@ -427,12 +427,12 @@ async function execute(parsed, overrides) {
     const until = parsed.options.until;
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000
       || (sourceThreadId !== undefined && !REQUEST_UUID.test(sourceThreadId))
-      || (taskId !== undefined && !/^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12}|jira:(?:(?:[0-9a-f]{16}|[0-9a-f]{64}):)?[0-9]{1,20})$/i.test(taskId))
+      || (taskId !== undefined && !REQUEST_TASK_ID.test(taskId))
       || [since, until].some((v) => v !== undefined && (!/^\d{4}-\d\d-\d\dT/.test(v) || !Number.isFinite(Date.parse(v))))
       || (since && until && Date.parse(since) > Date.parse(until))) {
       throw usageError("Invalid diagnostic filter");
     }
-    const local = await readInvocationLog(overrides.invocation.file, limit, sourceThreadId, since, until);
+    const local = await readInvocationLog(overrides.invocation.file, limit, sourceThreadId, since, until, taskId);
     let server = { records: [], coverage: { available: false } };
     try {
       const target = env.CODEX_TASKBOARD_COMPANION_URL !== undefined

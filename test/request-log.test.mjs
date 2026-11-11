@@ -69,6 +69,21 @@ test("diagnostic filters precede the server record limit and accept existing Jir
       assert.equal(diagnosis.exitCode, 0);
       assert.ok(diagnosis.value.invocations.some((v) => v.outcome === "http_rejected"));
     }
+    const missingFile = path.join(directory, "PRIVATE_MISSING_DESCRIPTION");
+    for (const taskId of [wanted.identifier, `JIRA:${"a".repeat(64)}:10001`]) {
+      const failed = await command(runtimeFile, A, ["issue", "update", taskId,
+        "--if-version", "1", "--description-file", missingFile]);
+      assert.equal(failed.value.error.code, "FILE_READ_FAILED");
+      for (let i = 0; i < 3; i += 1) await command(runtimeFile, A, ["issue", "update", other.identifier,
+        "--if-version", "1", "--description-file", missingFile]);
+      const diagnosis = await command(runtimeFile, A, ["log", "diagnose", "--source-thread", A,
+        "--task", taskId, "--limit", "4"]);
+      assert.equal(diagnosis.exitCode, 0);
+      assert.equal(diagnosis.value.observation, "observed");
+      assert.equal(diagnosis.value.coverage.client.truncated, false);
+      assert.ok(diagnosis.value.invocations.some((v) => v.outcome === "failed_before_http"
+        && v.cliErrorCode === "FILE_READ_FAILED"));
+    }
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

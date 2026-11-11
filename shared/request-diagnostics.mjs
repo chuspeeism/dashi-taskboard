@@ -7,6 +7,7 @@ export const REQUEST_TOOLS = new Set([
   "log list", "log analyze", "log diagnose",
 ]);
 export const UNKNOWN_MODEL = { id: null, provenance: "unavailable_at_tool_boundary" };
+export const REQUEST_TASK_ID = /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[a-z0-9]{1,16}-[0-9]{1,12}|jira:(?:(?:[0-9a-f]{16}|[0-9a-f]{64}):)?[0-9]{1,20})$/i;
 
 function compareBinding(snapshot, source, clientContextThreadId) {
   const declaredCallerThreadId = source?.threadId ?? null;

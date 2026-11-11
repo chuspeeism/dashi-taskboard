@@ -24,7 +24,7 @@ export function createInvocationLog(file, context) {
   return audit;
 }
 
-export async function readInvocationLog(file, limit, sourceThreadId, since, until) {
+export async function readInvocationLog(file, limit, sourceThreadId, since, until, taskId) {
   const records = [];
   const coverage = { scope: "selected_runtime_client_journal", filePresent: true, truncated: false, unreadableRecords: 0 };
   try {
@@ -33,6 +33,7 @@ export async function readInvocationLog(file, limit, sourceThreadId, since, unti
       let record;
       try { record = JSON.parse(line); } catch { coverage.unreadableRecords += 1; continue; }
       if (sourceThreadId && record.source?.threadId !== sourceThreadId && record.clientContextThreadId !== sourceThreadId) continue;
+      if (taskId && record.taskId !== taskId) continue;
       if (since && Date.parse(record.time) < Date.parse(since)) continue;
       if (until && Date.parse(record.time) > Date.parse(until)) continue;
       records.push(record);
