@@ -10,6 +10,7 @@ import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment
 import { executableCommand } from "../shared/executable-command.mjs";
 import { composerReferencePersistence } from "../shared/composer-reference.mjs";
 import { ApiError } from "../shared/api-fields.mjs";
+import { AI_SANDBOX_MODES } from "../shared/domain.mjs";
 
 const execFileAsync = promisify(execFile);
 const CATALOG_TIMEOUT_MS = 10_000;
@@ -997,7 +998,7 @@ export function unavailableAiCatalog() {
     models: [],
     skills: [],
     commands: [],
-    sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+    sandboxes: [...AI_SANDBOX_MODES],
   };
 }
 
@@ -1025,7 +1026,7 @@ export async function discoverAiCatalog({
     models: sanitizeModels(modelCatalog?.models),
     skills: sanitizeSkills(skillEntries),
     commands,
-    sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+    sandboxes: [...AI_SANDBOX_MODES],
   };
 }
 
@@ -1039,6 +1040,6 @@ export async function discoverAppServerAiCatalog({ appServer, workspacePath }) {
     models: sanitizeAppServerModels(modelResult?.data),
     skills: sanitizeSkills(skillEntries),
     commands,
-    sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+    sandboxes: [...AI_SANDBOX_MODES],
   };
 }

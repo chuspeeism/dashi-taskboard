@@ -6,14 +6,11 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { createTaskboardServer } from "../server/index.mjs";
+import { AI_SANDBOX_MODES } from "../shared/domain.mjs";
 
-async function createServerFixture(host = "127.0.0.1") {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-server-"));
-  const workspacePath = path.join(directory, "workspace");
-  await mkdir(workspacePath);
-  const workspace = await realpath(workspacePath);
-  const codexExecutable = path.join(directory, "fake-codex.mjs");
-  await writeFile(codexExecutable, `#!/usr/bin/env node
+// The fake Codex CLI the fixture installs. Kept at module scope so the
+// template literal is not nested inside the fixture body.
+const FAKE_CODEX_SCRIPT = `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "debug") {
   process.stdout.write('{"models":[{"slug":"gpt-real","display_name":"GPT Real","description":"","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],"service_tiers":[]}]}');
@@ -34,8 +31,24 @@ if (args[0] === "debug") {
     process.stdout.write('{"type":"turn.completed"}\\n');
   });
 }
-`);
-  await chmod(codexExecutable, 0o755);
+`;
+
+async function createServerFixture(host = "127.0.0.1", { withCodex = true } = {}) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-server-"));
+  const workspacePath = path.join(directory, "workspace");
+  await mkdir(workspacePath);
+  const workspace = await realpath(workspacePath);
+  // A machine without the Codex CLI has no such executable at all. The path
+  // must not end in a Node script extension: executableCommand() would then
+  // route it through process.execPath and the failure would be
+  // MODULE_NOT_FOUND rather than the spawn ENOENT this case reproduces.
+  const codexExecutable = withCodex
+    ? path.join(directory, "fake-codex.mjs")
+    : path.join(directory, "codex-not-installed");
+  if (withCodex) {
+    await writeFile(codexExecutable, FAKE_CODEX_SCRIPT);
+    await chmod(codexExecutable, 0o755);
+  }
   const codexStatePath = path.join(directory, "codex-state.json");
   await writeFile(codexStatePath, JSON.stringify({
     "local-projects": { local: { rootPaths: [workspace] } },
@@ -101,6 +114,45 @@ async function request(baseUrl, pathname, options = {}) {
   const text = await response.text();
   return { response, body: text ? JSON.parse(text) : undefined };
 }
+
+test("a missing Codex CLI reports an unavailable catalog instead of a 500", async () => {
+  const fixture = await createServerFixture("127.0.0.1", { withCodex: false });
+  try {
+    const catalog = await request(fixture.baseUrl, "/api/local/ai/catalog?projectId=local");
+    assert.equal(catalog.response.status, 200);
+    assert.equal(catalog.body.available, false);
+    assert.deepEqual(catalog.body.models, []);
+    assert.deepEqual(catalog.body.skills, []);
+    assert.deepEqual(catalog.body.commands, []);
+    assert.deepEqual(catalog.body.sandboxes, AI_SANDBOX_MODES);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a catalog failure that is not a missing CLI keeps its own status", async () => {
+  const fixture = await createServerFixture();
+  try {
+    const project = await request(fixture.baseUrl, "/api/projects", {
+      method: "POST",
+      body: {
+        id: "catalog-missing-workspace",
+        name: "Catalog missing workspace",
+        workspacePath: path.join(fixture.directory, "not-there"),
+      },
+    });
+    assert.equal(project.response.status, 201);
+
+    const catalog = await request(
+      fixture.baseUrl,
+      "/api/local/ai/catalog?projectId=catalog-missing-workspace",
+    );
+    assert.equal(catalog.response.status, 409);
+    assert.equal(catalog.body.error.code, "PROJECT_WORKSPACE_UNAVAILABLE");
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("loopback AI API freezes server-owned origin and rejects injected execution fields", async () => {
   const fixture = await createServerFixture();

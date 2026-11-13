@@ -9,6 +9,8 @@ export const TASK_STATUSES = [
 ];
 export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];
 
+export const AI_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
+
 export const DEFAULT_PROJECT_ID = "local";
 export const JIRA_PROJECT_ID = "jira-my-tasks";
 export const DEFAULT_LABEL_NAMES = [

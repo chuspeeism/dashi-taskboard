@@ -26,6 +26,7 @@ import { promisify } from "node:util";
 import { WebSocket as WebSocketClient, WebSocketServer } from "ws";
 
 import {
+  AI_SANDBOX_MODES,
   DEFAULT_PROJECT_ID,
   JIRA_PROJECT_ID,
   TASK_STATUSES,
@@ -552,7 +553,7 @@ async function assertEmptyRequestBody(request, routeLabel) {
 
 function parseAiSandbox(value) {
   if (value === undefined) return undefined;
-  if (!["read-only", "workspace-write", "danger-full-access"].includes(value)) {
+  if (!AI_SANDBOX_MODES.includes(value)) {
     throw new ApiError(
       400,
       "INVALID_SANDBOX",
