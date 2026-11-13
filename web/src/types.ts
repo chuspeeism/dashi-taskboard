@@ -263,6 +263,12 @@ export interface AiChatCatalog {
   models: AiChatModel[];
   skills: AiChatSkill[];
   sandboxes: string[];
+  /**
+   * Present and `false` only when the optional Codex CLI is missing, in which
+   * case every list is empty. Omitted on a normal catalog, so read it with
+   * `catalog.available !== false` rather than a truthiness check.
+   */
+  available?: boolean;
 }
 
 export interface AiChatOrigin {

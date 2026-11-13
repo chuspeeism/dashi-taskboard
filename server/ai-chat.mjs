@@ -5,6 +5,7 @@ import path from "node:path";
 import { signalProcessTree } from "../shared/process-tree.mjs";
 import { resolveCodexPermissions } from "../shared/codex-permissions.mjs";
 import { ApiError } from "../shared/api-fields.mjs";
+import { AI_SANDBOX_MODES } from "../shared/domain.mjs";
 import {
   ComposerCatalog,
   discoverAppServerAiCatalog,
@@ -20,7 +21,7 @@ import {
   spawnCodexTurn,
 } from "./ai-chat-process.mjs";
 
-const SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
+const SANDBOXES = new Set(AI_SANDBOX_MODES);
 const ERROR_CONTENT_LIMIT = 65_536;
 const AGENT_DISPATCH_PROTOCOL = "taskboard.agent.v1";
 const SKILL_MARKER = "\uFFFC";
