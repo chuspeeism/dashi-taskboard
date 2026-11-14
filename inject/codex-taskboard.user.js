@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.13";
+  const VERSION = "0.6.14";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -97,7 +97,6 @@
   let lastNativeThreadId = "";
   let lastNativeProjectId = "";
   let currentCodexUser = null;
-  let suspendedNativeBrowserPanel = null;
   let active = false;
   let destroyed = false;
 
@@ -177,22 +176,10 @@
       }
       [${HOST_ATTRIBUTE}="true"] {
         position: relative !important;
-        pointer-events: none !important;
       }
       [${HIDDEN_ATTRIBUTE}="true"] {
         visibility: hidden !important;
         pointer-events: none !important;
-      }
-      [${HIDDEN_ATTRIBUTE}="true"] nav[data-app-navigation-rail] {
-        visibility: visible !important;
-        pointer-events: auto !important;
-      }
-      /* Preserve the native titlebar's drag shell, not its task-specific content. */
-      [${HOST_ATTRIBUTE}="true"] [data-app-shell-titlebar="true"] {
-        visibility: visible !important;
-      }
-      [${HOST_ATTRIBUTE}="true"] [data-app-shell-main-titlebar="true"] {
-        visibility: hidden !important;
       }
       :root[data-codex-taskboard-open="true"] nav[data-app-navigation-rail] button[data-selected]:not(#${ENTRY_ID}):not(:hover) {
         color: var(--button-text-color) !important;
@@ -214,7 +201,7 @@
       }
       #${PAGE_ID} {
         position: absolute;
-        top: var(--app-shell-titlebar-height, 0px);
+        top: 0;
         right: 0;
         bottom: 0;
         left: 0;
@@ -414,31 +401,15 @@
     syncEntryState();
   }
 
-  function findPageHost() {
-    const direct = document.querySelector(".app-shell-main-content-frame");
-    if (direct?.closest?.("[data-app-shell-main-content-layout]")) return direct;
-
-    const viewport = document.querySelector("[data-app-shell-main-content-layout]");
-    if (!viewport) return null;
-    const viewportRect = viewport.getBoundingClientRect();
-    return Array.from(viewport.children).find((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return rect.width >= viewportRect.width * 0.8
-        && rect.height >= viewportRect.height * 0.7;
-    }) || null;
-  }
-
   function findPageMount() {
-    const frameHost = findPageHost();
-    const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
-    const surface = viewport?.closest("[data-app-shell-workspace-row]");
-    const rail = surface?.querySelector("nav[data-app-navigation-rail]");
-    if (frameHost && viewport && surface && rail) return { frameHost, surface, rail };
-    // The classic expanded sidebar renders no compact navigation rail, so the
-    // page is mounted into the viewport's own container instead.
-    const classicSurface = viewport?.parentElement;
-    if (!frameHost || !viewport || !classicSurface?.closest("main")) return null;
-    return { frameHost, surface: classicSurface, rail: null };
+    // Codex retains inactive pages in the DOM. Use the displayed main pane,
+    // leaving its native titlebar, split divider and right panel outside it.
+    const surface = Array.from(document.querySelectorAll("[data-app-shell-main-content-layout]"))
+      .find((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+    return surface ? { surface } : null;
   }
 
   function syncNativeRailIcons() {
@@ -729,7 +700,7 @@
     if (!/Macintosh|Mac OS X/.test(navigator.userAgent)) return 0;
     if (nativeSidebarCollapsed()) return MACOS_TITLEBAR_SAFE_LEFT;
     const mount = findPageMount();
-    const surfaceLeft = mount?.rail ? mount.rail.getBoundingClientRect().right : mount?.surface?.getBoundingClientRect().left;
+    const surfaceLeft = mount?.surface?.getBoundingClientRect().left;
     if (!Number.isFinite(surfaceLeft)) return 0;
     return Math.max(0, Math.ceil(MACOS_TITLEBAR_SAFE_LEFT - surfaceLeft));
   }
@@ -1887,42 +1858,6 @@
       .forEach((node) => node.removeAttribute(HOST_ATTRIBUTE));
   }
 
-  function closeNativeBrowserPanel() {
-    if (suspendedNativeBrowserPanel) return;
-    const browserPanel = Array.from(
-      document.querySelectorAll("[data-browser-sidebar-webview]"),
-    ).find((node) => window.getComputedStyle(node).visibility !== "hidden");
-    if (!browserPanel) return;
-    const webview = browserPanel.querySelector("webview");
-    suspendedNativeBrowserPanel = {
-      conversationId: webview?.getAttribute("data-browser-sidebar-conversation-id") || null,
-      browserTabId: webview?.getAttribute("data-browser-sidebar-browser-tab-id") || null,
-    };
-    window.dispatchEvent(new MessageEvent("message", {
-      data: {
-        type: "toggle-browser-panel",
-        open: false,
-        source: "manual",
-        initiator: "taskboard_open",
-      },
-    }));
-  }
-
-  function restoreNativeBrowserPanel() {
-    const browserPanel = suspendedNativeBrowserPanel;
-    suspendedNativeBrowserPanel = null;
-    if (!browserPanel) return;
-    const data = {
-      type: "toggle-browser-panel",
-      open: true,
-      source: "manual",
-      initiator: "taskboard_close",
-    };
-    if (browserPanel.conversationId) data.conversationId = browserPanel.conversationId;
-    if (browserPanel.browserTabId) data.browserTabId = browserPanel.browserTabId;
-    window.dispatchEvent(new MessageEvent("message", { data }));
-  }
-
   function mountActivePage() {
     if (!active) return false;
     if (document.querySelector('nav[aria-label="Settings"], nav[aria-label="设置"]')) {
@@ -1932,7 +1867,7 @@
     if (!page) page = createPage();
     const mount = findPageMount();
     if (!mount) return false;
-    const { surface, rail } = mount;
+    const { surface } = mount;
 
     let remounted = false;
     if (page.parentElement !== surface) {
@@ -1946,12 +1881,7 @@
       }
     }
     surface.setAttribute(HOST_ATTRIBUTE, "true");
-    // In rail mode the surface spans the whole workspace row, so the page is
-    // offset past the rail. The classic sidebar sits outside the mount surface,
-    // so the page fills it from the left edge.
-    page.style.left = rail
-      ? `${rail.getBoundingClientRect().right - surface.getBoundingClientRect().left}px`
-      : "0";
+    page.style.left = "0";
     Array.from(surface.children).forEach((child) => {
       if (child !== page && child.getAttribute(OWNED_ATTRIBUTE) !== "true") {
         child.setAttribute(HIDDEN_ATTRIBUTE, "true");
@@ -1969,7 +1899,6 @@
     active = false;
     if (page) page.hidden = true;
     restoreNativeContent();
-    restoreNativeBrowserPanel();
     restoreNativeRailIcons();
     document.documentElement.removeAttribute("data-codex-taskboard-open");
     syncEntryState();
@@ -1986,7 +1915,6 @@
     }
     const generation = ++openGeneration;
     active = true;
-    closeNativeBrowserPanel();
     ensureEntry();
     mountActivePage();
     syncEntryState();
@@ -2002,6 +1930,10 @@
 
     const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
+    if (
+      clickable.closest("[data-app-shell-titlebar]")
+      && buttonMatches(clickable, ["返回", "back", "前进", "forward", ...NATIVE_PAGE_LABELS])
+    ) return true;
     if (clickable.closest("nav[data-app-navigation-rail]") && clickable.hasAttribute("data-sidebar-destination")) {
       return true;
     }
@@ -2092,6 +2024,7 @@
     document.removeEventListener("click", onDocumentClick, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("message", onHostBridgeMessage);
+    window.removeEventListener("message", onNativeNavigationMessage, true);
     window.removeEventListener("popstate", onNativeRouteChange);
     window.removeEventListener("hashchange", onNativeRouteChange);
     window.removeEventListener("resize", scheduleRefresh);
@@ -2115,6 +2048,18 @@
     if (active) closeTaskboard(false);
   }
 
+  function onNativeNavigationMessage(event) {
+    if (event.source !== null && event.source !== window) return;
+    if (
+      event.source === window
+      && window.location.origin !== "null"
+      && event.origin !== window.location.origin
+    ) return;
+    if (["navigate-back", "navigate-forward", "navigate-to-route"].includes(event.data?.type)) {
+      onNativeRouteChange();
+    }
+  }
+
   const api = {
     version: VERSION,
     sourceHash: SOURCE_HASH,
@@ -2131,6 +2076,7 @@
 
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("message", onHostBridgeMessage);
+  window.addEventListener("message", onNativeNavigationMessage, true);
   window.addEventListener("popstate", onNativeRouteChange);
   window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);
