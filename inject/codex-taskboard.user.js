@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.14";
+  const VERSION = "0.6.15";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -1912,6 +1912,17 @@
     if (!active) {
       lastFocusedElement = document.activeElement;
       hostContextSnapshot = readHostContext();
+      const back = Array.from(document.querySelectorAll("[data-app-shell-titlebar] button"))
+        .find((button) => buttonMatches(button, ["返回", "back"])
+          && button.getBoundingClientRect().width > 0
+          && getComputedStyle(button).visibility !== "hidden");
+      if (back?.disabled) {
+        // A fresh native window has no return point. Add one through the same
+        // native navigation entry used by Open conversation, before covering it.
+        window.dispatchEvent(new MessageEvent("message", {
+          data: { type: "navigate-to-route", path: "/" },
+        }));
+      }
     }
     const generation = ++openGeneration;
     active = true;
