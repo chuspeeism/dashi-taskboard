@@ -240,11 +240,13 @@ async function copyApplicationResources() {
     ),
   ]);
   await mkdir(path.join(appResources, "node_modules"), { recursive: true });
-  await cp(
-    path.join(projectRoot, "node_modules", "ws"),
-    path.join(appResources, "node_modules", "ws"),
-    { recursive: true },
-  );
+  for (const dependency of ["ws", "capnweb"]) {
+    await cp(
+      path.join(projectRoot, "node_modules", dependency),
+      path.join(appResources, "node_modules", dependency),
+      { recursive: true },
+    );
+  }
 
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [

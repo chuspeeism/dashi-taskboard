@@ -324,7 +324,7 @@ test("description and latest-comment edits invalidate waiting decisions, includi
   assert.ok(h.apiCalls.every((call) => call.method === "GET"));
 });
 
-test("manual pause and empty-queue protection are not converted into recoverable waits", async (t) => {
+test("manual pause disables auto-claim while an empty queue preserves it", async (t) => {
   const h = await host(t);
   await h.save();
   await h.advance(1_000);
@@ -344,11 +344,15 @@ test("manual pause and empty-queue protection are not converted into recoverable
   assert.equal(h.records.get("local").request.enabledByUser, false);
   await h.save();
   await h.advance(1_000);
-  h.tasks.length = 0;
-  await h.check();
+  const task = h.tasks.pop();
+  const empty = await h.check();
   assert.equal(h.item.status, "PAUSED");
-  assert.equal(h.records.get("local").request.enabledByUser, false);
-  assert.equal(h.records.get("local").todoGate, undefined);
+  assert.equal(h.records.get("local").request.enabledByUser, true);
+  assert.equal(empty.idleReason, "waiting-todos");
+  h.tasks.push(task);
+  await h.check();
+  await h.advance(1_000);
+  assert.equal(h.item.status, "ACTIVE");
 });
 
 test("quota recovery does not disable a waiting policy or bypass its semantic gate", async (t) => {

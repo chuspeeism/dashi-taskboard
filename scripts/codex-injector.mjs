@@ -1127,6 +1127,60 @@ async function openAttachment(request) {
   return { opened: true, localPath: attachmentPath };
 }
 
+let automationRpcClientSource;
+
+async function requestNativeCodexAutomation(cdp, executionContextId, method, params) {
+  const operations = {
+    "list-automations": "list",
+    "automation-create": "create",
+    "automation-update": "update",
+  };
+  automationRpcClientSource ??= readFile(new URL(import.meta.resolve("capnweb")), "utf8")
+    .then((source) => {
+      const exports = source.lastIndexOf("\nexport {");
+      if (exports < 0) throw new Error("Cannot load the Codex automation RPC client");
+      return source.slice(0, exports);
+    });
+  const clientSource = await automationRpcClientSource;
+  const evaluation = await cdp.send("Runtime.evaluate", {
+    expression: `(async () => {
+      ${clientSource}
+      const { port1, port2 } = new MessageChannel();
+      const host = newMessagePortRpcSession(port1);
+      let timeout;
+      try {
+        window.postMessage({ type: "connect-app-host", port: port2 }, location.origin, [port2]);
+        const service = host.services.localAutomations;
+        const operation = ${JSON.stringify(operations[method])};
+        const request = operation === "list"
+          ? service.list()
+          : service[operation](${JSON.stringify(params)});
+        return { ok: true, body: await Promise.race([
+          request,
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Codex 自动任务接口没有响应")), 10_000);
+          }),
+        ]) };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      } finally {
+        clearTimeout(timeout);
+        host[Symbol.dispose]();
+        port1.close();
+      }
+    })()`,
+    ...(Number.isInteger(executionContextId) ? { contextId: executionContextId } : {}),
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  const response = evaluation.result?.value;
+  if (!response?.ok) {
+    throw new Error(response?.error || evaluation.exceptionDetails?.exception?.description
+      || "Codex automation request failed");
+  }
+  return response.body;
+}
+
 async function requestCodexAutomationViaCdp(cdp, executionContextId, method, params) {
   if (!codexAutomationMethods.has(method)) {
     throw new Error(`Unsupported Codex automation method: ${method}`);
@@ -1199,6 +1253,11 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
     );
   }
   const response = evaluation.result.value;
+  // Newer desktop builds reject the legacy transport before executing the request.
+  // Only retry that explicit rejection so an ambiguous write is never repeated.
+  if (!response?.ok && response?.error?.includes("HTTP requests must use the HTTP fetch service.")) {
+    return requestNativeCodexAutomation(cdp, executionContextId, method, params);
+  }
   if (!response?.ok) throw new Error(response?.error || "Codex automation request failed");
   if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
     throw new Error(`Codex automation request returned HTTP ${response.status}`);
@@ -1901,6 +1960,7 @@ async function applyTaskboardAutomationPolicy(
       items: [item],
       operation,
       hasTodo,
+      ...(request.enabledByUser && !hasTodo ? { idleReason: "waiting-todos" } : {}),
       ...(quota ? { quota } : {}),
     };
   }
@@ -1915,7 +1975,10 @@ async function applyTaskboardAutomationPolicy(
         : null
     ) ?? items[0];
   }
-  let todoGate = request.enabledByUser && hasTodo ? previousTodoGate : undefined;
+  // Remember that this pause came from an empty queue, so new todos
+  // can wake it without treating it as a manual pause in Codex.
+  let todoGate = !request.enabledByUser ? undefined
+    : hasTodo ? previousTodoGate : { snapshot: "empty-queue", state: "wait" };
   let operation = taskboardAutomationPolicyOperation(request, {
     explicit,
     hasTodo,
@@ -1933,7 +1996,8 @@ async function applyTaskboardAutomationPolicy(
     todoGate = undefined; // A native/manual pause is not an automatic wait.
   }
   if (!stillCurrent()) return { quota, stale: true };
-  const idleReason = todoGate?.state === "checking"
+  const idleReason = request.enabledByUser && hasTodo === false ? "waiting-todos"
+    : todoGate?.state === "checking"
     ? "checking-todos"
     : todoGate?.state === "wait" ? "waiting-todos" : undefined;
   const result = operation === "list"
@@ -2123,10 +2187,7 @@ function enqueueQuotaPolicyMutation(record, rpc, { explicit = false, evaluatedTo
         },
       );
       if (result.stale) return result;
-      if (result.hasTodo === false && result.operation === "pause") {
-        current.version += 1;
-        current.request = { ...current.request, enabledByUser: false };
-      } else if (!explicit && result.operation === "list" && result.item?.status === "PAUSED") {
+      if (!explicit && result.operation === "list" && result.item?.status === "PAUSED") {
         current.version += 1;
         current.request = { ...current.request, enabledByUser: false };
       }
