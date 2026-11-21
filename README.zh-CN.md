@@ -194,6 +194,7 @@ Windows 上如果自行启动的 Codex 没有任务面板，通常是该实例�
 每台设备保留自己的项目检出映射，并继续使用**本地 companion**（本机配套服务 / 环回代理）提供 Codex、Git/worktree、Skill 和 MCP 能力。请勿将 companion 译为「伴侣」，也不要把普通 Taskboard HTTP 接口称为「伴侣 API」。云端模式绝不会回退到本地 SQLite 数据库，也不会同时写入本地数据库。
 
 请参阅[云端协作](docs/cloud-collaboration.md)，了解所有者部署、现有 GitHub 安装设置、密码轮换、本地路径映射和一次性本地数据迁移流程。
+Manus 可以通过已部署 Cloudflare Worker 的独立 Bearer token MCP 端点管理 Taskboard，并从 Manus 获取单独打开的 HTTPS 可视面板入口；请参阅[Manus MCP 与面板入口](docs/manus-mcp.md)。该面板不会嵌入 Manus 聊天区。
 
 ## 验证
 

@@ -29,6 +29,7 @@ import {
   slugify,
   parseProjectLabel,
 } from "../../shared/api-fields.mjs";
+import { handleManusMcpRequest, manusMcpActor } from "./manus-mcp.mjs";
 import { DurableObject } from "cloudflare:workers";
 
 import { DEFAULT_LABEL_NAMES, TASK_STATUSES, TASK_PRIORITIES } from "../../shared/domain.mjs";
@@ -338,6 +339,26 @@ async function authenticate(request, env) {
     },
     sessionCookie,
   };
+}
+
+async function authenticateManusMcp(request, env) {
+  const expectedToken = env.TASKBOARD_MANUS_MCP_TOKEN;
+  const match = (request.headers.get("authorization") ?? "").match(/^Bearer\s+(.+)$/i);
+  if (
+    typeof expectedToken !== "string"
+    || expectedToken.length < 32
+    || !match
+    || match[1].length > 4096
+  ) {
+    return null;
+  }
+  const encoder = new TextEncoder();
+  const [providedToken, configuredToken] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(match[1])),
+    crypto.subtle.digest("SHA-256", encoder.encode(expectedToken)),
+  ]);
+  if (!crypto.subtle.timingSafeEqual(providedToken, configuredToken)) return null;
+  return manusMcpActor();
 }
 
 function resolveAssignee(target, actor) {
@@ -2866,6 +2887,39 @@ export default {
       if (url.pathname === "/health") {
         if (request.method !== "GET") methodNotAllowed(["GET"]);
         return withSecurityHeaders(json(200, { status: "ok" }));
+      }
+
+      if (url.pathname === "/mcp") {
+        const actor = await authenticateManusMcp(request, env);
+        if (!actor) {
+          return withSecurityHeaders(json(
+            401,
+            { error: { code: "UNAUTHORIZED", message: "A valid MCP Bearer token is required" } },
+            { "www-authenticate": "Bearer" },
+          ));
+        }
+        return withSecurityHeaders(await handleManusMcpRequest(request, env, {
+          invokeApi: async (method, pathname, body) => {
+            const apiUrl = new URL(pathname, url.origin);
+            const apiRequest = new Request(apiUrl, {
+              method,
+              headers: body === undefined ? {} : { "content-type": "application/json" },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            });
+            const apiResponse = await routeApi(apiRequest, env, actor, apiUrl);
+            const text = await apiResponse.text();
+            const payload = text ? JSON.parse(text) : null;
+            if (!apiResponse.ok) {
+              throw new Error(payload?.error?.message ?? `Taskboard API returned HTTP ${apiResponse.status}`);
+            }
+            return payload;
+          },
+          onMutation: async () => {
+            if (!env.REALTIME_HUB) return;
+            const revision = await readGlobalRevision(env);
+            ctx.waitUntil(broadcastRevision(env, revision).catch((error) => console.error(error)));
+          },
+        }));
       }
 
       const authentication = await authenticate(request, env);
