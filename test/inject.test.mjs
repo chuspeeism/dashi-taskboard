@@ -395,7 +395,10 @@ test("remote Codex tasks wait for the exact project and host without a local rou
   assert.match(remoteProjectSource, /selectedProjectId === projectId/);
   assert.match(remoteProjectSource, /selectedProject\?\.projectKind === "remote"/);
   assert.match(remoteProjectSource, /selectedProject\.hostId === hostId/);
-  assert.match(remoteProjectSource, /!workspacePath \|\| selectedProject\.workspacePath === workspacePath/);
+  assert.match(
+    remoteProjectSource,
+    /remotePathsCompatible\(selectedProject\.workspacePath, workspacePath\)/,
+  );
   assert.match(remoteOpenSource, /waitForRemoteThreadRow\(normalizedThreadId, projectId\)/);
   assert.match(remoteOpenSource, /type: "taskboard:thread-open-error"/);
   assert.doesNotMatch(remoteOpenSource, /routeForThread/);

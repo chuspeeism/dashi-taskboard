@@ -490,9 +490,32 @@
       || null;
   }
 
+  function domSelectedProjectId() {
+    const rows = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"));
+    const selected = rows.find((row) => (
+      row.getAttribute("aria-current") === "page"
+      || row.getAttribute("data-app-action-sidebar-project-selected") === "true"
+    ));
+    return selected?.getAttribute("data-app-action-sidebar-project-id")?.trim() || "";
+  }
+
+  function selectNativeProjectRow(projectId) {
+    const row = projectRowById(projectId);
+    if (!row) return false;
+    if (row.getAttribute("data-app-action-sidebar-project-collapsed") === "true") {
+      row.click?.();
+    }
+    const target = row.querySelector("[data-app-action-sidebar-select-project]") || row;
+    target.click?.();
+    return true;
+  }
+
   function requestNativeFetch(path, body) {
     const bridge = window.electronBridge;
     if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
+    // Codex 26 rejects the renderer IPC fetch channel outright; remember that once so
+    // every later lookup resolves immediately instead of paying the 1 s timeout.
+    if (requestNativeFetch.nativeFetchUnavailable === true) return Promise.resolve(undefined);
     return new Promise((resolve) => {
       const requestId = `taskboard-native-fetch-${crypto.randomUUID()}`;
       let settled = false;
@@ -524,20 +547,33 @@
       const timeout = window.setTimeout(() => finish(undefined), 1_000);
       window.addEventListener("message", onMessage);
       try {
-        bridge.sendMessageFromView({
+        const pending = bridge.sendMessageFromView({
           type: "fetch",
           requestId,
           method: "POST",
           url: `vscode://codex/${path}`,
           body: JSON.stringify(body),
         });
-      } catch (_) {
+        if (pending && typeof pending.then === "function") {
+          pending.then(undefined, (error) => {
+            if (/HTTP fetch service/i.test(String(error?.message ?? error))) {
+              requestNativeFetch.nativeFetchUnavailable = true;
+            }
+            finish(undefined);
+          });
+        }
+      } catch (error) {
+        if (/HTTP fetch service/i.test(String(error?.message ?? error))) {
+          requestNativeFetch.nativeFetchUnavailable = true;
+        }
         finish(undefined);
       }
     });
   }
 
   async function selectedNativeProjectId() {
+    const domSelected = domSelectedProjectId();
+    if (domSelected) return domSelected;
     const selectedProject = (await requestNativeFetch(
       "get-global-state",
       { key: "selected-project" },
@@ -1037,6 +1073,18 @@
       .find((row) => row.getAttribute("data-app-action-sidebar-project-id") === projectId.trim()) || null;
   }
 
+  // REMOTE_PATH_LENIENT: an imported remote thread may report the same directory through a
+  // different mount alias (e.g. /mnt/wangyilin-gpfs/x vs /mnt/shared-storage-user/u/x), so the
+  // host confirmation only requires the trailing path segment to agree.
+  function remotePathsCompatible(projectPath, requestedPath) {
+    const normalize = (value) => String(value ?? "").trim().replace(/\/+$/, "");
+    const tail = (value) => value.split("/").filter(Boolean).pop() ?? value;
+    const left = normalize(projectPath);
+    const right = normalize(requestedPath);
+    if (!left || !right) return true;
+    return left === right || tail(left) === tail(right);
+  }
+
   async function waitForRemoteProject(projectId, hostId, workspacePath) {
     if (!projectId || !hostId || hostId === "local") {
       throw new Error(hostText(
@@ -1045,11 +1093,21 @@
       ));
     }
     await ensureProjectRows();
-    const deadline = Date.now() + 8_000;
+    const deadline = Date.now() + 12_000;
     let row = null;
+    let lastDismiss = 0;
     while (!row && Date.now() < deadline) {
       row = projectRowById(projectId);
+      if (!row && Date.now() - lastDismiss > 1_500 && (dismissActivityView() || showProjectsPage())) {
+        lastDismiss = Date.now();
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        continue;
+      }
       if (!row) await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }
+    if (!row && (dismissActivityView() || showProjectsPage())) {
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+      row = projectRowById(projectId);
     }
     if (!row) {
       throw new Error(hostText(
@@ -1079,7 +1137,7 @@
         selectedProjectId === projectId
         && selectedProject?.projectKind === "remote"
         && selectedProject.hostId === hostId
-        && (!workspacePath || selectedProject.workspacePath === workspacePath)
+        && remotePathsCompatible(selectedProject.workspacePath, workspacePath)
       ) {
         codexProjectMetadata = metadata;
         lastNativeProjectId = projectId;
@@ -1211,6 +1269,22 @@
   async function ensureProjectRows() {
     let section = findProjectsSection();
     const deadline = Date.now() + 1_200;
+    if (!section && readCodexProjects().length === 0 && showProjectsPage()) {
+      const homeBy = Date.now() + 4_000;
+      while (readCodexProjects().length === 0 && Date.now() < homeBy) {
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      }
+      section = findProjectsSection();
+    }
+    if (!section && readCodexProjects().length === 0 && dismissActivityView()) {
+      // REMOTE_ACTIVITY_PATIENCE: leaving the activity view re-renders the whole sidebar, which
+      // can take a few seconds on a large history; wait for the project rows instead of giving up.
+      const reopenedBy = Date.now() + 4_000;
+      while (readCodexProjects().length === 0 && Date.now() < reopenedBy) {
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      }
+      section = findProjectsSection();
+    }
     while (!section && Date.now() < deadline) {
       await new Promise((resolve) => window.setTimeout(resolve, 40));
       section = findProjectsSection();
@@ -1221,6 +1295,32 @@
     while (readCodexProjects().length === 0 && Date.now() < deadline) {
       await new Promise((resolve) => window.setTimeout(resolve, 40));
     }
+  }
+  function dismissActivityView() {
+    // Codex can replace the project sidebar with a search/activity list. Project rows
+    // disappear in that mode, so any project lookup must first leave it.
+    const buttons = Array.from(document.querySelectorAll("button, [role=button]"));
+    const closer = buttons.find((node) => /关闭(活动视图|搜索)|^close (activity|search)/i.test(
+      node.getAttribute("aria-label") || node.getAttribute("title") || "",
+    ));
+    if (!closer) return false;
+    closer.click?.();
+    return true;
+  }
+
+  // HOME_VIEW_FALLBACK: Codex remembers the last sidebar page (scheduled tasks, plugins,
+  // explore) across launches, and those pages render no project rows at all. An auto-claim
+  // lookup must therefore return to the home page before it can find the target project.
+  function showProjectsPage() {
+    if (document.querySelector("[data-app-action-sidebar-project-row]")) return false;
+    const rail = document.querySelector("[data-app-navigation-rail]");
+    if (!rail) return false;
+    const home = Array.from(rail.querySelectorAll("button, [role=button]")).find((node) => (
+      /^(首页|home)$/i.test((node.getAttribute("aria-label") || node.textContent || "").trim())
+    ));
+    if (!home) return false;
+    home.click?.();
+    return true;
   }
 
   async function waitForNativeProject(targetRoot, expectedProjectId) {
@@ -1296,10 +1396,12 @@
           ));
         }
         const { projectId, targetRoot } = target;
-        bridge.sendMessageFromView({
-          type: "electron-add-new-workspace-root-option",
-          root: targetRoot,
-        });
+        if (!selectNativeProjectRow(projectId)) {
+          bridge.sendMessageFromView({
+            type: "electron-add-new-workspace-root-option",
+            root: targetRoot,
+          });
+        }
         lastNativeProjectId = await waitForNativeProject(targetRoot, projectId);
       }
 
@@ -1935,6 +2037,7 @@
     const { surface, rail } = mount;
 
     let remounted = false;
+    if (page.parentElement === document.body && page.dataset.taskboardEscaped === "true") restoreEscapedPage();
     if (page.parentElement !== surface) {
       restoreNativeContent();
       surface.appendChild(page);
@@ -1960,7 +2063,65 @@
     syncNativeRailIcons();
     page.hidden = false;
     document.documentElement.setAttribute("data-codex-taskboard-open", "true");
+    rescueOccludedPage();
     return remounted;
+  }
+
+  const TOP_LAYER_Z_INDEX = "2147483000";
+  let rescueTimer = null;
+
+  function pageOccludedByHostOverlay() {
+    if (!page || page.hidden) return false;
+    const rect = page.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) return false;
+    const hit = document.elementFromPoint(
+      rect.left + Math.min(60, rect.width / 2),
+      rect.top + Math.min(40, rect.height / 2),
+    );
+    return Boolean(hit) && !page.contains(hit);
+  }
+
+  function restoreEscapedPage() {
+    if (!page || page.dataset.taskboardEscaped !== "true") return;
+    delete page.dataset.taskboardEscaped;
+    page.style.position = "";
+    page.style.left = "";
+    page.style.top = "";
+    page.style.right = "";
+    page.style.bottom = "";
+    page.style.width = "";
+    page.style.height = "";
+    page.style.zIndex = "";
+  }
+
+  function rescueOccludedPage() {
+    // Some hosts (for example Codex++ builds) paint a fixed page overlay above the
+    // workspace inside their own stacking context. A page mounted under
+    // WorkspaceContent (position:relative; isolate) cannot paint above that overlay,
+    // so re-parent the panel to <body> as a fixed top-layer surface. Do it before the
+    // frame is created: moving an <iframe> always reloads its browsing context, and
+    // the host installs the frame document through CDP afterwards.
+    if (!pageOccludedByHostOverlay()) return false;
+    const rect = page.getBoundingClientRect();
+    page.dataset.taskboardEscaped = "true";
+    page.style.position = "fixed";
+    page.style.left = `${rect.left}px`;
+    page.style.top = `${rect.top}px`;
+    page.style.width = `${rect.width}px`;
+    page.style.height = `${rect.height}px`;
+    page.style.right = "auto";
+    page.style.bottom = "auto";
+    page.style.zIndex = TOP_LAYER_Z_INDEX;
+    document.body.appendChild(page);
+    return true;
+  }
+
+  function scheduleOcclusionCheck() {
+    if (rescueTimer !== null) window.clearTimeout(rescueTimer);
+    rescueTimer = window.setTimeout(() => {
+      rescueTimer = null;
+      rescueOccludedPage();
+    }, 250);
   }
 
   function closeTaskboard(restoreFocus = true) {
@@ -1991,6 +2152,7 @@
     mountActivePage();
     syncEntryState();
     void prepareTaskboard(generation);
+    scheduleOcclusionCheck();
   }
 
   function isNativePageNavigation(target) {
