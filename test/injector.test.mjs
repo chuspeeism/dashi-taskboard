@@ -107,15 +107,13 @@ test("the CDP bridge exposes only the fixed Taskboard automation operations", ()
   assert.doesNotMatch(source, /automations\.toml/);
 });
 
-test("passive automation policy keeps idle pauses and only resumes quota pauses", () => {
+test("the automation switch belongs to the user and is never turned off by a policy check", () => {
   assert.match(source, /taskboardAutomationPolicyOperation/);
   assert.match(source, /previousQuotaState: current\.quota\?\.state/);
   assert.match(source, /enqueueQuotaPolicyMutation\(record, rpc, \{ explicit: true \}\)/);
-  assert.match(
-    source,
-    /!explicit && result\.operation === "list" && result\.item\?\.status === "PAUSED"/,
-  );
-  assert.match(source, /enabledByUser: false/);
+  // An idle (queue-empty) or unrelated quota pause must not be persisted as a disabled switch.
+  assert.doesNotMatch(source, /!explicit && result\.operation === "list"/);
+  assert.doesNotMatch(source, /result\.hasTodo === false && result\.operation === "pause"/);
   assert.match(source, /record\.quota \? \{ quota: record\.quota \} : \{\}/);
 });
 

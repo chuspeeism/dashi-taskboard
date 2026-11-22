@@ -1127,6 +1127,59 @@ async function openAttachment(request) {
   return { opened: true, localPath: attachmentPath };
 }
 
+let automationClientSourcePromise;
+function loadAutomationClientSource() {
+  automationClientSourcePromise ??= readFile(new URL("./capnweb-dist.js", import.meta.url), "utf8");
+  return automationClientSourcePromise;
+}
+
+async function requestNativeCodexAutomation(cdp, executionContextId, method, params) {
+  const operation = {
+    "list-automations": "list",
+    "automation-create": "create",
+    "automation-update": "update",
+  }[method];
+  if (!operation) throw new Error(`Unsupported Codex automation method: ${method}`);
+  const clientSource = await loadAutomationClientSource();
+  const evaluation = await cdp.send("Runtime.evaluate", {
+    expression: `(async () => {
+      const clientSource = ${JSON.stringify(clientSource)};
+      const operation = ${JSON.stringify(operation)};
+      const params = ${JSON.stringify(params)};
+      try {
+        const factory = new Function(clientSource + "\\nreturn { newMessagePortRpcSession };");
+        const { newMessagePortRpcSession } = factory();
+        const channel = new MessageChannel();
+        window.postMessage({ type: "connect-app-host", port: channel.port2 }, "*", [channel.port2]);
+        const host = newMessagePortRpcSession(channel.port1);
+        const service = host?.services?.localAutomations;
+        if (!service || typeof service[operation] !== "function") {
+          return { ok: false, error: "当前 Codex 版本没有提供原生自动任务服务" };
+        }
+        const timeout = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Codex 自动任务接口没有响应")), 10_000);
+        });
+        const result = await Promise.race([service[operation](params), timeout]);
+        return { ok: true, result };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    })()`,
+    ...(Number.isInteger(executionContextId) ? { contextId: executionContextId } : {}),
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (evaluation.exceptionDetails) {
+    const detail = evaluation.exceptionDetails;
+    throw new Error(
+      detail.exception?.description || "Codex automation request failed",
+    );
+  }
+  const response = evaluation.result.value;
+  if (!response?.ok) throw new Error(response?.error || "Codex automation request failed");
+  return response.result ?? {};
+}
+
 async function requestCodexAutomationViaCdp(cdp, executionContextId, method, params) {
   if (!codexAutomationMethods.has(method)) {
     throw new Error(`Unsupported Codex automation method: ${method}`);
@@ -1199,6 +1252,10 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
     );
   }
   const response = evaluation.result.value;
+  if (String(response?.error || "").includes("HTTP requests must use the HTTP fetch service.")) {
+    // Codex 26 removed the renderer IPC fetch channel; app-host MessagePort RPC is the replacement.
+    return requestNativeCodexAutomation(cdp, executionContextId, method, params);
+  }
   if (!response?.ok) throw new Error(response?.error || "Codex automation request failed");
   if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
     throw new Error(`Codex automation request returned HTTP ${response.status}`);
@@ -1352,10 +1409,15 @@ function remoteAutomationTarget(request, task) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+const autoClaimBlockingLabels = new Set(["ssh-import", "no-auto-claim"]);
+
 function eligibleRemoteAutomationTask(task) {
   const remoteBinding = task?.threadBinding?.codexProjectKind === "remote"
     && task.threadId === task.threadBinding.threadId;
+  const blockedByLabel = (Array.isArray(task?.labels) ? task.labels : [])
+    .some((label) => autoClaimBlockingLabels.has(String(label).trim().toLowerCase()));
   return task?.status === "todo"
+    && !blockedByLabel
     && task.archivedAt === null
     && ((!task.threadId && !task.threadBinding) || remoteBinding)
     && (task.relations?.blockedBy ?? []).every((dependency) => dependency.status === "done");
@@ -1836,7 +1898,20 @@ async function evaluateLocalAutomationTodos(record) {
   let state = "wait";
   for (const { task, comments } of candidates) {
     if (!stillCurrent()) return;
-    if (await remoteAutomationCanStart(currentQuotaPolicyCdp(), request, task, comments)) {
+    let canStart = false;
+    try {
+      canStart = await remoteAutomationCanStart(currentQuotaPolicyCdp(), request, task, comments);
+    } catch (error) {
+      if (!request.quotaAware) {
+        // The claim prompt re-validates task state/version/binding, so a judge failure
+        // must not block claiming forever; fall through to start instead.
+        console.error(`Taskboard todo gate fell back to start: ${error.message}`);
+        state = "start";
+        break;
+      }
+      throw error;
+    }
+    if (canStart) {
       state = "start";
       break;
     }
@@ -1893,9 +1968,16 @@ async function applyTaskboardAutomationPolicy(
           : Date.now() + request.intervalMinutes * 60_000
       )
       : null;
-    const item = operation === "list"
+    let item = operation === "list"
       ? currentItem
       : remoteAutomationItem(request, status, nextRunAt);
+    if (operation === "ensure-active" || operation === "pause") {
+      // REMOTE_RECONCILE: a remote project's automation still runs on this local
+      // Codex host, so the native automation has to be created or updated too;
+      // computing the item alone left every SSH project with no automation at all.
+      const reconciled = await reconcileTaskboardAutomation({ ...request, operation }, rpc);
+      if (reconciled?.item) item = reconciled.item;
+    }
     return {
       item,
       items: [item],
@@ -2123,13 +2205,8 @@ function enqueueQuotaPolicyMutation(record, rpc, { explicit = false, evaluatedTo
         },
       );
       if (result.stale) return result;
-      if (result.hasTodo === false && result.operation === "pause") {
-        current.version += 1;
-        current.request = { ...current.request, enabledByUser: false };
-      } else if (!explicit && result.operation === "list" && result.item?.status === "PAUSED") {
-        current.version += 1;
-        current.request = { ...current.request, enabledByUser: false };
-      }
+      // The panel's 自动认领 switch is user-owned: neither an empty queue nor an
+      // unrelated PAUSED native automation may silently turn it off.
       if (result.item?.id) {
         current.request = { ...current.request, automationId: result.item.id };
       }
