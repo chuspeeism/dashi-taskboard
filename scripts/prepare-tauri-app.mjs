@@ -248,6 +248,7 @@ async function copyApplicationResources() {
 
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [
+    "capnweb-dist.js",
     "codex-cdp-pipe.mjs",
     "codex-injector.mjs",
     "codex-injector-runtime.mjs",

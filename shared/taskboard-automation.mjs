@@ -98,6 +98,7 @@ export function buildTaskboardAutomationPrompt(request) {
   const remoteProjects = request.remoteProjects ?? [];
   const candidateInstructions = [
     "从返回的 todo 中只选择依赖已完成的议题：relations.blockedBy 为空，或其中每个依赖的 status 都严格等于 done。无依赖的 todo 仍可并行处理。若有 todo 但全部被未完成依赖阻塞，本轮直接结束，不暂停自动化，也不创建或打开新的任务会话。",
+    "跳过带 ssh-import 标签的议题：它们是历史 SSH 会话的导入记录，不是新工作，认领会重复启动旧会话。所有 todo 都带该标签时本轮直接结束，不改状态、不暂停自动化。",
     "每次仅处理一个符合依赖条件的 todo：选定后先用 issue get 读取最新议题内容，并用 comment list 读取全部评论。根据描述和最新评论判断是否允许开始；若其中写明等待、暂不执行或当前不应开始，立即跳过并报告，不改状态。评论也包含已完成后被打回的返工要求。",
     "完成 issue get 和 comment list 后、移动状态前，必须再次运行 issue get，并复核 relations.blockedBy 仍为空或其中每个依赖的 status 都严格等于 done。若依赖条件不再满足，立即跳过并结束本轮，不改状态，也不暂停自动化。",
   ];
@@ -168,12 +169,10 @@ export function taskboardAutomationPolicyOperation(request, {
 }) {
   if (!request.enabledByUser) return "pause";
   if (hasTodo === false) return "pause";
-  if (
-    !explicit
-    && currentStatus === "PAUSED"
-    && !idlePaused
-    && (!request.quotaAware || previousQuotaState === "available")
-  ) return "list";
+  // HOST_PAUSE_IS_IDLE: this host pauses the native automation itself whenever the
+  // queue is empty, so a PAUSED automation must never be read as "the user wants
+  // no claims": a pending todo resumes it. The panel switch (enabledByUser) is the
+  // user-facing on/off control, and turning it off still returns "pause" above.
   if (request.quotaAware && quotaState !== "available") return "pause";
   return "ensure-active";
 }

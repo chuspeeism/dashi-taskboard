@@ -324,7 +324,7 @@ test("description and latest-comment edits invalidate waiting decisions, includi
   assert.ok(h.apiCalls.every((call) => call.method === "GET"));
 });
 
-test("manual pause and empty-queue protection are not converted into recoverable waits", async (t) => {
+test("manual pause stays off and an idle queue does not clear the switch", async (t) => {
   const h = await host(t);
   await h.save();
   await h.advance(1_000);
@@ -339,15 +339,15 @@ test("manual pause and empty-queue protection are not converted into recoverable
   await h.save();
   await h.advance(1_000);
   assert.equal(h.item.status, "ACTIVE");
-  h.item.status = "PAUSED"; // Existing native pause detection still applies.
+  h.item.status = "PAUSED"; // The host pauses idle automations itself.
   await h.check();
-  assert.equal(h.records.get("local").request.enabledByUser, false);
+  assert.equal(h.records.get("local").request.enabledByUser, true);
   await h.save();
   await h.advance(1_000);
   h.tasks.length = 0;
   await h.check();
   assert.equal(h.item.status, "PAUSED");
-  assert.equal(h.records.get("local").request.enabledByUser, false);
+  assert.equal(h.records.get("local").request.enabledByUser, true);
   assert.equal(h.records.get("local").todoGate, undefined);
 });
 
@@ -413,7 +413,11 @@ test("remote ephemeral selection and bound worker execution retain their existin
   assert.equal(h.tasks[0].status, "in_review");
   assert.deepEqual(h.tasks[0].threadBinding, binding);
   assert.equal(h.codexCalls.find((call) => call.method === "thread/resume").hostId, binding.codexHostId);
-  assert.equal(h.codexCalls.filter((call) => call.method.startsWith("automation-")).length, 0);
+  // A remote project's automation still runs on this local Codex host, so the policy has
+  // to reconcile it here instead of only reporting a computed item.
+  const automationCreates = h.codexCalls.filter((call) => call.method === "automation-create");
+  assert.equal(automationCreates.length, 1);
+  assert.equal(automationCreates[0].params.executionEnvironment, "local");
 });
 
 

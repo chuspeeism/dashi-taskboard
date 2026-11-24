@@ -1002,6 +1002,15 @@ export function unavailableAiCatalog() {
   };
 }
 
+// Skills and slash commands are optional catalog sources: a slow or failing read
+// must not turn the whole payload into a server error, because the settings panel
+// disables every switch when the catalog request fails. The model list stays
+// required, and a missing Codex CLI keeps its own unavailable-catalog semantics.
+async function optionalCatalogSource(promise) {
+  const [settled] = await Promise.allSettled([promise]);
+  return settled.status === "fulfilled" ? settled.value : [];
+}
+
 export async function discoverAiCatalog({
   codexExecutable,
   workspacePath,
@@ -1018,8 +1027,8 @@ export async function discoverAiCatalog({
       maxBuffer: CATALOG_MAX_BUFFER,
       windowsHide: true,
     }),
-    listSkills(codexExecutable, workspacePath, environment),
-    loadSlashCommands(),
+    optionalCatalogSource(listSkills(codexExecutable, workspacePath, environment)),
+    optionalCatalogSource(loadSlashCommands()),
   ]);
   const modelCatalog = JSON.parse(modelResult.stdout);
   return {
@@ -1033,8 +1042,8 @@ export async function discoverAiCatalog({
 export async function discoverAppServerAiCatalog({ appServer, workspacePath }) {
   const [modelResult, skillEntries, commands] = await Promise.all([
     appServer.request("model/list", { cursor: null, limit: 100, includeHidden: false }),
-    appServer.listSkills(workspacePath, { forceReload: false }),
-    loadSlashCommands(),
+    optionalCatalogSource(appServer.listSkills(workspacePath, { forceReload: false })),
+    optionalCatalogSource(loadSlashCommands()),
   ]);
   return {
     models: sanitizeAppServerModels(modelResult?.data),

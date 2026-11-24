@@ -261,26 +261,28 @@ test("the generated cron spec uses the selected whitelisted local Codex options"
   });
 });
 
-test("passive policy checks resume only after quota recovery", () => {
+test("a paused native automation resumes when a policy check sees a waiting todo", () => {
   const passiveAvailable = {
     explicit: false,
     previousQuotaState: "available",
     quotaState: "available",
     currentStatus: "PAUSED",
   };
+  // The host pauses the native automation itself when the queue is empty, so a PAUSED
+  // automation must not be read as a user decision to stop claiming.
   assert.equal(
     taskboardAutomationPolicyOperation(
       { ...baseRequest, quotaAware: true },
       passiveAvailable,
     ),
-    "list",
+    "ensure-active",
   );
   assert.equal(
     taskboardAutomationPolicyOperation(
       { ...baseRequest, quotaAware: true },
       { ...passiveAvailable, quotaState: "unknown" },
     ),
-    "list",
+    "pause",
   );
   assert.equal(
     taskboardAutomationPolicyOperation(
