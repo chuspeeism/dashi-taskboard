@@ -1,8 +1,38 @@
-// Bundled browser build of capnweb (https://github.com/cloudflare/capnweb, MIT).
-// The injector reads this file and evaluates it inside the Codex renderer, because the
-// app-host RPC session (needed to reach host.services.localAutomations) can only be
-// created in the page with the MessagePort the host hands out. Keep it self-contained:
-// it must run in a renderer with no module loader.
+/*
+ * Bundled browser build of capnweb, https://github.com/cloudflare/capnweb
+ * Version 0.13.1. Vendored unmodified apart from this notice; the #region
+ * markers below name the upstream source files it was built from.
+ *
+ * The injector reads this file and evaluates it inside the Codex renderer,
+ * because the app-host RPC session (needed to reach
+ * host.services.localAutomations) can only be created in the page with the
+ * MessagePort the host hands out. Keep it self-contained: it must run in a
+ * renderer with no module loader.
+ *
+ * ---
+ *
+ * MIT License
+ *
+ * Copyright (c) 2025 Cloudflare, Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 //#region src/symbols.ts
 let WORKERS_MODULE_SYMBOL = Symbol("workers-module");
 
