@@ -56,6 +56,8 @@ Add the `no-auto-claim` label to a task you want to keep in `todo` without havin
 
 This label only affects the SSH/remote auto-claim runner; it does not change the task’s status, prevent manual work, or apply to local-project auto-claim automations.
 
+The remote auto-claim runner also skips tasks carrying `ssh-import`, which marks a task imported from a historical SSH conversation so re-claiming it does not restart an old session. That label is not part of the default set and nothing creates it automatically — add it by hand, with the same label picker, only when a task really is an import record.
+
 ## Install the Codex Skill
 
 Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then start a new Codex task:
