@@ -50,6 +50,12 @@ npm run taskctl -- issue create \
 
 Use `npm link` if you want `taskctl` on your shell path. Set `CODEX_TASKBOARD_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the **loopback companion** (device-local loopback service for auth and path mapping—not a chat persona) with `taskctl cloud login`.
 
+## Exclude a task from SSH auto-claim
+
+Add the `no-auto-claim` label to a task you want to keep in `todo` without having the SSH/remote Codex auto-claim runner pick it up. The label is available by default in newly created projects. In an existing project, open the task’s label picker, search for `no-auto-claim`, and create it if it is not listed. Remove the label to make the task eligible for remote auto-claim again, subject to the usual eligibility checks.
+
+This label only affects the SSH/remote auto-claim runner; it does not change the task’s status, prevent manual work, or apply to local-project auto-claim automations.
+
 ## Install the Codex Skill
 
 Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then start a new Codex task:
